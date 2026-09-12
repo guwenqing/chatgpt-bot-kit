@@ -55,6 +55,10 @@ inside the markers must be preserved and reconciled, not discarded on retry.
 Configuration changes also need notices to the affected native conversations;
 report file writes separately from sent notices and observed adoption. Ordinary
 memory updates stay quiet unless the user requests a notification.
+Follow `templates/coordination.md`: establish the notice baseline before an intended
+change, calculate affected sessions afterwards, then send and record actual notices.
+For the optional separate grooming conversation and native schedule, follow
+`templates/grooming.md` after the daily entry is usable.
 
 The directory returned by `inspect` reads current bot configuration rather than
 another copy of its prompts. Missing members stay visibly missing. Observations

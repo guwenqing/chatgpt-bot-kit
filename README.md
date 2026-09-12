@@ -92,6 +92,28 @@ with installation to reject stale configuration. Existing content is preserved
 on a conflict. The assistant must separately verify native discovery from each
 recipient and actual procedure execution before reporting those outcomes.
 
+## Collaborate, notify and groom
+
+Use the [coordination guide](templates/coordination.md) for bounded native requests
+and replies. `plan-handoff` resolves the selected or default conversation and return
+address; `record-handoff` retains reported delivery evidence and uncertain outcomes.
+The native desktop still performs messaging. Queue, steering, stopping and actual
+completion remain distinct, and an unexposed mode is not silently substituted.
+
+Run `plan-notices --workspace ABS` before an intended configuration change to establish
+its baseline, then again afterwards to identify affected existing conversations.
+It compares guidance, session settings and effective skill contents, including live
+shared links; ordinary memory updates stay quiet. `record-notice` records sent,
+uncertain or evidenced adoption for the current fingerprint. These YAML receipts
+cannot authenticate native events or force running conversations to reload.
+
+The [grooming guide](templates/grooming.md) offers an additional persistent Bot Father
+conversation and a user-selected native schedule after the daily entry works.
+`record-finding` preserves one condition's evidence and routing state across runs,
+so unchanged already-routed findings stay quiet and failed routing remains recoverable.
+Configuration readback, actual scheduled firing and return to the daily entry require
+separate native evidence. No schedule is created during workspace preparation.
+
 ## Installed tooling
 
 Requires Node.js >=20.19.0, npm and Git.

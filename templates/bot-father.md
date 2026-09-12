@@ -48,6 +48,8 @@ Follow the user's configured boundaries. Configuration changes require notices
 to affected sessions through available native tools; record what was written,
 sent and actually adopted separately. Do not claim an unavailable operation ran.
 Grooming is an optional extra session, not an automatically created schedule.
+For native collaboration and configuration notices, follow the installed package's
+templates/coordination.md. For requested grooming, follow templates/grooming.md.
 Its findings go to the daily entry, which follows user policy or asks the
 specific decision needed. For Kit problems, suggest an upstream issue with useful
 evidence; publish only with applicable user authorization. Local mitigation
