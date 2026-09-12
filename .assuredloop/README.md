@@ -31,7 +31,8 @@ These values describe this consumer's selected artifact, not the source project'
 own consumer activation. Its historical approvals do not authorize this project.
 The source has that uncommitted documentation overlay; it is included in the
 measured tarball. Reconstruct this selection from the base Git tree plus the
-retained patch in a separate build directory, then pack and compare the SRI.
+retained patch in a separate build directory using `git apply --unidiff-zero`,
+then pack with lifecycle scripts disabled and compare the SRI.
 Do not apply the patch again to the live source or reset someone else's changes.
 This consumer selection does not commit or accept an upstream framework release.
 The development install uses npm links described in the root README. Resolve
