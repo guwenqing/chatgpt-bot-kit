@@ -2,10 +2,20 @@
   "name": "chatgpt-bot-kit",
   "version": "0.0.0",
   "private": true,
+  "type": "module",
+  "bin": {
+    "bot-kit": "src/cli.js"
+  },
+  "files": [
+    "src/",
+    "templates/",
+    "README.md"
+  ],
   "description": "Local project using OpenSpec and AssuredLoop workflow tooling.",
   "scripts": {
     "assuredloop": "assuredloop",
-    "openspec": "openspec"
+    "openspec": "openspec",
+    "test": "node --test test/*.test.js"
   },
   "engines": {
     "node": ">=20.19.0"
@@ -13,5 +23,8 @@
   "devDependencies": {
     "@fission-ai/openspec": "file:../../guwenqing/assuredloop-base/node_modules/@fission-ai/openspec",
     "assuredloop-base": "file:../../guwenqing/assuredloop-base"
+  },
+  "dependencies": {
+    "yaml": "2.9.0"
   }
 }
