@@ -1,0 +1,7 @@
+node_modules/
+local-data/
+*.tgz
+.DS_Store
+.env
+.env.*
+!.env.example

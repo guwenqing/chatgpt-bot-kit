@@ -1,0 +1,89 @@
+# ChatGPT Bot Kit
+
+Local project scaffold with OpenSpec for spec-driven planning and the local
+AssuredLoop package for workflow guidance and checks. Product requirements and
+the application runtime have not been chosen yet.
+
+## Installed tooling
+
+Requires Node.js >=20.19.0, npm and Git.
+
+| Tool | Version at setup | Local source |
+| --- | --- | --- |
+| AssuredLoop Base | 0.1.0 | `/Users/q/projects/guwenqing/assuredloop-base` |
+| OpenSpec | 1.12.0 | The dependency installed in that AssuredLoop checkout |
+
+Both packages were installed with `npm link`. Their local file references are
+saved in `package.json` and `package-lock.json`. This setup depends on the local
+checkout and its installed dependencies. Source edits take effect immediately;
+these links are not immutable release pins.
+
+The AssuredLoop checkout was clean at setup, at commit
+`74fcd7b8e0b3257965fc7d517ef18dabea1ef611`. Its generated contracts identify
+`guwenqing/assuredloop-base`, revision
+`9dfe8524072aec0f896dd7bacb345d7ed6471aac`, path `openspec/specs`.
+
+To recreate the links from this project's root:
+
+```sh
+npm link ../../guwenqing/assuredloop-base ../../guwenqing/assuredloop-base/node_modules/@fission-ai/openspec --save-dev --ignore-scripts --offline --no-audit --no-fund
+```
+
+This also registers the two CLI packages in npm's global link directory.
+Project commands resolve through this project's `node_modules/.bin`:
+
+```sh
+npm run assuredloop -- --help
+npm run openspec -- --help
+npm ls --depth=0
+```
+
+## Start a specification
+
+OpenSpec is initialized with the native `spec-driven` schema and its core Codex
+skills in `.agents/skills/`. In Codex, explicitly invoke:
+
+```text
+$openspec-propose "Describe the first feature and its acceptance criteria"
+```
+
+Review the generated proposal, design, specification changes and tasks before
+starting implementation. Current product specifications belong in
+`openspec/specs/`; proposed changes belong in `openspec/changes/`.
+
+Inspect the current planning state with:
+
+```sh
+npm run openspec -- list
+npm run openspec -- list --specs
+```
+
+## AssuredLoop status
+
+The CLI, record schemas, framework contracts and guidance are available through
+`node_modules/assuredloop-base/`. AssuredLoop adds work categorization,
+traceability, review evidence, validation and closeout guidance around OpenSpec.
+Its package README describes those capabilities and their limits.
+
+The GitHub repository is `guwenqing/chatgpt-bot-kit`. There is not yet an accepted
+AssuredLoop consumer configuration. Full adoption and activation are being
+prepared. Even
+`assuredloop init --local-only` requires a matching GitHub origin and a complete
+configuration with real policy and acceptance references; the flag only skips
+remote checks. No placeholder repository identity or acceptance evidence has
+been created. AssuredLoop's consumer skills, CI and automated review are not
+configured here.
+
+When this project becomes official, select its GitHub identity, prepare and
+approve its workflow policy, then preview and apply the documented AssuredLoop
+initialization. Activation is a separate acceptance step.
+
+## Later: test a fixed package installation
+
+Use `npm pack` on a selected AssuredLoop revision to produce a private tarball,
+record its npm integrity, and install that tarball in a separate test consumer.
+Use OpenSpec 1.12.0 as required by this AssuredLoop version. This exercises the
+package's shipped files without following live source edits. Replace the local
+file references with the chosen release artifacts and a reviewed lockfile when
+preparing a portable installation. AssuredLoop is currently private and does
+not require an npm registry publication for this test.

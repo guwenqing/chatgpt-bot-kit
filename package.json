@@ -1,0 +1,17 @@
+{
+  "name": "chatgpt-bot-kit",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local project using OpenSpec and AssuredLoop workflow tooling.",
+  "scripts": {
+    "assuredloop": "assuredloop",
+    "openspec": "openspec"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "devDependencies": {
+    "@fission-ai/openspec": "file:../../guwenqing/assuredloop-base/node_modules/@fission-ai/openspec",
+    "assuredloop-base": "file:../../guwenqing/assuredloop-base"
+  }
+}
