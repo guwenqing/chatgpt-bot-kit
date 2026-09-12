@@ -25,7 +25,7 @@ export function absolute(value, field) {
   if (typeof value !== 'string' || !path.isAbsolute(value)) fail(`${field} must be an absolute path.`);
   return path.resolve(value);
 }
-function rootPath(value) {
+export function rootPath(value) {
   const root = absolute(value, '--workspace');
   if (stat(root) && !fs.statSync(root).isDirectory()) fail(`Workspace must be a directory: ${root}`);
   return root;
@@ -33,7 +33,7 @@ function rootPath(value) {
 
 // The selected root may use a normal user path alias. Managed descendants must
 // not redirect reads or writes through symlinks.
-function safePath(root, relative, type = 'file') {
+export function safePath(root, relative, type = 'file') {
   let file = root;
   const parts = relative.split('/');
   for (const [index, part] of parts.entries()) {
@@ -111,7 +111,7 @@ function registryPath(father, entry) {
   if (path.posix.basename(relative) !== 'bot.yaml') fail('Registry config path must identify a bot.yaml file.');
   return relative;
 }
-function loadState(root) {
+export function loadState(root) {
   const inputs = new Map();
   const missing = new Map();
   const input = (file) => { const text = read(root, file); inputs.set(file, text); return text; };
@@ -182,7 +182,7 @@ function atomicWrite(root, relative, text) {
   try { fs.writeFileSync(temporary, text, { flag: 'wx', mode: stat(file)?.mode ?? 0o600 }); fs.renameSync(temporary, file); }
   finally { if (stat(temporary)) fs.unlinkSync(temporary); }
 }
-function apply(state, outputs, directories, expectedRevision, external) {
+export function apply(state, outputs, directories, expectedRevision, external, { operations = [], check = () => {} } = {}) {
   if (expectedRevision !== undefined && expectedRevision !== state.revision) fail('Workspace revision changed. Inspect the latest configuration and reconcile before retrying.');
   for (const directory of directories) safePath(state.root, directory, 'directory');
   for (const file of outputs.keys()) safePath(state.root, file);
@@ -190,24 +190,30 @@ function apply(state, outputs, directories, expectedRevision, external) {
   const lock = safePath(state.root, lockFile);
   if (stat(lock)) fail(`Workspace writer lock exists: ${lock}. Wait for its owner; inspect and remove it only after verifying the writer is no longer active.`);
   const completed = []; let descriptor;
+  const verify = () => {
+    checkInputs(state, external); check();
+    const held = fs.fstatSync(descriptor); const current = stat(lock);
+    if (!current || current.ino !== held.ino || current.dev !== held.dev) fail('Workspace writer lock changed. Stop and inspect the active writer before retrying.');
+  };
   try {
     fs.mkdirSync(path.dirname(lock), { recursive: true });
     descriptor = fs.openSync(lock, 'wx', 0o600);
     fs.writeFileSync(descriptor, `${JSON.stringify({ pid: process.pid, started_at: new Date().toISOString() })}\n`);
-    checkInputs(state, external);
+    verify();
     for (const directory of directories) {
+      verify();
       const full = safePath(state.root, directory, 'directory');
       if (!stat(full)) { fs.mkdirSync(full, { recursive: true }); completed.push(directory); }
     }
     for (const [file, text] of writes) {
-      checkInputs(state, external);
-      const held = fs.fstatSync(descriptor); const current = stat(lock);
-      if (!current || current.ino !== held.ino || current.dev !== held.dev) fail('Workspace writer lock changed. Stop and inspect the active writer before retrying.');
+      verify();
       atomicWrite(state.root, file, text); state.inputs.set(file, text); completed.push(file);
     }
+    for (const operation of operations) { verify(); operation.run(); completed.push(operation.file); }
+    verify();
     return completed;
   } catch (error) {
-    error.progress = { completed, pending_files: writes.map(([file]) => file).filter((file) => !completed.includes(file)), recovery: 'Inspect the reported paths, resolve the conflict and rerun. Existing user work was not rolled back.' };
+    error.progress = { completed, pending_files: [...writes.map(([file]) => file), ...operations.map(({ file }) => file)].filter((file) => !completed.includes(file)), recovery: 'Inspect the reported paths, resolve the conflict and rerun. Existing user work was not rolled back.' };
     throw error;
   } finally {
     if (descriptor !== undefined) {
@@ -229,12 +235,12 @@ function result(state, status, bot, changed = []) {
   return { status, workspace: state.root, bot_root: path.join(state.root, bot.directory), native_ready: false,
     revision: state.revision, directory: directory(state), changed };
 }
-function selected(state, id) {
+export function selected(state, id) {
   const bot = state.bots.get(id);
   if (!bot?.value) fail(`Unknown or missing bot identity: ${id}. Inspect registry.yaml before choosing a bot.`);
   return bot;
 }
-function established(state) {
+export function established(state) {
   if (state.missing.size) fail('Workspace preparation is incomplete. Run prepare before managing bots.');
 }
 export function prepareWorkspace(selectedRoot, { inspect = false, expectedRevision, bot: id = 'bot-father' } = {}) {

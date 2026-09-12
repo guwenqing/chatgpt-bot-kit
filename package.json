@@ -9,6 +9,7 @@
   "files": [
     "src/",
     "templates/",
+    "skills/",
     "README.md"
   ],
   "description": "Local project using OpenSpec and AssuredLoop workflow tooling.",
