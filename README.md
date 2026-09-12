@@ -18,8 +18,9 @@ saved in `package.json` and `package-lock.json`. This setup depends on the local
 checkout and its installed dependencies. Source edits take effect immediately;
 these links are not immutable release pins.
 
-The AssuredLoop checkout was clean at setup, at commit
-`74fcd7b8e0b3257965fc7d517ef18dabea1ef611`. Its generated contracts identify
+The activation selection uses source commit
+`7343ffc7518200ce80437a9c914448dd6f176a35`;
+see `.assuredloop/README.md` for reproducible provenance. Its generated contracts identify
 `guwenqing/assuredloop-base`, revision
 `9dfe8524072aec0f896dd7bacb345d7ed6471aac`, path `openspec/specs`.
 
@@ -65,18 +66,18 @@ The CLI, record schemas, framework contracts and guidance are available through
 traceability, review evidence, validation and closeout guidance around OpenSpec.
 Its package README describes those capabilities and their limits.
 
-The GitHub repository is `guwenqing/chatgpt-bot-kit`. There is not yet an accepted
-AssuredLoop consumer configuration. Full adoption and activation are being
-prepared. Even
-`assuredloop init --local-only` requires a matching GitHub origin and a complete
-configuration with real policy and acceptance references; the flag only skips
-remote checks. No placeholder repository identity or acceptance evidence has
-been created. AssuredLoop's consumer skills, CI and automated review are not
-configured here.
+The GitHub repository is `guwenqing/chatgpt-bot-kit`. The adoption branch contains
+the owner-accepted consumer configuration and seven generated AssuredLoop skills.
+See `.assuredloop/policy.md` for the exact proposed policy and
+`.assuredloop/README.md` for package provenance, current acceptance state and
+operations. The actual owner decision is referenced in the configuration;
+bootstrap delivery and the later activation remain separately verified steps.
+CI and automated review are not configured. PR merges use squash.
 
-When this project becomes official, select its GitHub identity, prepare and
-approve its workflow policy, then preview and apply the documented AssuredLoop
-initialization. Activation is a separate acceptance step.
+The initializer can write a config without accepted bootstrap references; that
+installs files but cannot establish an accepted policy. Its `--local-only` flag
+only skips remote checks and still requires a matching GitHub origin. Accepted
+bootstrap must be delivered before the separately assessed activation checkpoint.
 
 ## Later: test a fixed package installation
 
