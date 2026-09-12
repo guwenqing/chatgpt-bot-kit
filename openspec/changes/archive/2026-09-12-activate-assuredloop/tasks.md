@@ -23,3 +23,7 @@ Work Issue: [Closeout](https://github.com/guwenqing/chatgpt-bot-kit/issues/6)
 
 - [ ] 3.1 Verify aggregate adoption delivery and the accepted zero-spec-delta boundary; capture an acceptance manifest preserving real historical evidence and gaps, then validate and independently review the native archive candidate.
 - [ ] 3.2 Squash-merge the reviewed closeout, verify the actual archive and active destination, then close the closeout Issue and Epic on that evidence.
+
+The archive preserves this pre-merge snapshot. Final independent review, merge,
+post-merge verification and closure are recorded on Issue #6 when they occur;
+these lifecycle checkboxes are not pre-completed to make an archive appear done.

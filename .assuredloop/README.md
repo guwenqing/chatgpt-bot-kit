@@ -30,7 +30,9 @@ squash merge for this repository's PRs, recorded in `AGENTS.md`. Planning is tra
 adoption and activation in [Issue #3](https://github.com/guwenqing/chatgpt-bot-kit/issues/3).
 Both are native children of [Epic #1](https://github.com/guwenqing/chatgpt-bot-kit/issues/1),
 along with the separate aggregate [closeout Issue #6](https://github.com/guwenqing/chatgpt-bot-kit/issues/6).
-The native plan is `openspec/changes/activate-assuredloop/`.
+The native plan and acceptance manifest are preserved in
+[the archived adoption change](../openspec/changes/archive/2026-09-12-activate-assuredloop/).
+The archive is a pre-merge snapshot; actual final delivery is recorded on Issue #6.
 
 ## Selected package
 
@@ -71,8 +73,17 @@ Run commands from this project with explicit target/work bindings:
 ```sh
 npm run assuredloop -- inspect --target "$PWD" --work guwenqing/chatgpt-bot-kit#3
 npm run assuredloop -- check --target "$PWD" --work guwenqing/chatgpt-bot-kit#3
-npm run openspec -- validate activate-assuredloop --strict --no-interactive
+npm run openspec -- list
 ```
+
+For a current proposed change, validate it with its actual name:
+
+```sh
+npm run openspec -- validate <change-name> --strict --no-interactive
+```
+
+An archived change is a fixed historical snapshot; its final review and delivery
+remain linked through GitHub.
 
 The initializer can be previewed against the actual config:
 
