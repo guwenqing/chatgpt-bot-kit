@@ -8,7 +8,7 @@ Basis: `conversational-onboarding`, `bot-workspaces-and-guidance`; design D1–D
 - [x] 1.2 Add the local npm CLI/package asset entry and pinned YAML dependency; verify targeted entry/validation tests and package-relative asset resolution without a development checkout.
 - [x] 1.3 Implement versioned workspace/bot configuration and creation of only Bot Father with conflict-aware resumable preparation; verify repeated and interrupted runs preserve existing files and create no duplicate local identities.
 - [x] 1.4 Implement guidance composition, direct-edit preservation, shared memory location and target-rule guidance; verify regeneration conflicts, unchanged user regions and invalid/concurrent-write rejection with the independent tests.
-- [ ] 1.5 Obtain independent full-scope review, resolve findings and deliver the scoped squash PR to main; verify the merged files and record actual delivery evidence before declaring this group complete.
+- [x] 1.5 Obtain independent full-scope review, resolve findings and deliver the scoped squash PR to main; verify the merged files and record actual delivery evidence before declaring this group complete.
 
 ## 2. Conversational bot management and migration
 

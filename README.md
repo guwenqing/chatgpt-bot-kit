@@ -1,8 +1,9 @@
 # ChatGPT Bot Kit
 
 A local utility for bot workspaces in the Codex desktop app. The first delivered
-component prepares Bot Father's files and preserves user configuration. Native
-project/session setup and the wider conversational flows are being delivered
+component prepares Bot Father's files and preserves user configuration. Bot
+management and migration commands prepare additional roles and verify selected
+working files. Native project/session setup and the wider conversational flows are being delivered
 through the accepted `local-bot-kit` plan.
 
 ## Prepare a workspace
@@ -51,8 +52,29 @@ The private package can be exercised without the development workflow links:
 run `npm pack`, then install the resulting tarball in a separate local directory
 with `npm install --omit=dev /absolute/path/to/chatgpt-bot-kit-0.0.0.tgz`.
 Use its `node_modules/.bin/bot-kit` entry with the same arguments. No npm registry
-publication is needed. `npm test` runs the scoped preparation acceptance tests,
+publication is needed. `npm test` runs the scoped CLI acceptance tests,
 including a clean packed installation.
+
+## Manage bots and inherit work
+
+The [conversational management guide](templates/bot-management.md) covers role
+creation, additional conversations, native setup and migration. An assistant can
+turn a request such as “Create a personal helper and bring my unfinished list”
+into configuration and guided native steps. The user need not author YAML.
+
+`create-bot` and `configure-bot` accept `--workspace`, `--config` and an optional
+`--expected-revision`. `inspect` returns current directory entries and separate
+native observations; `regenerate --bot ID` targets one bot. A bot owns one shared
+workspace even when its conversations have different prompts or model settings.
+`record-native` stores supplied surface-specific evidence and keeps
+`native_ready: false`; files and receipts alone do not establish desktop entry.
+
+`inventory --source ABSOLUTE_PATH [--output ABSOLUTE_YAML]` records selected
+working files, including ignored and unfinished work. `verify-migration
+--inventory ABSOLUTE_YAML --destination ABSOLUTE_PATH` checks a chosen transfer
+without changing its source or destination. Inspect its JSON `status`: an
+`incomplete` assessment also exits with code 0. Native conversation continuity
+and a receiving bot's actual continuation require separate verification.
 
 ## Installed tooling
 
