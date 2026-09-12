@@ -8,7 +8,7 @@ Basis: `conversational-onboarding`, `bot-workspaces-and-guidance`; design D1–D
 - [x] 1.2 Add the local npm CLI/package asset entry and pinned YAML dependency; verify targeted entry/validation tests and package-relative asset resolution without a development checkout.
 - [x] 1.3 Implement versioned workspace/bot configuration and creation of only Bot Father with conflict-aware resumable preparation; verify repeated and interrupted runs preserve existing files and create no duplicate local identities.
 - [x] 1.4 Implement guidance composition, direct-edit preservation, shared memory location and target-rule guidance; verify regeneration conflicts, unchanged user regions and invalid/concurrent-write rejection with the independent tests.
-- [ ] 1.5 Obtain independent full-scope review, resolve findings and deliver the scoped squash PR to main; verify the merged files and record actual delivery evidence before declaring this group complete.
+- [x] 1.5 Obtain independent full-scope review, resolve findings and deliver the scoped squash PR to main; verify the merged files and record actual delivery evidence before declaring this group complete.
 
 ## 2. Conversational bot management and migration
 
@@ -16,10 +16,10 @@ Work Issue: [Deliver conversational bot management and work migration](https://g
 
 Basis: `conversational-onboarding`, `bot-management-and-migration`, `bot-workspaces-and-guidance`; design D2–D5. Journeys U1–U4, U10, U11. Prerequisite: delivered group 1.
 
-- [ ] 2.1 Independently author and run failing tests for directory/session settings, native identity/readiness reconciliation and migration inventory; include dirty/untracked state, unavailable native operations and loaded-source handling.
-- [ ] 2.2 Implement management configuration/receipts and guidance for creating/modifying bots and native local conversations; verify shared bot workspace, distinct prompts/settings, default destination and no silent model/worktree substitution.
-- [ ] 2.3 Complete or guide actual project registration and daily-entry setup on the supported desktop; verify from the relevant surface/user observation, including resumable incomplete association, rather than only a backend write.
-- [ ] 2.4 Implement migration preparation and agent guidance for resume/fork/context transfer and selected file clone/restoration/copy; verify a synthetic unfinished-work transfer, source preservation and explicit unsupported states using the independent cases.
+- [x] 2.1 Independently author and run failing tests for directory/session settings, native identity/readiness reconciliation and migration inventory; include dirty/untracked state, unavailable native operations and loaded-source handling.
+- [x] 2.2 Implement management configuration/receipts and guidance for creating/modifying bots and native local conversations; verify shared bot workspace, distinct prompts/settings, default destination and no silent model/worktree substitution.
+- [x] 2.3 Complete or guide actual project registration and daily-entry setup on the supported desktop; verify from the relevant surface/user observation, including resumable incomplete association, rather than only a backend write.
+- [x] 2.4 Implement migration preparation and agent guidance for resume/fork/context transfer and selected file clone/restoration/copy; verify a synthetic unfinished-work transfer, source preservation and explicit unsupported states using the independent cases.
 - [ ] 2.5 Exercise creation of a nontechnical personal bot and a technical bot, including one receiving inherited work; retain observable entry/continuation evidence, independent review and verified squash delivery to main.
 
 ## 3. Skill assembly and starter guidance

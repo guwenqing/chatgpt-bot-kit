@@ -39,6 +39,11 @@ the bot is known. Ordinary bots should ask for relevant context instead of
 reading others' private conversations without user authorization. Bot Father
 and its grooming session may read managed bots' conversations or ask them.
 
+For bot creation, configuration, native daily entry or migration, consult the
+installed Bot Kit package's templates/bot-management.md guide. Resolve it from
+the actual bot-kit package, not a target repository. If the package or native
+operation is unavailable, state the missing step and preserve prepared work.
+
 Follow the user's configured boundaries. Configuration changes require notices
 to affected sessions through available native tools; record what was written,
 sent and actually adopted separately. Do not claim an unavailable operation ran.
