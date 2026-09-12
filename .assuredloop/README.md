@@ -5,12 +5,18 @@ Selected integration: Codex, with native and AssuredLoop skills in `.agents/skil
 
 ## Acceptance state
 
-The owner accepted the fixed policy and ordered delivery in PR #4. The config
-references the actual policy/proposal acceptance record. This candidate delivers
-accepted bootstrap; activation remains a later independently reviewed checkpoint.
-Until delivery, this is native/manual bootstrap only. Read `.assuredloop/config.json` and, once present,
-`.assuredloop/activation.json` at the actual destination's pre-change revision.
-Never treat the working copy or candidate PR as its own acceptance authority.
+The owner accepted the fixed policy and ordered delivery in PR #4. Accepted
+bootstrap was squash-merged in commit `151cf5dd8fc50b106f8fbb40051da5c8addd2f38`,
+and live default-branch resolution verified `bootstrap` mode there. The config
+references the real policy/proposal acceptance record.
+
+`activation.json` selects the later checkpoint and cites the owner decision,
+independent usable-base review and actual bootstrap delivery evidence. Its timestamp
+records checkpoint preparation; actual delivery is established by the PR merge.
+The checkpoint takes effect when delivered to the destination, after its independent
+review under the previously accepted bootstrap. Read both configuration and
+activation at the actual destination's pre-change revision. Never treat a working
+copy or candidate PR as its own acceptance authority.
 
 The exact consumer choices are in `policy.md`; the owner additionally requires
 squash merge for this repository's PRs, recorded in `AGENTS.md`. Planning is tracked in

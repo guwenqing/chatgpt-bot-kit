@@ -13,6 +13,6 @@ Work Issue: [Adoption](https://github.com/guwenqing/chatgpt-bot-kit/issues/3)
 - [x] 2.2 Capture the selected npm package SRI and source/dependency provenance; verify links, package assets and installed versions.
 - [x] 2.3 Apply explicit consumer initialization; verify exactly eight generated files, an unchanged repeat preview and preserved native OpenSpec artifacts.
 - [x] 2.4 Exercise wrong-repository, missing-binding and unavailable-policy cases; verify they cannot produce accepted or active results.
-- [ ] 2.5 Add real fixed-policy/proposal acceptance references to bootstrap, validate and independently review the final candidate, then verify accepted delivery in main.
+- [x] 2.5 Add real fixed-policy/proposal acceptance references to bootstrap, validate and independently review the final candidate, then verify accepted delivery in main.
 - [ ] 2.6 Prepare activation in a later branch against main's accepted bootstrap; verify complete schema, live references, pre-change policy selection and independent review before authorized delivery.
 - [ ] 2.7 Verify the delivered default-branch policy resolves in activation mode, update current setup instructions and publish actual delivery evidence.
