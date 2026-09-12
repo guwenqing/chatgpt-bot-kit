@@ -81,6 +81,17 @@ without changing its source or destination. Inspect its JSON `status`: an
 `incomplete` assessment also exits with code 0. Native conversation continuity
 and a receiving bot's actual continuation require separate verification.
 
+## Choose skills
+
+The [skill management guide](templates/skill-management.md) explains bundled,
+local and repository sources, explicit recipients, copy/link sharing and a
+bounded scan choice. `install-skill --workspace ABS --config ABS_YAML` prepares
+the selected files and records their source; `inspect-skills --workspace ABS
+[--bot ID]` also lists direct unmanaged installations. Use `--expected-revision`
+with installation to reject stale configuration. Existing content is preserved
+on a conflict. The assistant must separately verify native discovery from each
+recipient and actual procedure execution before reporting those outcomes.
+
 ## Installed tooling
 
 Requires Node.js >=20.19.0, npm and Git.

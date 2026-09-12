@@ -20,7 +20,7 @@ Basis: `conversational-onboarding`, `bot-management-and-migration`, `bot-workspa
 - [x] 2.2 Implement management configuration/receipts and guidance for creating/modifying bots and native local conversations; verify shared bot workspace, distinct prompts/settings, default destination and no silent model/worktree substitution.
 - [x] 2.3 Complete or guide actual project registration and daily-entry setup on the supported desktop; verify from the relevant surface/user observation, including resumable incomplete association, rather than only a backend write.
 - [x] 2.4 Implement migration preparation and agent guidance for resume/fork/context transfer and selected file clone/restoration/copy; verify a synthetic unfinished-work transfer, source preservation and explicit unsupported states using the independent cases.
-- [ ] 2.5 Exercise creation of a nontechnical personal bot and a technical bot, including one receiving inherited work; retain observable entry/continuation evidence, independent review and verified squash delivery to main.
+- [x] 2.5 Exercise creation of a nontechnical personal bot and a technical bot, including one receiving inherited work; retain observable entry/continuation evidence, independent review and verified squash delivery to main.
 
 ## 3. Skill assembly and starter guidance
 
@@ -28,9 +28,9 @@ Work Issue: [Deliver skill assembly and selectable starter guidance](https://git
 
 Basis: `skill-assembly`; design D6 and D3. Journeys U2, U4, U7, U10, U11. Prerequisites: delivered groups 1–2.
 
-- [ ] 3.1 Independently author and run failing tests for selected local/repository/copy/link/shared installation, collisions, broken links, direct unmanaged inputs and recipient-discovery state.
-- [ ] 3.2 Implement source preparation and inspectable skill selections/modes with conflict handling; verify file results and the distinction between copied snapshots and moving symlinks through the independent tests.
-- [ ] 3.3 Provide selectable management, development, architecture/review, personal facilitation and Claude-handoff guidance without auto-creating those bots or imposing this repo's development policy; verify each guide's inputs, boundaries and referenced assets by independent semantic review.
+- [x] 3.1 Independently author and run failing tests for selected local/repository/copy/link/shared installation, collisions, broken links, direct unmanaged inputs and recipient-discovery state.
+- [x] 3.2 Implement source preparation and inspectable skill selections/modes with conflict handling; verify file results and the distinction between copied snapshots and moving symlinks through the independent tests.
+- [x] 3.3 Provide selectable management, development, architecture/review, personal facilitation and Claude-handoff guidance without auto-creating those bots or imposing this repo's development policy; verify each guide's inputs, boundaries and referenced assets by independent semantic review.
 - [ ] 3.4 Demonstrate a local skill and a shared repository skill discovered from recipient bot roots, exercise one procedure, and offer the scan choice; record real discovery/execution separately and complete reviewed squash delivery.
 
 ## 4. Collaboration, configuration notices and grooming
