@@ -9,11 +9,11 @@ function text(value, field) {
 function clean(value) {
   // Auth probe output is never returned. Retain useful execution text while
   // removing recognizable credentials and actual secret environment values.
-  let result = value.slice(0, 65536);
+  let result = value;
   for (const [name, secret] of Object.entries(process.env)) {
     if (/(?:TOKEN|API_KEY|PASSWORD|SECRET)/i.test(name) && secret.length >= 8) result = result.split(secret).join('[redacted]');
   }
-  return result.replace(/\b(?:sk-ant-[A-Za-z0-9_-]+|sk-[A-Za-z0-9_-]{20,})\b/g, '[redacted]').replace(/(Bearer\s+)[A-Za-z0-9._~-]+/gi, '$1[redacted]');
+  return result.replace(/\b(?:sk-ant-[A-Za-z0-9_-]+|sk-[A-Za-z0-9_-]{20,})\b/g, '[redacted]').replace(/(Bearer\s+)[A-Za-z0-9._~-]+/gi, '$1[redacted]').slice(0, 65536);
 }
 function invoke(executable, args, cwd, timeout) {
   return spawnSync(executable, args, { cwd, shell: false, encoding: 'utf8', timeout, killSignal: 'SIGKILL', maxBuffer: 1024 * 1024 });
