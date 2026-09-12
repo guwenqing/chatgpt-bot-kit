@@ -39,18 +39,30 @@ npm run openspec -- --help
 npm ls --depth=0
 ```
 
-## Start a specification
+## Start work
 
-OpenSpec is initialized with the native `spec-driven` schema and its core Codex
-skills in `.agents/skills/`. In Codex, explicitly invoke:
+Capture the goal in a GitHub Request, preserving the original requirement. In
+Codex, explicitly invoke the intake skill with that Issue's repository and number:
 
 ```text
-$openspec-propose "Describe the first feature and its acceptance criteria"
+$assuredloop-triage guwenqing/chatgpt-bot-kit#<request-number>
 ```
 
-Review the generated proposal, design, specification changes and tasks before
-starting implementation. Current product specifications belong in
-`openspec/specs/`; proposed changes belong in `openspec/changes/`.
+Work needing a new agreement goes to a separately assigned Architecture Task for
+planning. Use an Epic when the work needs a container, with native GitHub
+sub-issues for planning, delivery and aggregate closeout. Keep actual prerequisite
+dependencies separate from parent membership. A bounded fix to an existing
+accepted requirement can route directly to a Task or Bug.
+
+Invoke `$assuredloop-plan` with the assigned planning Issue to develop the native
+OpenSpec proposal, design, specifications and tasks. OpenSpec uses its native
+`spec-driven` schema; both native and AssuredLoop skills are in `.agents/skills/`.
+The owner accepts a new or materially changed proposal before implementation.
+Assigned delivery then uses `$assuredloop-deliver`, applicable verification,
+independent Astra review and authorized squash merge.
+
+Current product specifications belong in `openspec/specs/`; proposed changes
+belong in `openspec/changes/`. This tooling adoption introduces no product specs.
 
 Inspect the current planning state with:
 
@@ -71,8 +83,10 @@ the owner-accepted consumer configuration and seven generated AssuredLoop skills
 See `.assuredloop/policy.md` for the accepted policy and
 `.assuredloop/README.md` for package provenance, current acceptance state and
 operations. The actual owner decision is referenced in the configuration;
-accepted bootstrap was delivered in PR #4. The separately reviewed activation
-checkpoint is `.assuredloop/activation.json`, effective after its delivery.
+accepted bootstrap was delivered in PR #4. The independently reviewed activation
+checkpoint was squash-merged in [PR #5](https://github.com/guwenqing/chatgpt-bot-kit/pull/5)
+at `874cb73a3ef52423231d48f66d3db932dcf40f44`. Live default-branch resolution
+verified `available / activation`; its actual evidence is recorded on that PR.
 CI and automated review are not configured. PR merges use squash.
 
 The initializer can write a config without accepted bootstrap references; that

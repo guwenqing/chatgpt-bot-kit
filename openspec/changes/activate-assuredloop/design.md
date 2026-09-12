@@ -73,3 +73,20 @@ independent review, and explicitly requested squash merges. The actual decision
 is recorded in PR #4 and referenced by `project.bootstrap` in the consumer config.
 Implementation now proceeds within that accepted scope; changed scope still
 returns to the owner.
+
+### Aggregate handoff after Epic routing correction
+
+The owner clarified that the original request should be the Epic container for
+its independently assigned work. Issue #1 preserves that request; planning #2,
+adoption #3 and owner-led closeout #6 are native sub-issues. Adoption retains its
+actual planning prerequisite. Closeout waits for planning and adoption delivery;
+parent membership creates no execution dependency on the Epic.
+
+Task 2.7 remains adoption's documentation and actual activation verification.
+The separate closeout captures aggregate acceptance and original evidence fixity,
+including the honest absent-policy fields of initial bootstrap. This accepted
+tooling change has `skip_specs: true`, so native synchronization verifies that no
+product delta is required before archiving the completed change. Independent
+review and squash delivery precede actual archive verification and Epic closure.
+This bounded lifecycle handoff adds no product behavior, package rebind or
+framework release/self-change demonstration.
