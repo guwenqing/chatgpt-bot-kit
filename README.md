@@ -66,12 +66,13 @@ The CLI, record schemas, framework contracts and guidance are available through
 traceability, review evidence, validation and closeout guidance around OpenSpec.
 Its package README describes those capabilities and their limits.
 
-The GitHub repository is `guwenqing/chatgpt-bot-kit`. The adoption branch contains
+The GitHub repository is `guwenqing/chatgpt-bot-kit`. The repository contains
 the owner-accepted consumer configuration and seven generated AssuredLoop skills.
-See `.assuredloop/policy.md` for the exact proposed policy and
+See `.assuredloop/policy.md` for the accepted policy and
 `.assuredloop/README.md` for package provenance, current acceptance state and
 operations. The actual owner decision is referenced in the configuration;
-bootstrap delivery and the later activation remain separately verified steps.
+accepted bootstrap was delivered in PR #4. The separately reviewed activation
+checkpoint is `.assuredloop/activation.json`, effective after its delivery.
 CI and automated review are not configured. PR merges use squash.
 
 The initializer can write a config without accepted bootstrap references; that

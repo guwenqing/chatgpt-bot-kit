@@ -5,12 +5,18 @@ Selected integration: Codex, with native and AssuredLoop skills in `.agents/skil
 
 ## Acceptance state
 
-The owner accepted the fixed policy and ordered delivery in PR #4. The config
-references the actual policy/proposal acceptance record. This candidate delivers
-accepted bootstrap; activation remains a later independently reviewed checkpoint.
-Until delivery, this is native/manual bootstrap only. Read `.assuredloop/config.json` and, once present,
-`.assuredloop/activation.json` at the actual destination's pre-change revision.
-Never treat the working copy or candidate PR as its own acceptance authority.
+The owner accepted the fixed policy and ordered delivery in PR #4. Accepted
+bootstrap was squash-merged in commit `151cf5dd8fc50b106f8fbb40051da5c8addd2f38`,
+and live default-branch resolution verified `bootstrap` mode there. The config
+references the real policy/proposal acceptance record.
+
+`activation.json` selects the later checkpoint and cites the owner decision,
+independent usable-base review and actual bootstrap delivery evidence. Its timestamp
+records checkpoint preparation; actual delivery is established by the PR merge.
+The checkpoint takes effect when delivered to the destination, after its independent
+review under the previously accepted bootstrap. Read both configuration and
+activation at the actual destination's pre-change revision. Never treat a working
+copy or candidate PR as its own acceptance authority.
 
 The exact consumer choices are in `policy.md`; the owner additionally requires
 squash merge for this repository's PRs, recorded in `AGENTS.md`. Planning is tracked in
@@ -75,3 +81,22 @@ Native/manual artifact checks and independent Astra reviews supply initial
 assurance. No automatic CI, branch protection, scheduler or external-review
 provider is configured. Missing policy, unavailable references and incomplete
 evidence remain visible limitations, never successful activation.
+
+## Initial bootstrap evidence limitation
+
+PR #4 predates any accepted destination configuration. Its real owner decision,
+independent reviews and verified squash delivery are native/manual bootstrap
+evidence, as permitted by the framework's self-evolution contract and shared
+template guidance. Its missing historical policy/config fields must not be invented.
+Later CLI checks of planning prerequisite #2 currently recognize the merged PR
+and task coverage but report `delivery-review-missing` and `evidence-missing`
+because they only count structured Evidence. This is tracked in
+[AssuredLoop #25](https://github.com/guwenqing/assuredloop-base/issues/25).
+
+The activation reviewer must independently establish that specific prerequisite
+from the original scope, actual owner decision, separate-session reviews, merge
+metadata, tree equality and task coverage. Preserve the CLI's incomplete/invalid
+result as a diagnostic limitation; do not call it PASS. Current activation and
+later work still need their complete applicable assessment records under the
+accepted pre-change policy. This historical bootstrap boundary is not a general
+waiver for missing evidence.
