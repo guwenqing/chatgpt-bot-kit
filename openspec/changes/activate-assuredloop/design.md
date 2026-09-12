@@ -21,8 +21,7 @@ does not modify executable behavior and therefore uses artifact checks and revie
 
 ### Local links and reproducible identity
 
-Keep the requested npm links. Record the selected source base commit, the exact
-documentation overlay in `.assuredloop/package-source.patch`, contract source,
+Keep the requested npm links. Record the selected fixed source commit, contract source,
 tarball SRI and dependency lock provenance. A link makes source changes immediate;
 formal acceptance stays bound to the reviewed bytes. A tarball installation is
 more portable but would remove that live development behavior, so it remains a

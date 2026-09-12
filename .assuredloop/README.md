@@ -20,8 +20,7 @@ The native plan is `openspec/changes/activate-assuredloop/`.
 
 - Package: `assuredloop-base@0.1.0`.
 - Source repository: `guwenqing/assuredloop-base`.
-- Source base revision: `74fcd7b8e0b3257965fc7d517ef18dabea1ef611`.
-- Exact source overlay: `package-source.patch`, adding reading-scope guidance to `templates/README.md`.
+- Code/assets revision: `7343ffc7518200ce80437a9c914448dd6f176a35`.
 - Canonical contract source: `9dfe8524072aec0f896dd7bacb345d7ed6471aac`, path `openspec/specs`.
 - Tarball integrity: `sha512-qlluADcTol0mYvRs/ERpi95G7faEucIri5Q6/a8rjl8FL7zqbalRKKRKbGTb6hAkfzBf1zXgYNWQ44LXlZ96Ig==`.
 - Source dependency-lock SHA-256: `48532848bae0577d003a79fcbd735d870794d36c7f1e12cc257e04081beed26c`.
@@ -29,12 +28,11 @@ The native plan is `openspec/changes/activate-assuredloop/`.
 
 These values describe this consumer's selected artifact, not the source project's
 own consumer activation. Its historical approvals do not authorize this project.
-The source has that uncommitted documentation overlay; it is included in the
-measured tarball. Reconstruct this selection from the base Git tree plus the
-retained patch in a separate build directory using `git apply --unidiff-zero`,
-then pack with lifecycle scripts disabled and compare the SRI.
-Do not apply the patch again to the live source or reset someone else's changes.
-This consumer selection does not commit or accept an upstream framework release.
+Reconstruct this selection from the fixed source Git tree in a separate build
+directory, pack with lifecycle scripts disabled, and compare the SRI. The selected
+revision includes the reading-scope documentation change observed during adoption.
+Do not reset someone else's live source changes to reproduce an artifact.
+This consumer selection does not accept an upstream framework release.
 The development install uses npm links described in the root README. Resolve
 the links to their actual package roots before work. Retain or recover the exact
 source revision and dependency lock; package name/version alone cannot identify

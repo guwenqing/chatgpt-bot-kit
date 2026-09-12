@@ -18,9 +18,8 @@ saved in `package.json` and `package-lock.json`. This setup depends on the local
 checkout and its installed dependencies. Source edits take effect immediately;
 these links are not immutable release pins.
 
-The initial link used source commit
-`74fcd7b8e0b3257965fc7d517ef18dabea1ef611`. The activation selection also includes
-the exact source documentation overlay retained in `.assuredloop/package-source.patch`;
+The activation selection uses source commit
+`7343ffc7518200ce80437a9c914448dd6f176a35`;
 see `.assuredloop/README.md` for reproducible provenance. Its generated contracts identify
 `guwenqing/assuredloop-base`, revision
 `9dfe8524072aec0f896dd7bacb345d7ed6471aac`, path `openspec/specs`.
