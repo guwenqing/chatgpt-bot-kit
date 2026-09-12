@@ -60,11 +60,11 @@ Basis: `claude-handoff`; design D8. Journeys U2, U4, U6, U9, U11. Prerequisites:
 
 Work Issue: [Verify packaged Bot Kit user journeys and documentation](https://github.com/guwenqing/chatgpt-bot-kit/issues/18)
 
-Basis: all seven capabilities and U1–U11 in design. Prerequisites: delivered groups 1–5. This group owns user documentation and integrated walkthrough evidence; aggregate policy/spec archive decisions remain group 7.
+Basis: all seven capabilities and U1–U11 in design, including the owner sidebar refinement in Request #9 comment5648891464 and D2/D4. Prerequisites: delivered groups 1–5. This group owns user documentation and integrated walkthrough evidence; aggregate policy/spec archive decisions remain group 7.
 
-- [ ] 6.1 Write the copy-paste entry and concise user guidance for setup, daily help, bot/skill management, migration, collaboration, routines, behavior changes and failure recovery; verify every documented action against the implemented entry/capabilities.
+- [ ] 6.1 Write the copy-paste entry and concise user guidance for setup, daily help, bot/skill management, migration, collaboration, routines, behavior changes and failure recovery, including YAML-selected native bot grouping for initial and later bot creation; verify every documented action against the implemented entry/capabilities.
 - [ ] 6.2 Verify npm-linked development and a clean npm-pack installation, including all shipped skill/template assets and no requirement for private KB or source checkout paths; retain exact commands and installation results.
-- [ ] 6.3 Run the U1–U11 walkthrough on the supported actual desktop using synthetic/user-selected data, including an editable personal to-do result, developer/reviewer workspaces, inherited unfinished work, shared skill, async result return, configuration notice and actual grooming firing.
+- [ ] 6.3 Run the U1–U11 walkthrough on the supported actual desktop using synthetic/user-selected data, including an editable personal to-do result, developer/reviewer workspaces, inherited unfinished work, shared skill, async result return, configuration notice and actual grooming firing; verify recognizable native grouping, later creation in the same group, ambiguous/missing-group recovery and preservation of ordinary project organization.
 - [ ] 6.4 Exercise unsupported/unavailable host steps and Claude failure recovery, and revise/open an existing artifact; record required-journey failures against the responsible Issues rather than treating an explanation alone as passing the journey.
 - [ ] 6.5 Obtain independent full-scope acceptance review and deliver any scoped docs/integration corrections through reviewed squash PRs; retain verified main delivery and a complete journey-to-evidence table for closeout.
 
@@ -77,4 +77,4 @@ Basis: the complete accepted change. Prerequisites: delivered groups 1–6 and t
 - [ ] 7.1 Reconcile Request #9 items 1–28, owner R7 addition, every accepted requirement/scenario and U1–U11 against actual integrated deliveries; verify missing outcomes return to their owners and keep the Epic open while gaps remain.
 - [ ] 7.2 Synchronize the complete accepted delta into current OpenSpec requirements using native operations, prepare the archive and compact acceptance/fixity manifest, and run strict validation and source-reference checks.
 - [ ] 7.3 Obtain independent aggregate and archive/manifest review, resolve findings and deliver the closeout squash PR; verify the actual merged specification baseline and archive before closing work records.
-- [ ] 7.4 Record final acceptance/delivery links and close the closeout task, Epic and original Request only for demonstrated scope; end the project continuation hook on actual agreed delivery completion and return the usable entry/artifacts and limits to the owner.
+- [ ] 7.4 Record final acceptance/delivery links and close the closeout task, Epic and original Request only for demonstrated scope; complete the project Goal on actual agreed delivery completion and return the usable entry/artifacts and limits to the owner.

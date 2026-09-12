@@ -30,6 +30,23 @@ The Kit SHALL distinguish prepared files, registered native project, reachable d
 - **THEN** it identifies prior Kit-owned results, resumes incomplete steps and avoids duplicate bots, projects, daily conversations or routines
 - **AND** conflicting existing files or ambiguous native matches are reported before replacement or duplicate creation
 
+### Requirement: Managed bots have a recognizable native group
+
+The Kit SHALL guide initial and later bot creation into a shared, recognizable native sidebar section for the selected managed workspace. The section name SHALL be configurable through YAML, with `🤖 Bots` as the initial suggestion. Stable bot roots and verified native project identities SHALL remain independent of display labels. Guidance SHALL use supported native section and task naming controls, verify actual project placement, and preserve unrelated projects and their organization.
+
+#### Scenario: Another bot is created after onboarding
+- **WHEN** the user creates a further bot in a workspace with a selected native section
+- **THEN** setup resolves that section and the new bot's verified project identity, places that project with the managed bots and checks the native readback before reporting visual grouping complete
+- **AND** it does not create a duplicate section, move unrelated projects or rename filesystem roots to simulate a display-name control
+
+#### Scenario: A group is missing, renamed or ambiguous
+- **WHEN** a prior section receipt no longer matches the observed native group or several groups match its selected name
+- **THEN** setup preserves completed bot preparation, reconciles the native identity and obtains the specific missing choice before creating a duplicate or changing another group
+
+#### Scenario: A cosmetic control is not exposed
+- **WHEN** the user asks for a separate project display name, icon, color or order that the actual native surface cannot verify
+- **THEN** the assistant describes the specific limit and available section/task naming choices without inventing a cosmetic API or editing private host state
+
 ### Requirement: Daily work has understandable progress and results
 
 The conversational guidance SHALL distinguish lasting bot responsibilities from an individual work request. It SHALL provide meaningful progress when needed and identify actionable questions, failure and delivered results from actual evidence. It SHALL return openable artifacts or findings with their location and next action, and support revising the existing result. It SHALL NOT require repeated user continuation messages for already authorized work or claim a live state that the host cannot establish.
