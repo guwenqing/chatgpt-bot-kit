@@ -1,5 +1,7 @@
 ## 1. Workspace, configuration and repeatable preparation
 
+Work Issue: [Deliver Bot Kit workspace and YAML preparation](https://github.com/guwenqing/chatgpt-bot-kit/issues/13)
+
 Basis: `conversational-onboarding`, `bot-workspaces-and-guidance`; design D1–D3. Journeys U1, U10, U11. All executable behavior requires independently authored failing tests before its implementation and a passing rerun with relevant controlled faults. Operational assignment/readiness stays on the linked Work Issue.
 
 - [ ] 1.1 Independently derive and run failing CLI acceptance tests for initial/repeated/partial preparation, invalid YAML, identity collisions, preserved user edits and concurrent changes; retain the actual failure evidence before implementation.
@@ -9,6 +11,8 @@ Basis: `conversational-onboarding`, `bot-workspaces-and-guidance`; design D1–D
 - [ ] 1.5 Obtain independent full-scope review, resolve findings and deliver the scoped squash PR to main; verify the merged files and record actual delivery evidence before declaring this group complete.
 
 ## 2. Conversational bot management and migration
+
+Work Issue: [Deliver conversational bot management and work migration](https://github.com/guwenqing/chatgpt-bot-kit/issues/14)
 
 Basis: `conversational-onboarding`, `bot-management-and-migration`, `bot-workspaces-and-guidance`; design D2–D5. Journeys U1–U4, U10, U11. Prerequisite: delivered group 1.
 
@@ -20,6 +24,8 @@ Basis: `conversational-onboarding`, `bot-management-and-migration`, `bot-workspa
 
 ## 3. Skill assembly and starter guidance
 
+Work Issue: [Deliver skill assembly and selectable starter guidance](https://github.com/guwenqing/chatgpt-bot-kit/issues/15)
+
 Basis: `skill-assembly`; design D6 and D3. Journeys U2, U4, U7, U10, U11. Prerequisites: delivered groups 1–2.
 
 - [ ] 3.1 Independently author and run failing tests for selected local/repository/copy/link/shared installation, collisions, broken links, direct unmanaged inputs and recipient-discovery state.
@@ -28,6 +34,8 @@ Basis: `skill-assembly`; design D6 and D3. Journeys U2, U4, U7, U10, U11. Prereq
 - [ ] 3.4 Demonstrate a local skill and a shared repository skill discovered from recipient bot roots, exercise one procedure, and offer the scan choice; record real discovery/execution separately and complete reviewed squash delivery.
 
 ## 4. Collaboration, configuration notices and grooming
+
+Work Issue: [Deliver bot collaboration notices and native grooming](https://github.com/guwenqing/chatgpt-bot-kit/issues/16)
 
 Basis: `bot-coordination`, `grooming-and-routines`; design D4 and D7. Journeys U5, U6, U8, U10, U11. Prerequisites: delivered groups 2–3.
 
@@ -39,6 +47,8 @@ Basis: `bot-coordination`, `grooming-and-routines`; design D4 and D7. Journeys U
 
 ## 5. Bounded Claude execution
 
+Work Issue: [Deliver bounded local Claude handoff](https://github.com/guwenqing/chatgpt-bot-kit/issues/17)
+
 Basis: `claude-handoff`; design D8. Journeys U2, U4, U6, U9, U11. Prerequisites: delivered groups 2–3.
 
 - [ ] 5.1 Independently author and run failing tests for work packets, rule adaptation, unsupported settings, missing/auth prerequisites, process/error flag combinations, partial result and failed continuation without silent fallback.
@@ -47,6 +57,8 @@ Basis: `claude-handoff`; design D8. Journeys U2, U4, U6, U9, U11. Prerequisites:
 - [ ] 5.4 Obtain independent full-scope review and verified squash delivery, with actual provider/version observations and the live continuity limitation retained where it remains unresolved.
 
 ## 6. Packaged user walkthrough and integrated acceptance
+
+Work Issue: [Verify packaged Bot Kit user journeys and documentation](https://github.com/guwenqing/chatgpt-bot-kit/issues/18)
 
 Basis: all seven capabilities and U1–U11 in design. Prerequisites: delivered groups 1–5. This group owns user documentation and integrated walkthrough evidence; aggregate policy/spec archive decisions remain group 7.
 
@@ -57,6 +69,8 @@ Basis: all seven capabilities and U1–U11 in design. Prerequisites: delivered g
 - [ ] 6.5 Obtain independent full-scope acceptance review and deliver any scoped docs/integration corrections through reviewed squash PRs; retain verified main delivery and a complete journey-to-evidence table for closeout.
 
 ## 7. Aggregate specification and delivery closeout
+
+Work Issue: [Verify aggregate Bot Kit delivery and synchronize specifications](https://github.com/guwenqing/chatgpt-bot-kit/issues/19)
 
 Basis: the complete accepted change. Prerequisites: delivered groups 1–6 and the accepted planning handoff. The change owner retains aggregate responsibility.
 
