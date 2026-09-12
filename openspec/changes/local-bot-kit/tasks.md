@@ -30,7 +30,7 @@ Basis: `skill-assembly`; design D6 and D3. Journeys U2, U4, U7, U10, U11. Prereq
 
 - [x] 3.1 Independently author and run failing tests for selected local/repository/copy/link/shared installation, collisions, broken links, direct unmanaged inputs and recipient-discovery state.
 - [x] 3.2 Implement source preparation and inspectable skill selections/modes with conflict handling; verify file results and the distinction between copied snapshots and moving symlinks through the independent tests.
-- [ ] 3.3 Provide selectable management, development, architecture/review, personal facilitation and Claude-handoff guidance without auto-creating those bots or imposing this repo's development policy; verify each guide's inputs, boundaries and referenced assets by independent semantic review.
+- [x] 3.3 Provide selectable management, development, architecture/review, personal facilitation and Claude-handoff guidance without auto-creating those bots or imposing this repo's development policy; verify each guide's inputs, boundaries and referenced assets by independent semantic review.
 - [ ] 3.4 Demonstrate a local skill and a shared repository skill discovered from recipient bot roots, exercise one procedure, and offer the scan choice; record real discovery/execution separately and complete reviewed squash delivery.
 
 ## 4. Collaboration, configuration notices and grooming
