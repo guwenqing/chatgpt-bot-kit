@@ -62,13 +62,14 @@ function sourceInfo(selection) {
 }
 function managed(bot) { return bot.value.skills.filter((item) => item && typeof item === 'object' && item.management === 'managed'); }
 function destination(state, bot, id) {
-  identity(id); const parent = `${bot.directory}/.agents/skills`;
+  const parent = `${bot.directory}/.agents/skills`;
   safePath(state.root, parent, 'directory'); return path.join(state.root, parent, id);
 }
 function observations(state, bots) {
   return bots.flatMap((bot) => {
     const parent = path.dirname(destination(state, bot, 'probe'));
-    const records = managed(bot); const names = new Set([...records.map((item) => item.id), ...(stat(parent) ? fs.readdirSync(parent) : [])]);
+    const records = managed(bot); records.forEach((item) => identity(item.id));
+    const names = new Set([...records.map((item) => item.id), ...(stat(parent) ? fs.readdirSync(parent) : [])]);
     return [...names].sort().map((id) => {
       const file = destination(state, bot, id); const item = records.find((record) => record.id === id);
       let files = 'missing';
