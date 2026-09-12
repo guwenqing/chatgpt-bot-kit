@@ -81,3 +81,22 @@ Native/manual artifact checks and independent Astra reviews supply initial
 assurance. No automatic CI, branch protection, scheduler or external-review
 provider is configured. Missing policy, unavailable references and incomplete
 evidence remain visible limitations, never successful activation.
+
+## Initial bootstrap evidence limitation
+
+PR #4 predates any accepted destination configuration. Its real owner decision,
+independent reviews and verified squash delivery are native/manual bootstrap
+evidence, as permitted by the framework's self-evolution contract and shared
+template guidance. Its missing historical policy/config fields must not be invented.
+Later CLI checks of planning prerequisite #2 currently recognize the merged PR
+and task coverage but report `delivery-review-missing` and `evidence-missing`
+because they only count structured Evidence. This is tracked in
+[AssuredLoop #25](https://github.com/guwenqing/assuredloop-base/issues/25).
+
+The activation reviewer must independently establish that specific prerequisite
+from the original scope, actual owner decision, separate-session reviews, merge
+metadata, tree equality and task coverage. Preserve the CLI's incomplete/invalid
+result as a diagnostic limitation; do not call it PASS. Current activation and
+later work still need their complete applicable assessment records under the
+accepted pre-change policy. This historical bootstrap boundary is not a general
+waiver for missing evidence.
