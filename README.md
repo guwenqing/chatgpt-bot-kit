@@ -65,18 +65,17 @@ The CLI, record schemas, framework contracts and guidance are available through
 traceability, review evidence, validation and closeout guidance around OpenSpec.
 Its package README describes those capabilities and their limits.
 
-The GitHub repository is `guwenqing/chatgpt-bot-kit`. There is not yet an accepted
-AssuredLoop consumer configuration. Full adoption and activation are being
-prepared. Even
-`assuredloop init --local-only` requires a matching GitHub origin and a complete
-configuration with real policy and acceptance references; the flag only skips
-remote checks. No placeholder repository identity or acceptance evidence has
-been created. AssuredLoop's consumer skills, CI and automated review are not
-configured here.
+The GitHub repository is `guwenqing/chatgpt-bot-kit`. The adoption branch contains
+the proposed consumer configuration and seven generated AssuredLoop skills.
+See `.assuredloop/policy.md` for the exact proposed policy and
+`.assuredloop/README.md` for package provenance, current acceptance state and
+operations. No bootstrap acceptance or activation is claimed before the real
+owner decision and ordered delivery. CI and automated review are not configured.
 
-When this project becomes official, select its GitHub identity, prepare and
-approve its workflow policy, then preview and apply the documented AssuredLoop
-initialization. Activation is a separate acceptance step.
+The initializer can write a config without accepted bootstrap references; that
+installs files but cannot establish an accepted policy. Its `--local-only` flag
+only skips remote checks and still requires a matching GitHub origin. Accepted
+bootstrap must be delivered before the separately assessed activation checkpoint.
 
 ## Later: test a fixed package installation
 
