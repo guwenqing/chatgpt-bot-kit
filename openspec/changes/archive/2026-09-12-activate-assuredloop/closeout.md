@@ -39,6 +39,13 @@ snapshot neither invents its historical policy nor reports a whole-CLI PASS.
 The accepted change declares `skip_specs: true`. There are zero product delta
 specifications to synchronize, and no framework contracts are copied into the
 consumer baseline. Native archive preserves the plan and this evidence snapshot.
+Native strict validation and archive both accept this boundary. AssuredLoop's
+separate synchronization helper nevertheless reports `unavailable` with
+`synchronization-delta-unavailable` because it unconditionally rejects an empty
+native update list. This is tracked in
+[AssuredLoop #30](https://github.com/guwenqing/assuredloop-base/issues/30).
+The reviewer must verify the original accepted exemption and unchanged product
+baseline; no fabricated specs or synchronization-helper PASS are supplied.
 No post-activation framework self-change demonstration was assigned; the empty
 manifest decision list does not pretend that one ran.
 
