@@ -1,8 +1,58 @@
 # ChatGPT Bot Kit
 
-Local project scaffold with OpenSpec for spec-driven planning and the local
-AssuredLoop package for workflow guidance and checks. Product requirements and
-the application runtime have not been chosen yet.
+A local utility for bot workspaces in the Codex desktop app. The first delivered
+component prepares Bot Father's files and preserves user configuration. Native
+project/session setup and the wider conversational flows are being delivered
+through the accepted `local-bot-kit` plan.
+
+## Prepare a workspace
+
+Requires Node.js >=20.19.0. From this development checkout with dependencies
+installed, choose an absolute path for your bot workspace:
+
+```sh
+node src/cli.js prepare --workspace /absolute/path/to/my-bots
+node src/cli.js inspect --workspace /absolute/path/to/my-bots
+```
+
+`prepare` creates only Bot Father, its daily-session configuration, shared memory
+and work directories, and empty skill locations. It creates no native project,
+conversation or schedule. A successful result says `status: prepared` and
+`native_ready: false`. Repeating it preserves existing YAML and working files
+and fills missing derived files/directories.
+
+Edit `bots/bot-father/bot.yaml` for bot-wide `rules`, purpose and session settings.
+Keep session-specific instructions in each session's `startup_prompt`; they do
+not go into shared `AGENTS.md`. The workspace locator is
+`.bot-kit/workspace.yaml`, and membership lives in Bot Father's `registry.yaml`.
+All use `schema_version: 1`. Invalid YAML, duplicate identities, conflicting
+defaults and conflicting managed paths are rejected before preparation writes.
+
+```sh
+node src/cli.js regenerate --workspace /absolute/path/to/my-bots
+```
+
+Regeneration preserves text outside the `bot-kit:begin` / `bot-kit:end` comment
+markers. The YAML receipt in the bot's `.bot-kit/generation.yaml` records the
+managed region's digest. Direct edits inside that region produce a conflict,
+not an overwrite. To resolve one, preserve the edits in your YAML rules or
+outside the region, then explicitly reconcile or remove the old managed region
+before regenerating. Keep any user text you want to retain.
+
+For a read/modify operation, take `revision` from `inspect` and pass
+`--expected-revision TOKEN` to `prepare` or `regenerate`. A stale token rejects
+the operation. Preparation also uses `.bot-kit/write.lock` and checks inputs
+again before writing. A leftover lock requires checking that its writer stopped
+before removing it. File replacements are atomic individually; a multi-file
+failure reports completed steps and pending files for a resumable retry, not a
+transactional rollback. These conventions are not a filesystem sandbox.
+
+The private package can be exercised without the development workflow links:
+run `npm pack`, then install the resulting tarball in a separate local directory
+with `npm install --omit=dev /absolute/path/to/chatgpt-bot-kit-0.0.0.tgz`.
+Use its `node_modules/.bin/bot-kit` entry with the same arguments. No npm registry
+publication is needed. `npm test` runs the scoped preparation acceptance tests,
+including a clean packed installation.
 
 ## Installed tooling
 

@@ -4,10 +4,10 @@ Work Issue: [Deliver Bot Kit workspace and YAML preparation](https://github.com/
 
 Basis: `conversational-onboarding`, `bot-workspaces-and-guidance`; design D1–D3. Journeys U1, U10, U11. All executable behavior requires independently authored failing tests before its implementation and a passing rerun with relevant controlled faults. Operational assignment/readiness stays on the linked Work Issue.
 
-- [ ] 1.1 Independently derive and run failing CLI acceptance tests for initial/repeated/partial preparation, invalid YAML, identity collisions, preserved user edits and concurrent changes; retain the actual failure evidence before implementation.
-- [ ] 1.2 Add the local npm CLI/package asset entry and pinned YAML dependency; verify targeted entry/validation tests and package-relative asset resolution without a development checkout.
-- [ ] 1.3 Implement versioned workspace/bot configuration and creation of only Bot Father with conflict-aware resumable preparation; verify repeated and interrupted runs preserve existing files and create no duplicate local identities.
-- [ ] 1.4 Implement guidance composition, direct-edit preservation, shared memory location and target-rule guidance; verify regeneration conflicts, unchanged user regions and invalid/concurrent-write rejection with the independent tests.
+- [x] 1.1 Independently derive and run failing CLI acceptance tests for initial/repeated/partial preparation, invalid YAML, identity collisions, preserved user edits and concurrent changes; retain the actual failure evidence before implementation.
+- [x] 1.2 Add the local npm CLI/package asset entry and pinned YAML dependency; verify targeted entry/validation tests and package-relative asset resolution without a development checkout.
+- [x] 1.3 Implement versioned workspace/bot configuration and creation of only Bot Father with conflict-aware resumable preparation; verify repeated and interrupted runs preserve existing files and create no duplicate local identities.
+- [x] 1.4 Implement guidance composition, direct-edit preservation, shared memory location and target-rule guidance; verify regeneration conflicts, unchanged user regions and invalid/concurrent-write rejection with the independent tests.
 - [ ] 1.5 Obtain independent full-scope review, resolve findings and deliver the scoped squash PR to main; verify the merged files and record actual delivery evidence before declaring this group complete.
 
 ## 2. Conversational bot management and migration
