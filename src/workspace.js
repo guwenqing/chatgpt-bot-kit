@@ -263,6 +263,9 @@ export function manageBot(selectedRoot, inputFile, { configure = false, expected
     const previous = read(state.root, config); state.inputs.set(config, previous);
     bot = { id: value.id, directory, file: config, value: previous === null ? null : yaml(previous, config), observation: null };
     if (bot.value) validateBot(bot.value, config, value.id);
+    const nativeFile = `${directory}/.bot-kit/native.yaml`;
+    const nativeText = read(state.root, nativeFile); state.inputs.set(nativeFile, nativeText);
+    if (nativeText !== null) bot.observation = yaml(nativeText, nativeFile);
     state.registry.bots.push({ id: value.id, config: path.posix.relative(state.father, config) }); registryChanged = true;
   }
   if (!configure && bot.value && !isDeepStrictEqual(bot.value, value)) fail(`Existing bot ${value.id} has conflicting configuration. Use configure-bot for an intended change.`);
