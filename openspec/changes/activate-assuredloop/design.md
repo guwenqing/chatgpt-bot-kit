@@ -66,6 +66,10 @@ There are no old workflow records to migrate. Deliver accepted bootstrap first,
 then activation. A later suspension or rebind is a traced, owner-authorized change;
 do not delete history or weaken a candidate's governing policy.
 
-## Open Questions
+## Owner decision
 
-Owner acceptance of this exact policy and ordered activation delivery is pending.
+The owner accepted the policy and this ordered bootstrap/activation plan after
+independent review, and explicitly requested squash merges. The actual decision
+is recorded in PR #4 and referenced by `project.bootstrap` in the consumer config.
+Implementation now proceeds within that accepted scope; changed scope still
+returns to the owner.

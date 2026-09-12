@@ -1,5 +1,8 @@
 # Repository workflow
 
+Use squash merge for all PR merges in this repository, as explicitly instructed
+by the owner. Preserve the effective signing policy and required checks/reviews.
+
 This project's workflow package is `assuredloop-base`, installed through the
 project's npm link. Resolve `node_modules/assuredloop-base` to its owning package,
 verify its version, artifact integrity and contract metadata against the accepted

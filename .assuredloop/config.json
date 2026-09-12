@@ -23,6 +23,22 @@
       "context": {
         "max_inline_bytes": 65536
       }
+    },
+    "bootstrap": {
+      "policy_ref": {
+        "repository": "guwenqing/chatgpt-bot-kit",
+        "revision": "4fc9382e9ef07a6a31a16c16c70da3858f68b5c6",
+        "path": ".assuredloop/policy.md"
+      },
+      "policy_acceptance": {
+        "repository": "guwenqing/chatgpt-bot-kit",
+        "comment_id": 5646899268
+      },
+      "proposal_acceptance": {
+        "repository": "guwenqing/chatgpt-bot-kit",
+        "comment_id": 5646899268
+      },
+      "authorized_by": "Project owner via explicit approval in the current Codex task, recorded by qiragu"
     }
   },
   "repository": {

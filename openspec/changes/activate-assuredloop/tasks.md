@@ -3,7 +3,7 @@
 Work Issue: [Planning](https://github.com/guwenqing/chatgpt-bot-kit/issues/2)
 
 - [x] 1.1 Prepare the consumer policy, proposal and design; verify native artifact shape and a fixed Git revision.
-- [ ] 1.2 Complete independent full-scope Astra review and obtain owner acceptance of the fixed policy and ordered bootstrap/activation plan; retain the actual decision and review sources.
+- [x] 1.2 Complete independent full-scope Astra review and obtain owner acceptance of the fixed policy and ordered bootstrap/activation plan; retain the actual decision and review sources.
 
 ## 2. Consumer adoption and activation
 

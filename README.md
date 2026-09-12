@@ -67,11 +67,12 @@ traceability, review evidence, validation and closeout guidance around OpenSpec.
 Its package README describes those capabilities and their limits.
 
 The GitHub repository is `guwenqing/chatgpt-bot-kit`. The adoption branch contains
-the proposed consumer configuration and seven generated AssuredLoop skills.
+the owner-accepted consumer configuration and seven generated AssuredLoop skills.
 See `.assuredloop/policy.md` for the exact proposed policy and
 `.assuredloop/README.md` for package provenance, current acceptance state and
-operations. No bootstrap acceptance or activation is claimed before the real
-owner decision and ordered delivery. CI and automated review are not configured.
+operations. The actual owner decision is referenced in the configuration;
+bootstrap delivery and the later activation remain separately verified steps.
+CI and automated review are not configured. PR merges use squash.
 
 The initializer can write a config without accepted bootstrap references; that
 installs files but cannot establish an accepted policy. Its `--local-only` flag

@@ -5,13 +5,15 @@ Selected integration: Codex, with native and AssuredLoop skills in `.agents/skil
 
 ## Acceptance state
 
-The current branch contains a proposed initialization. Until accepted bootstrap
-and a later activation checkpoint are delivered to the destination, this is
-native/manual bootstrap only. Read `.assuredloop/config.json` and, once present,
+The owner accepted the fixed policy and ordered delivery in PR #4. The config
+references the actual policy/proposal acceptance record. This candidate delivers
+accepted bootstrap; activation remains a later independently reviewed checkpoint.
+Until delivery, this is native/manual bootstrap only. Read `.assuredloop/config.json` and, once present,
 `.assuredloop/activation.json` at the actual destination's pre-change revision.
 Never treat the working copy or candidate PR as its own acceptance authority.
 
-The exact consumer choices are in `policy.md`. Planning is tracked in
+The exact consumer choices are in `policy.md`; the owner additionally requires
+squash merge for this repository's PRs, recorded in `AGENTS.md`. Planning is tracked in
 [Issue #2](https://github.com/guwenqing/chatgpt-bot-kit/issues/2), with consumer
 adoption and activation in [Issue #3](https://github.com/guwenqing/chatgpt-bot-kit/issues/3).
 The native plan is `openspec/changes/activate-assuredloop/`.
