@@ -48,8 +48,10 @@ global instructions, other repositories or scheduled jobs.
    review outcomes, merges and delivery on GitHub. Follow through authorized
    delivery and closeout; file existence, checked tasks and closed Issues alone
    do not prove acceptance.
-8. Select `assuredloop-base@0.1.0` from source commit
-   `74fcd7b8e0b3257965fc7d517ef18dabea1ef611`, with OpenSpec `1.12.0`.
+8. Select `assuredloop-base@0.1.0` from source base commit
+   `74fcd7b8e0b3257965fc7d517ef18dabea1ef611` plus the exact documentation overlay
+   retained in `.assuredloop/package-source.patch`, with OpenSpec `1.12.0`.
+   This is an explicitly selected local build, not a clean upstream release.
    Bind the package to the actual npm tarball integrity in the consumer config
    and canonical contract source in `contracts/metadata.json`. npm links remain
    the development installation method. Before formal assessment, compare a fresh
