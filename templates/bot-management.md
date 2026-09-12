@@ -67,17 +67,44 @@ session may inspect the conversations of bots they manage.
 
 ## Establish the native daily entry
 
-Discover the tools available on the user's actual desktop. Match an existing
-project by the bot's absolute root and verified identity before creating one.
+Discover the tools and supported CLI entry points on the user's actual desktop.
+Match an existing project by the bot's absolute root and verified identity before
+creating one. Absence of an add-project MCP tool does not establish that automatic
+registration is unavailable.
 Use that bot root as the primary folder for new conversations. A nested target
 repository is a working object, not the bot's root. Do not silently select a
 new worktree just because a host tool defaults to one for Git projects.
 
-If the host cannot register a local project, prepare the files first, then give
-the user the exact bot-root path and the native add-project action. Verify the
-result through a supported native read or the user's observation. A safety
-denial is not permission to edit host databases, impersonate another app or
-launch a separate server to control the same desktop conversation.
+On macOS, inspect the installed official `codex app --help`. When its documented
+workspace-path entry is available and the desktop app is installed, the assistant
+can run the following for the prepared bot root:
+
+```sh
+codex app "/absolute/path/to/my-bots/bots/bot-father"
+```
+
+Use an argument-safe invocation with the actual absolute path. Then call the
+desktop's `list_projects` and require one matching project root. The command's
+successful exit alone is not registration evidence. Reconcile an absent or
+ambiguous result before retrying; reuse a verified existing project. The official
+[CLI reference](https://learn.chatgpt.com/docs/developer-commands?surface=cli)
+documents that macOS opens the workspace path; it does not promise the same
+behavior on every platform. Discover an equivalent supported operation on other
+hosts rather than assuming this command registered a project there.
+
+Use the returned project ID with the native `create_thread` tool, explicitly
+selecting `target.environment.type: local` for the bot's shared root. This is
+also needed when a nested bot folder is reported as a Git project because an
+ancestor is a repository. A normal worktree default would choose the wrong
+workspace. Create only the requested daily/additional entry, not a replacement
+for an existing task, and retain its returned identity for readback and retries.
+
+When supported automatic registration is actually unavailable, preserve the
+prepared files and describe the specific missing capability. A concrete guided
+native action can complete the remaining step, but a manual checklist alone
+does not satisfy an automated-setup outcome. A safety denial is not permission
+to edit host databases, impersonate another app, automate a denied UI through
+another channel or launch a separate server to control the same conversation.
 
 Create or guide the daily conversation using the configured startup prompt and
 explicitly selected supported settings. Check the returned actual project,

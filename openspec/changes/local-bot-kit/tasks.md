@@ -16,10 +16,10 @@ Work Issue: [Deliver conversational bot management and work migration](https://g
 
 Basis: `conversational-onboarding`, `bot-management-and-migration`, `bot-workspaces-and-guidance`; design D2–D5. Journeys U1–U4, U10, U11. Prerequisite: delivered group 1.
 
-- [ ] 2.1 Independently author and run failing tests for directory/session settings, native identity/readiness reconciliation and migration inventory; include dirty/untracked state, unavailable native operations and loaded-source handling.
-- [ ] 2.2 Implement management configuration/receipts and guidance for creating/modifying bots and native local conversations; verify shared bot workspace, distinct prompts/settings, default destination and no silent model/worktree substitution.
-- [ ] 2.3 Complete or guide actual project registration and daily-entry setup on the supported desktop; verify from the relevant surface/user observation, including resumable incomplete association, rather than only a backend write.
-- [ ] 2.4 Implement migration preparation and agent guidance for resume/fork/context transfer and selected file clone/restoration/copy; verify a synthetic unfinished-work transfer, source preservation and explicit unsupported states using the independent cases.
+- [x] 2.1 Independently author and run failing tests for directory/session settings, native identity/readiness reconciliation and migration inventory; include dirty/untracked state, unavailable native operations and loaded-source handling.
+- [x] 2.2 Implement management configuration/receipts and guidance for creating/modifying bots and native local conversations; verify shared bot workspace, distinct prompts/settings, default destination and no silent model/worktree substitution.
+- [x] 2.3 Complete or guide actual project registration and daily-entry setup on the supported desktop; verify from the relevant surface/user observation, including resumable incomplete association, rather than only a backend write.
+- [x] 2.4 Implement migration preparation and agent guidance for resume/fork/context transfer and selected file clone/restoration/copy; verify a synthetic unfinished-work transfer, source preservation and explicit unsupported states using the independent cases.
 - [ ] 2.5 Exercise creation of a nontechnical personal bot and a technical bot, including one receiving inherited work; retain observable entry/continuation evidence, independent review and verified squash delivery to main.
 
 ## 3. Skill assembly and starter guidance

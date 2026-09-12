@@ -60,7 +60,12 @@ including a clean packed installation.
 The [conversational management guide](templates/bot-management.md) covers role
 creation, additional conversations, native setup and migration. An assistant can
 turn a request such as “Create a personal helper and bring my unfinished list”
-into configuration and guided native steps. The user need not author YAML.
+into configuration and native operations. The user need not author YAML. On a
+supported macOS host, the assistant can open each prepared bot root with the
+official `codex app` entry, verify it through the desktop project list, and
+create its daily task with the native task tool in the same local root. The
+management guide covers discovery, identity checks and recovery; a successful
+shell command alone is not a completed setup.
 
 `create-bot` and `configure-bot` accept `--workspace`, `--config` and an optional
 `--expected-revision`. `inspect` returns current directory entries and separate
