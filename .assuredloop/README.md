@@ -10,18 +10,26 @@ bootstrap was squash-merged in commit `151cf5dd8fc50b106f8fbb40051da5c8addd2f38`
 and live default-branch resolution verified `bootstrap` mode there. The config
 references the real policy/proposal acceptance record.
 
-`activation.json` selects the later checkpoint and cites the owner decision,
-independent usable-base review and actual bootstrap delivery evidence. Its timestamp
-records checkpoint preparation; actual delivery is established by the PR merge.
-The checkpoint takes effect when delivered to the destination, after its independent
-review under the previously accepted bootstrap. Read both configuration and
-activation at the actual destination's pre-change revision. Never treat a working
-copy or candidate PR as its own acceptance authority.
+The independently reviewed `activation.json` checkpoint was squash-merged in
+[PR #5](https://github.com/guwenqing/chatgpt-bot-kit/pull/5) at
+`874cb73a3ef52423231d48f66d3db932dcf40f44`. Live default-branch resolution then
+verified `available / activation`, with unchanged accepted configuration and
+activation SHA-256 `c8dacce6a5d0b1059f01075d14bf32e75187ab00e0a39a56d4e96b2033a9c2ba`.
+[Actual delivery evidence](https://github.com/guwenqing/chatgpt-bot-kit/pull/5#issuecomment-5647084957)
+records tree equality, the single squash parent and the observed active binding.
+
+The checkpoint cites the owner decision, independent usable-base review and real
+bootstrap delivery. Its timestamp records preparation; the PR records delivery.
+Its pre-change assessment used bootstrap mode with a null activation digest.
+Future PRs read configuration and activation from their actual destination's
+pre-change revision. Never treat a candidate as its own acceptance authority.
 
 The exact consumer choices are in `policy.md`; the owner additionally requires
 squash merge for this repository's PRs, recorded in `AGENTS.md`. Planning is tracked in
 [Issue #2](https://github.com/guwenqing/chatgpt-bot-kit/issues/2), with consumer
 adoption and activation in [Issue #3](https://github.com/guwenqing/chatgpt-bot-kit/issues/3).
+Both are native children of [Epic #1](https://github.com/guwenqing/chatgpt-bot-kit/issues/1),
+along with the separate aggregate [closeout Issue #6](https://github.com/guwenqing/chatgpt-bot-kit/issues/6).
 The native plan is `openspec/changes/activate-assuredloop/`.
 
 ## Selected package
@@ -100,3 +108,12 @@ result as a diagnostic limitation; do not call it PASS. Current activation and
 later work still need their complete applicable assessment records under the
 accepted pre-change policy. This historical bootstrap boundary is not a general
 waiver for missing evidence.
+
+First-consumer feedback is tracked in the source project's
+[Epic #21](https://github.com/guwenqing/assuredloop-base/issues/21), including
+artifact verification, the initial evidence gap and intake improvements. The
+[evidence template heading issue #27](https://github.com/guwenqing/assuredloop-base/issues/27)
+is also reported there. Current structured Evidence must use the supported
+`## Workflow context` heading with a JSON block; `## Structured evidence` is not
+recognized by the selected package's record discovery. Follow-up source changes
+do not silently update this consumer's accepted package binding.
