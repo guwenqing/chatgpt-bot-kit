@@ -25,10 +25,42 @@ The Kit SHALL distinguish prepared files, registered native project, reachable d
 - **WHEN** a native metadata write succeeds but the desktop surface does not show the intended association
 - **THEN** setup reports the association as unconfirmed, retains completed preparation and asks for or guides the specific desktop verification
 
+#### Scenario: Connected clients show different readiness
+- **WHEN** the user intends to access the local execution host from another desktop or a mobile client
+- **THEN** setup records project visibility and daily-conversation discoverability and openability separately for each selected client view, using relevant native evidence or explicit user observation
+- **AND** host-local inventory, a direct conversation-ID read or pinning alone does not establish readiness in those views; unsupported or unverified views remain explicit acceptance gaps with the next supported recovery step
+
+#### Scenario: Displayed permissions and execution disagree
+- **WHEN** a bot's displayed or requested native permissions disagree with observed command or tool approval behavior
+- **THEN** setup distinguishes the user's selected permissions, the task's observed execution settings and any separate tool approval, and reports the discrepancy until the selected behavior is verified
+- **AND** it does not infer permission inheritance from the creating task, claim a display label proves effective access, silently broaden permissions or treat repeated one-off approvals as verification of unrestricted execution
+
 #### Scenario: Setup is repeated after interruption
 - **WHEN** the user reruns setup for the same workspace
 - **THEN** it identifies prior Kit-owned results, resumes incomplete steps and avoids duplicate bots, projects, daily conversations or routines
 - **AND** conflicting existing files or ambiguous native matches are reported before replacement or duplicate creation
+
+### Requirement: Managed bots have a recognizable native group
+
+The Kit SHALL guide initial and later bot creation into a shared, recognizable native sidebar section for the selected managed workspace. The section name SHALL be configurable through YAML, with `🤖 Bots` as the initial suggestion. Stable bot roots and verified native project identities SHALL remain independent of display labels. Guidance SHALL use supported native section and task naming controls, verify actual project placement, and preserve unrelated projects and their organization.
+
+#### Scenario: Another bot is created after onboarding
+- **WHEN** the user creates a further bot in a workspace with a selected native section
+- **THEN** setup resolves that section and the new bot's verified project identity, places that project with the managed bots and verifies the resulting grouping in each selected client view before reporting visual grouping complete for that view
+- **AND** it does not create a duplicate section, move unrelated projects or rename filesystem roots to simulate a display-name control
+
+#### Scenario: A remote group is empty
+- **WHEN** the host-local inventory lists managed projects in a section but a selected connected client shows an empty group or cannot discover its bot entries
+- **THEN** setup records the affected view and distinguishes project visibility, daily-conversation access and group placement, preserving existing work while checking supported native recovery
+- **AND** it does not count successful creation or movement calls as recovered visibility, or recreate tasks or edit private host state to conceal the gap
+
+#### Scenario: A group is missing, renamed or ambiguous
+- **WHEN** a prior section receipt no longer matches the observed native group or several groups match its selected name
+- **THEN** setup preserves completed bot preparation, reconciles the native identity and obtains the specific missing choice before creating a duplicate or changing another group
+
+#### Scenario: A cosmetic control is not exposed
+- **WHEN** the user asks for a separate project display name, icon, color or order that the actual native surface cannot verify
+- **THEN** the assistant describes the specific limit and available section/task naming choices without inventing a cosmetic API or editing private host state
 
 ### Requirement: Daily work has understandable progress and results
 
