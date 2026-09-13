@@ -9,6 +9,12 @@ Use when the user selected Claude execution or configured this bot to delegate
 that work. Codex remains the user's entry and owns the result. A delegation does
 not expand scope, grant credentials or waive target repository instructions.
 
+Resolve the actual installed Bot Kit package and read its
+`templates/claude-handoff.md` for the `bot-kit claude-run --config ABS_YAML`
+work-packet format, prerequisite checks and result/error semantics. Do not resolve
+this guide from an unrelated target repository or assume file preparation proves
+that the executor ran.
+
 Prepare a clear work packet: objective, chosen local working directory, allowed
 edits/actions, applicable bot and target rules, relevant context/artifact paths,
 acceptance check and where the result must return. Include only context needed

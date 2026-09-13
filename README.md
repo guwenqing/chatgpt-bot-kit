@@ -92,6 +92,19 @@ with installation to reject stale configuration. Existing content is preserved
 on a conflict. The assistant must separately verify native discovery from each
 recipient and actual procedure execution before reporting those outcomes.
 
+## Hand work to local Claude
+
+The [Claude handoff guide](templates/claude-handoff.md) prepares a bounded YAML
+packet with the selected executable, directory, applicable rules, authority and
+return destination. `claude-run --config ABS_YAML` checks local prerequisites and
+supported requested settings, invokes the selected CLI once with explicit guidance,
+and reports process status, partial results and sanitized errors.
+
+The caller verifies the actual outcome and returns it to the named Codex task.
+An execution receipt does not send a message or prove the result is correct.
+Failed continuation never silently starts a new session or changes model; the
+guide covers recovery choices, output/time bounds and the limits of cancellation.
+
 ## Installed tooling
 
 Requires Node.js >=20.19.0, npm and Git.

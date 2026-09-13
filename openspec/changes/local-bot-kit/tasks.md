@@ -51,9 +51,9 @@ Work Issue: [Deliver bounded local Claude handoff](https://github.com/guwenqing/
 
 Basis: `claude-handoff`; design D8. Journeys U2, U4, U6, U9, U11. Prerequisites: delivered groups 2–3.
 
-- [ ] 5.1 Independently author and run failing tests for work packets, rule adaptation, unsupported settings, missing/auth prerequisites, process/error flag combinations, partial result and failed continuation without silent fallback.
-- [ ] 5.2 Implement the bounded local Claude bridge and its configured handoff guidance; verify argument-safe execution, selected cwd/rules and correct structured success/error behavior with the independent tests.
-- [ ] 5.3 Demonstrate a scoped live one-shot task, explicit guidance and result return; assess supported resume/cancellation truthfully, preserving provider failures and checking no unrequested retry/model change or credential exposure.
+- [x] 5.1 Independently author and run failing tests for work packets, rule adaptation, unsupported settings, missing/auth prerequisites, process/error flag combinations, partial result and failed continuation without silent fallback.
+- [x] 5.2 Implement the bounded local Claude bridge and its configured handoff guidance; verify argument-safe execution, selected cwd/rules and correct structured success/error behavior with the independent tests.
+- [x] 5.3 Demonstrate a scoped live one-shot task, explicit guidance and result return; assess supported resume/cancellation truthfully, preserving provider failures and checking no unrequested retry/model change or credential exposure.
 - [ ] 5.4 Obtain independent full-scope review and verified squash delivery, with actual provider/version observations and the live continuity limitation retained where it remains unresolved.
 
 ## 6. Packaged user walkthrough and integrated acceptance
