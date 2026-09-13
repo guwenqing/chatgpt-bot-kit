@@ -25,6 +25,16 @@ The Kit SHALL distinguish prepared files, registered native project, reachable d
 - **WHEN** a native metadata write succeeds but the desktop surface does not show the intended association
 - **THEN** setup reports the association as unconfirmed, retains completed preparation and asks for or guides the specific desktop verification
 
+#### Scenario: Connected clients show different readiness
+- **WHEN** the user intends to access the local execution host from another desktop or a mobile client
+- **THEN** setup records project visibility and daily-conversation discoverability and openability separately for each selected client view, using relevant native evidence or explicit user observation
+- **AND** host-local inventory, a direct conversation-ID read or pinning alone does not establish readiness in those views; unsupported or unverified views remain explicit acceptance gaps with the next supported recovery step
+
+#### Scenario: Displayed permissions and execution disagree
+- **WHEN** a bot's displayed or requested native permissions disagree with observed command or tool approval behavior
+- **THEN** setup distinguishes the user's selected permissions, the task's observed execution settings and any separate tool approval, and reports the discrepancy until the selected behavior is verified
+- **AND** it does not infer permission inheritance from the creating task, claim a display label proves effective access, silently broaden permissions or treat repeated one-off approvals as verification of unrestricted execution
+
 #### Scenario: Setup is repeated after interruption
 - **WHEN** the user reruns setup for the same workspace
 - **THEN** it identifies prior Kit-owned results, resumes incomplete steps and avoids duplicate bots, projects, daily conversations or routines
@@ -36,8 +46,13 @@ The Kit SHALL guide initial and later bot creation into a shared, recognizable n
 
 #### Scenario: Another bot is created after onboarding
 - **WHEN** the user creates a further bot in a workspace with a selected native section
-- **THEN** setup resolves that section and the new bot's verified project identity, places that project with the managed bots and checks the native readback before reporting visual grouping complete
+- **THEN** setup resolves that section and the new bot's verified project identity, places that project with the managed bots and verifies the resulting grouping in each selected client view before reporting visual grouping complete for that view
 - **AND** it does not create a duplicate section, move unrelated projects or rename filesystem roots to simulate a display-name control
+
+#### Scenario: A remote group is empty
+- **WHEN** the host-local inventory lists managed projects in a section but a selected connected client shows an empty group or cannot discover its bot entries
+- **THEN** setup records the affected view and distinguishes project visibility, daily-conversation access and group placement, preserving existing work while checking supported native recovery
+- **AND** it does not count successful creation or movement calls as recovered visibility, or recreate tasks or edit private host state to conceal the gap
 
 #### Scenario: A group is missing, renamed or ambiguous
 - **WHEN** a prior section receipt no longer matches the observed native group or several groups match its selected name
