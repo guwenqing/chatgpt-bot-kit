@@ -1,5 +1,6 @@
 // A system test: the kit's default permission rules, live, on the real Claude
-// Code in the real Orca on this machine (#344, slice A). Run it alone with
+// Code in the real Orca on this machine (#344, slice A), and a rule the bot's
+// charter grants, once the user has said yes to it (#353, slice B). Run it alone with
 // `npm run test:system -- --yes test/system/permissions.test.js`; `npm test`
 // cannot, and no CI machine could.
 //
@@ -7,19 +8,28 @@
 // auto mode reads its own mail (`obk message check`, and a long message's body
 // file) and sends a reply without a single prompt to the user; it runs a
 // default command (its commit, its mail) without a refusal; and a command no
-// rule covers still goes to the check.
+// rule covers still goes to the check. And for #353: a command the bot's
+// charter grants runs without a refusal once the user has said yes to its
+// exact rule through `obk bot change --allow`, as Bot Father runs it after
+// showing the user the rule.
 //
 // The order the kit promises is followed as a user would follow it. `bot
 // create` shows the rules waiting for a yes and one command that allows them;
 // the bot's settings file holds none of them until that command is run, and
-// the test runs exactly the line the kit printed. Then `up` brings the bot up.
+// the test runs exactly the line the kit printed. The bot's charter says it
+// merges pull requests without asking, which grants `Bash(gh pr merge:*)`; the
+// settings file does not hold it until the user's yes to it is run too, `bot
+// change --allow 'Bash(gh pr merge:*)'` through the same CLI. Then `up` brings
+// the bot up.
 //
 // The bot is given its whole part in its start prompt, with every command it
 // runs spelled as the kit spells it (the CLI and the bots folder taken from the
 // rules the kit offered): check its mail, read the long body with its Read
 // tool, ask the road with `message to`, reply with the `message send` that
 // answer names, `git add` and `git commit -- <file>` a file the test put in its
-// folder, and last `touch` a file beside the bots folder, which no rule covers.
+// folder, `gh pr merge --help` (its charter's grant; it prints help and merges
+// nothing), and last `touch` a file beside the bots folder, which no rule
+// covers.
 //
 // **Where the evidence comes from.** Nothing here rests on what the model says.
 //
@@ -30,7 +40,8 @@
 //     call must have a result that is not one.
 //   - That it was the rule that let a default call through: the call as it was
 //     run matches a rule in the bot's own `.claude/settings.json`, which holds
-//     exactly the rules the kit offered and the user allowed. Where a rule in
+//     exactly the rules the kit offered and the user allowed, then the
+//     charter's rule the user allowed. Where a rule in
 //     another settings file covers it too (the user settings on the machine
 //     this was written on allow `Bash(git:*)`), that is said as a diagnostic: the kit's rule was there,
 //     and it was not the only one.
@@ -69,12 +80,13 @@
 // the classifier and not something else made the call is what the docs say
 // comes next; nothing a test can read names the classifier.
 //
-// **Made to grow.** #353 turns charter grants into rules and #354 writes the
+// **Made to grow.** #353 turned charter grants into rules and #354 writes the
 // same rules for Codex bots; both need this same check. So a harness is one
 // entry in HARNESSES (how its rules are written and read, how its calls are
-// read back, what its own questions look like), and a rule is one entry in
-// COVERED (the step the bot is given, and how its call is known). Claude and
-// the default set are the only entries today.
+// read back, what its own questions look like, and the rule its charter grant
+// becomes), and a rule is one entry in COVERED (the step the bot is given, and
+// how its call is known). Claude is the only harness today; COVERED holds the
+// default set and the charter's grant.
 //
 // The machine it runs on is someone's working machine, with their own tabs
 // open. So this test, like the others beside it:
@@ -153,7 +165,7 @@ const READY_MS = 180000;
 /** How long the launch line's mailbox step is given to write the session's Run into the book. */
 const MAILBOX_MS = 60000;
 
-/** How long the bot is given for all of its default calls: two reads, a road, a reply and a commit. */
+/** How long the bot is given for all of its covered calls: two reads, a road, a reply, a commit and the charter's merge help. */
 const DEFAULTS_MS = 480000;
 
 /** How long the bot is given for the one uncovered command, after the rest. */
@@ -524,6 +536,12 @@ const HARNESSES = [
       'Bash(git commit:*)',
     ],
 
+    /**
+     * The exact rules the bot's charter grants (CHARTER_GRANT), as Bot Father
+     * lists them for the user's yes: only `gh pr merge`, in Claude Code's form.
+     */
+    granted: ['Bash(gh pr merge:*)'],
+
     /** The bot's own settings file, the one the kit writes. */
     ownFile: (home) => path.join(home, '.claude', 'settings.json'),
 
@@ -556,6 +574,9 @@ const HARNESSES = [
   },
 ];
 
+/** What the bot's charter grants beyond the defaults: merging pull requests without asking (#353). */
+const CHARTER_GRANT = 'It merges pull requests without asking.';
+
 /** The Codex bot the reply goes to. Codex, so that the pair is not Claude Code's own messaging road. */
 const PEN_PAL = { name: 'pen-pal', display: 'Pen Pal' };
 
@@ -584,8 +605,8 @@ const COMMIT_FILE = 'permissions-check.txt';
  * order it does it. Each entry is one step of its start prompt, and how its
  * call is known in the transcript: `kind` and the text the call starts with.
  * `kit` holds the kit's CLI and bots folder as words (`cli`, `bots`), the bots
- * folder as a path (`folder`), and the bot's name. #353 adds a charter grant
- * here as one more entry.
+ * folder as a path (`folder`), and the bot's name. The last entry is the
+ * charter's grant (#353), let through by the rule the user allowed for it.
  */
 const COVERED = [
   {
@@ -626,6 +647,12 @@ const COVERED = [
     step: () => `Then run exactly: git commit -m 'permissions check CODE' -- ${COMMIT_FILE} , with CODE replaced by code word two.`,
     kind: 'command',
     starts: () => 'git commit',
+  },
+  {
+    what: 'its charter\'s merge, as help only',
+    step: () => 'Then run exactly: gh pr merge --help',
+    kind: 'command',
+    starts: () => 'gh pr merge',
   },
 ];
 
@@ -732,7 +759,7 @@ for (const harness of HARNESSES) {
     //    plain report is what a user reads: it holds the command to run.
     const created = obk([
       'bot', 'create', '--bots', bots, '--name', harness.bot, '--harness', harness.name,
-      '--charter', `${harness.display} exists for one system test run and owns nothing.`,
+      '--charter', `${harness.display} exists for one system test run and owns nothing else. ${CHARTER_GRANT}`,
     ]);
     assert.equal(created.status, 0, `obk bot create failed: ${created.stdout}${created.stderr}`);
 
@@ -756,6 +783,18 @@ for (const harness of HARNESSES) {
     assert.ok(!/worktree/i.test(allowed.stdout + allowed.stderr), `obk said "worktree": ${allowed.stdout}${allowed.stderr}`);
     assert.deepEqual(await allowedIn(home), waiting, 'bot.yaml should keep the yes, every rule of it');
     assert.deepEqual(harness.allowIn(ownFile), waiting, `${ownFile} should hold exactly the rules the user allowed`);
+
+    // 2b. The yes to the charter's grant, as Bot Father runs it after showing
+    //     the user the exact rule. Not written before it; after it, the
+    //     defaults then the charter's rule, in bot.yaml and in the file.
+    for (const rule of harness.granted) {
+      assert.ok(!harness.allowIn(ownFile).includes(rule), `${rule} should not be in ${ownFile} before the user said yes to it`);
+    }
+    const grantedYes = obk(['bot', 'change', '--bots', bots, '--bot', harness.bot, ...harness.granted.flatMap((rule) => ['--allow', rule])]);
+    assert.equal(grantedYes.status, 0, `the yes to the charter's rule should go through: ${grantedYes.stdout}${grantedYes.stderr}`);
+    const allowedNow = [...waiting, ...harness.granted];
+    assert.deepEqual(await allowedIn(home), allowedNow, 'bot.yaml should keep both yeses: the defaults, then the charter\'s rule');
+    assert.deepEqual(harness.allowIn(ownFile), allowedNow, `${ownFile} should hold the defaults, then the charter's rule`);
 
     // The bot's part, and the file it commits.
     await writeFile(path.join(home, COMMIT_FILE), 'A file for the permissions system test to commit.\n');
@@ -938,7 +977,7 @@ for (const harness of HARNESSES) {
           + ` Claude Code decides a call by a matching ${kind} rule before auto mode's check, so this run cannot say the check decided it.`,
       );
     }
-    assert.deepEqual(harness.allowIn(ownFile), waiting, `${ownFile} should still hold exactly the rules the user allowed`);
+    assert.deepEqual(harness.allowIn(ownFile), allowedNow, `${ownFile} should still hold exactly the rules the user allowed`);
 
     // And the disk agrees with what the transcript says became of it.
     if (outcome.how !== 'asked') {
