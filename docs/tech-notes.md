@@ -159,6 +159,21 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
   - Codex's trust screen answered `agent-trust-workspace`, and **went on answering it once it had
     been answered**: on the idle input line, and after a finished turn, until `/new` redrew the screen.
     While it did, Orca's gate refused a line sent with `--enter` (below).
+    Not seen again in two careful tries for #342 (the architect, same versions, a throwaway fleet):
+    trust answered with return alone, and then with `1` and a separate return (`1` alone only moves
+    the selection), and the hooks review with arrow-down and return. Each time the reason was gone
+    on the hooks screen, and a line sent with `--enter` went through in 2 s. The first time, Codex's
+    start header was drawn after the trust text. So when it happens is not known. How it could happen,
+    read in the 1.4.212 bundle and not seen: the "tab's output" is Orca's line model of the raw
+    stream, which keeps only newlines, carriage returns, backspaces and `CSI A/K/G/D/C`. It drops
+    absolute cursor moves, which Codex draws with, so Codex's screens pile up on a few long lines.
+    The trust words stay in that text until 12 non-blank lines come after them, or a Codex start
+    header ("openai codex", then "model:" and "directory:") does, and `/new` draws one. A replay of
+    the #342 bytes through those functions, lifted from the bundle, did not match Orca's live answer
+    on the trust screen itself, so it was not used as evidence. On a Codex tab where Orca names
+    this reason and the screen shows no question, the kit types nothing and says so (#342). A
+    plain `terminal read` (no `--screen`) came back with `source: "screen"` too, so the CLI does
+    not show the text the match reads. **verified** (live, the two tries), the rest read in the bundle
   - Claude Code's trust list answered `timeout` with no reason, and `terminal show` named no agent in
     the tab for minutes, until its selection was moved; then it answered `agent-trust-workspace`.
   **verified** (live)

@@ -47,7 +47,8 @@
 //   waitIdle    what `terminal wait --for tui-idle` finds in the tab:
 //                 true (default) a TUI that is up and idle: ok, satisfied
 //                 'blocked'      a TUI that is up with something to answer:
-//                                ok, not satisfied, agent-interactive-prompt
+//                                ok, not satisfied, and the reason
+//                                `blockedReason` names
 //                 'busy'         a harness that is up and working: Orca
 //                                refuses with `timeout`, as for a shell
 //                 false          no TUI at all — a plain shell prompt — which
@@ -67,6 +68,11 @@
 //               holds is read from its process group, by the fake `ps` in
 //               helpers/fake-ps.js, and `waitIdle` also decides who is in
 //               front there unless a test says otherwise.
+//   blockedReason  the reason a 'blocked' wait names for every tab. Left out,
+//               agent-interactive-prompt. Orca's names are in the tech notes
+//               (section 1); live, Codex's trust question answered
+//               agent-trust-workspace (captured, #342), and went on answering
+//               it after the question was answered (seen live, not captured).
 //   foreground  who is in front of every launched tab, for the fake `ps`:
 //               'harness', 'shell', or one of the ways it cannot be read
 //               (helpers/fake-ps.js lists them). Left out, it follows waitIdle.
@@ -718,7 +724,7 @@ if (command === 'terminal wait') {
       satisfied: !blocked,
       for: flag('--for') ?? 'tui-idle',
       timeoutMs: Number(flag('--timeout-ms') ?? 0),
-      ...(blocked ? { blockedReason: 'agent-interactive-prompt' } : {}),
+      ...(blocked ? { blockedReason: state.blockedReason ?? 'agent-interactive-prompt' } : {}),
     },
   });
 }

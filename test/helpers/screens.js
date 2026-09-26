@@ -136,6 +136,28 @@ export const CODEX_ANSWERED = [
 ];
 
 /**
+ * Codex 0.157.1 at its idle input line right after its folder-trust question
+ * and its hooks review were answered, its start prompt echoed above: a capture
+ * from #342 (the architect's live run, 2026-09-26). The screen Orca went on
+ * calling `agent-trust-workspace` when it was seen live; in this capture's own
+ * run Orca's wait named no reason. Not a question.
+ */
+export const CODEX_AFTER_TRUST = [
+  '╭─────────────────────────────────────────────────────╮',
+  '│ >_ OpenAI Codex (v0.157.1)                          │',
+  '│                                                     │',
+  '│ model:     GPT-6-Luna medium   /model to change     │',
+  '│ directory: /private/var/folders/s5/…/bots/cap-codex │',
+  '╰─────────────────────────────────────────────────────╯',
+  '› You are a throwaway bot for one capture and own nothing. Say nothing now and wait.',
+  '  1:00 PM',
+  '                                                     Tip: Paste an image with Ctrl+V to attach it to your next message.',
+  '› Ask Codex to do anything',
+  '  GPT-6-Luna medium · <tmp>/obk-capture-342-qeq4663w/bots/cap-codex …',
+  '  ? for shortcuts                                                                              ⚠ 1 warning · f2 to view',
+];
+
+/**
  * Codex 0.157.1's update offer, the screen issue #329 is about: a line typed
  * with a return took its default, "Update now", and Codex updated the machine.
  * A reconstruction: the words are the pieces the issue quotes (the `…` inside

@@ -296,6 +296,9 @@ export function harnessInTab(handle, timeoutMs) {
   };
 }
 
+/** Orca's reason for a folder-trust screen, which it can go on giving once that is answered (#342). */
+const TRUST_REASON = 'agent-trust-workspace';
+
 /** The kit's word for a tab whose screen shows a question of its harness's own (#329). */
 export const QUESTION_ON_SCREEN = 'question-on-screen';
 
@@ -368,6 +371,14 @@ export function tabToTypeInto(home, tabId, timeoutMs) {
   // A line typed into a screen waiting for an answer is that answer: once, it
   // confirmed Claude Code's folder-trust default, `No, exit` (tech notes,
   // section 1).
+  // Except where Orca still reports Codex's trust screen after it was
+  // answered, over an idle screen (#342). Nothing is typed then either, but
+  // there is nothing to answer, so the kit says what it saw. Claude Code's
+  // trust list is not numbered and the screen read cannot see it, so this is
+  // for Codex alone.
+  if (seen.blockedReason === TRUST_REASON && seen.agent === 'codex' && seen.question === false) {
+    return { unsure: `Orca still reports ${TRUST_REASON} in it, and its screen shows no question: Orca can go on reporting the trust screen after it is answered, and refuse a typed line while it does, so nothing was typed` };
+  }
   if (seen.blockedReason !== undefined) return { blocked: seen.blockedReason };
   // The shell in front is a tab with no harness, whatever a stale
   // `agentIdentity` says.
