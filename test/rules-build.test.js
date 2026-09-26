@@ -19,6 +19,7 @@ import {
   assertNoTrailingSpace,
   botHomeOf,
   createSandbox,
+  shellWord,
   skipGit,
   snapshot,
 } from './helpers/cli.js';
@@ -113,8 +114,16 @@ test('a bot\'s AGENTS.md is built from its charter and the kit\'s default units'
     ['Charter', ...await defaultTitles()],
     'the charter, then every kit unit that applies to all bots, in name order',
   );
+  // Word for word, except that where a unit names the kit as
+  // `"${OBK_CLI:-obk}"` the build names the CLI that built it, and where it
+  // says `<bots>` the bots folder, each by its absolute path as a shell word
+  // (#344): a bot's allow rule is matched against that text.
   for (const unit of await defaultUnits()) {
-    assert.equal(underIn(block.body, unit.title), unit.body, `the body of ${unit.name} should be written out under its title`);
+    assert.equal(
+      underIn(block.body, unit.title),
+      unit.body.replaceAll('"${OBK_CLI:-obk}"', shellWord(box.cli)).replaceAll('<bots>', shellWord(bots)),
+      `the body of ${unit.name} should be written out under its title`,
+    );
   }
   assertNoTrailingSpace(block.body);
 });

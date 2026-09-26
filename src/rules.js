@@ -21,9 +21,22 @@ import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 
 import { botDir, botNames, displayName, readBot } from './bot.js';
+import { ownCli, shellWord } from './launch.js';
 
 /** The kit's own units, inside the installed package. */
 const KIT_RULES = fileURLToPath(new URL('../rules', import.meta.url));
+
+/**
+ * How a rule unit names the kit, and what the build writes in its place: the
+ * CLI that builds the file, by its own path. A bot runs the command as the file
+ * gives it, and Claude Code matches an allow rule against the command as
+ * written, not after the shell expands a variable, so a bot told to run
+ * `"${OBK_CLI:-obk}"` would never match the kit's own mail rule (#344).
+ */
+const KIT_WORD = '"${OBK_CLI:-obk}"';
+
+/** How a rule unit names the bots folder, which the build writes out for the same reason. */
+const BOTS_WORD = '<bots>';
 
 /** What a name in a list carries to mean one of the kit's rather than one of the user's. */
 const KIT = 'kit:';
@@ -116,7 +129,9 @@ export function blockFor(bots, bot) {
 
   const charter = typeof bot.charter === 'string' ? bot.charter.trim() : '';
   if (charter !== '') parts.push('## Charter', charter);
-  for (const unit of units) parts.push(`## ${unit.title}`, unit.body);
+  for (const unit of units) {
+    parts.push(`## ${unit.title}`, unit.body.replaceAll(KIT_WORD, shellWord(ownCli())).replaceAll(BOTS_WORD, shellWord(bots)));
+  }
 
   return { body: parts.join('\n\n'), units: units.map((unit) => unit.name) };
 }

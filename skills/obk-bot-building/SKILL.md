@@ -201,6 +201,17 @@ say that you edited it by hand.
 Run `obk --help` for the flags of the version actually installed rather than
 trusting a line you remember.
 
+A bot on Claude Code needs a few permission rules so that auto mode does not
+stop it for what the kit's own rules tell it to do: its mail through the kit,
+reading a long message kept beside the bots folder, and its commits. `obk bot
+create`, `obk up` and `obk rules build` list the rules still waiting for a bot
+and give one command that allows them. Show the user those rules word for word
+and say in a line what each lets the bot do. Run the command only after their
+yes: it records the yes in the bot's `bot.yaml` and writes the rules into its
+settings. On a no, run nothing, and nothing is written. When the kit lists new
+rules for a bot later, ask again. Never write a permission rule into a settings
+file by hand.
+
 A bot that should learn across its sessions can use its harness's own memory,
 turned on for that bot alone, whatever the user's own setting is for everything
 else. The harness writes it, loads it and keeps it tidy itself. On Claude Code

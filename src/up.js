@@ -12,6 +12,7 @@ import { forgetClaimed, forgetSession, readBook, sessionIdsIn, tabIdsIn, updateB
 import { botDir, botNames, displayName, readBot } from './bot.js';
 import { conversationsIn, hasConversation, heldAsUserTurn, transcriptsIn } from './conversations.js';
 import { installHook } from './hooks.js';
+import { writePermissions } from './permissions.js';
 import { addressOf, harnessOf, isAddressOf, isShortPrompt, launchCommand, mailboxStep, reachesMail, sessionTrouble, startPrompt, workDirOf } from './launch.js';
 import { asFolderProject, coordinatorOf, findProject, harnessInTab, makeMailbox, makeProject, openTab, QUESTION_ON_SCREEN, retitleTab, tabs, TERMINAL_ENV, TIMED_OUT, tellWindow, typeIntoTab, useMailbox } from './orca.js';
 import { TAB_ENV } from './record.js';
@@ -58,7 +59,7 @@ export async function bringUp(bots, { bot: onlyBot, session: onlySession } = {})
     return false;
   });
 
-  const { running, rules, skills } = prepareBots(bots, names, onlySession);
+  const { running, rules, skills, permissions } = prepareBots(bots, names, onlySession);
 
   const report = [];
   const projects = [];
@@ -83,6 +84,7 @@ export async function bringUp(bots, { bot: onlyBot, session: onlySession } = {})
       trouble: `${entry.trouble} Its sessions were not started: a bot comes up with its rules or not at all.`,
     })),
     skills,
+    permissions,
     paused,
     projects,
   };
@@ -90,7 +92,7 @@ export async function bringUp(bots, { bot: onlyBot, session: onlySession } = {})
 
 /**
  * Everything the bots need in place before a session starts, and which of them
- * can be started at all: `{ running, rules, skills }`.
+ * can be started at all: `{ running, rules, skills, permissions }`.
  *
  * Separate from the tabs because the order matters twice over. A session reads
  * its rules, its skills and its hooks as it comes up, so all three have to be
@@ -150,7 +152,12 @@ export function prepareBots(bots, names, onlySession) {
     }
   }
 
-  return { running, rules, skills };
+  // And the permission rules the user allowed, beside the hook and for the same
+  // reason: a session that comes up before its rules are there is asked about
+  // what the user already said yes to (#344).
+  const permissions = running.map(({ bot, home }) => writePermissions(bots, home, bot)).filter((entry) => entry !== undefined);
+
+  return { running, rules, skills, permissions };
 }
 
 /**

@@ -136,6 +136,9 @@ export function readBot(home, name = path.basename(home)) {
     // and a list the build cannot follow is that build's to report (PRD 6.6).
     charter: bot.charter,
     rules: bot.rules,
+    // The permission rules the user said yes to, judged where they are written
+    // (src/permissions.js), as `rules` is judged by the build.
+    allow: bot.allow,
     // A paused bot is one `obk up` leaves closed; its sessions keep their book.
     ...(bot.paused === true ? { paused: true } : {}),
     sessions: sessions.map((session) => {
@@ -248,6 +251,42 @@ export function changeBot(bots, bot, { charter }) {
   const text = `${charter.trim()}\n`;
   editBot(bots, bot, `give ${bot} a new charter`, (doc) => doc.set('charter', text), (was) => ({ ...was, charter: text }));
   return { bot, home: botDir(bots, bot), charter: text };
+}
+
+/**
+ * The bot's `allow` list as it is, after refusing what `allowRules` would refuse:
+ * an empty rule, or a list already there that is not a list of rules. Asked
+ * before anything is written, so a refused `bot change` changes nothing, its
+ * charter included.
+ */
+export function allowedNow(bots, bot, rules) {
+  if (rules.some((rule) => rule.trim() === '')) {
+    throw new Error('--allow is empty. Give it the exact permission rule the user said yes to, such as Bash(git add:*).');
+  }
+  const home = existingBot(bots, bot);
+  const was = readBot(home, bot).allow ?? [];
+  if (!Array.isArray(was) || was.some((rule) => typeof rule !== 'string' || rule.trim() === '')) {
+    throw new Error(`the allow entry in ${path.join(home, BOT_YAML)} is not a list of permission rules, so nothing was written. Fix it, then run the command again.`);
+  }
+  return { home, was };
+}
+
+/**
+ * Add the permission rules the user said yes to, `rules`, to the bot's `allow`,
+ * after the ones already there and never twice. Returns { bot, home, allow,
+ * added }: the whole list now, and what this call put in it.
+ *
+ * Only the list: the rules are written into the harness's settings by the
+ * caller, as the rules build is run by the caller of `changeBot`.
+ */
+export function allowRules(bots, bot, rules) {
+  const { home, was } = allowedNow(bots, bot, rules);
+  const added = [...new Set(rules)].filter((rule) => !was.includes(rule));
+  const allow = [...was, ...added];
+  if (added.length > 0) {
+    editBot(bots, bot, `allow ${added.join(', ')} for ${bot}`, (doc) => doc.set('allow', allow), (before) => ({ ...before, allow }));
+  }
+  return { bot, home, allow, added };
 }
 
 /**
@@ -414,7 +453,7 @@ export const SESSION_FIELDS = [
 ];
 
 /** Everything the top of a bot's own file can hold. */
-const BOT_FIELDS = ['name', 'harness', 'charter', 'rules', 'skills', 'sessions', 'paused'];
+const BOT_FIELDS = ['name', 'harness', 'charter', 'rules', 'skills', 'allow', 'sessions', 'paused'];
 
 /**
  * The keys in a bot's file that the kit does not know, and so that nothing

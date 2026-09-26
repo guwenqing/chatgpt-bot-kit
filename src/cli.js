@@ -12,13 +12,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
-import { addSession, changeBot, changeSession, createBot, leadsOutside, readBot, SESSION_FIELDS } from './bot.js';
+import { addSession, allowedNow, allowRules, botDir, changeBot, changeSession, createBot, leadsOutside, readBot, SESSION_FIELDS } from './bot.js';
 import { addCommand, groomCommand, grooming, upCommand } from './groom.js';
 import { checkHealth, orcaSettingFindings } from './health.js';
 import { initBots } from './init.js';
 import { APPROVALS, HARNESSES, ownCli, shellWord, workDirOf } from './launch.js';
 import { checkMail, lookUp, noMailboxYet, sendMessage } from './message.js';
 import { orcaCli, orcaTrouble, RELOAD_LINE } from './orca.js';
+import { allowCommand, writePermissions } from './permissions.js';
 import { pauseSessions, unpauseSessions } from './pause.js';
 import { recordSession, SHELL_ENV, TAB_ENV } from './record.js';
 import { restartSessions } from './restart.js';
@@ -54,9 +55,13 @@ Usage:
                             given glued to its flag, so its dashes are not read
                             as ours: --prompt='- a bullet', and
                             --extra-arg=--search, once per extra argument.
-  obk bot change --bots <path> --bot <bot> --charter <text>
+  obk bot change --bots <path> --bot <bot> [--charter <text>]
+                 [--allow <rule> ...]
                             Give a bot a new charter and rebuild its AGENTS.md.
                             A running session reads it when it next starts.
+                            --allow records a permission rule the user said
+                            yes to, once per rule, and writes it into the bot's
+                            Claude settings.
   obk session change --bots <path> --bot <bot> --session <session>
                   [--model <m>] [--effort <e>] [--context <c>]
                   [--approval ${APPROVALS.join('|')}]
@@ -300,6 +305,7 @@ async function run(argv) {
       thread: { type: 'string' },
       peek: { type: 'boolean' },
       charter: { type: 'string' },
+      allow: { type: 'string', multiple: true },
       ...Object.fromEntries(SETTINGS.map(([flag]) => [flag, { type: 'string' }])),
       'extra-arg': { type: 'string', multiple: true },
       json: { type: 'boolean' },
@@ -441,19 +447,19 @@ const commands = {
     const seeded = initBots(bots, values.harness);
     // The typed path was for making the folder and naming it in a refusal; from
     // here on it is the fleet, and the fleet is its real path (#164).
-    const { tabs, rules, skills, paused, projects } = await bringUp(sameFleet(seeded.bots), { bot: BOT_FATHER });
+    const { tabs, rules, skills, permissions, paused, projects } = await bringUp(sameFleet(seeded.bots), { bot: BOT_FATHER });
     // Setup is the other place the PRD asks for Orca's own launch arguments to
     // be looked at (6.5), and the one where the user is still standing in front
     // of the fleet they are making. Only that one check: a folder init has just
     // made has nothing else to say about itself.
-    const answer = { bots: seeded.bots, created: seeded.created, completed: seeded.completed, rules, skills, tabs, paused, projects, found: orcaSettingFindings() };
+    const answer = { bots: seeded.bots, created: seeded.created, completed: seeded.completed, rules, skills, permissions, tabs, paused, projects, found: orcaSettingFindings() };
     return { answer, lines: tabLines(answer, `Bot Father is up in Orca. Your bots folder: ${seeded.bots}`) };
   },
 
   async up(bots, values) {
     refuseWhenOrcaIsDown();
-    const { tabs, rules, skills, paused, projects } = await bringUp(bots, { bot: values.bot, session: values.session });
-    const answer = { bots, created: [], completed: [], rules, skills, tabs, paused, projects };
+    const { tabs, rules, skills, permissions, paused, projects } = await bringUp(bots, { bot: values.bot, session: values.session });
+    const answer = { bots, created: [], completed: [], rules, skills, permissions, tabs, paused, projects };
     const up = [...new Set(tabs.map((tab) => tab.bot))];
     const summary = up.length === 0
       ? `Nothing was brought up in Orca. Your bots folder: ${bots}`
@@ -481,8 +487,8 @@ const commands = {
 
   async restart(bots, values) {
     refuseWhenOrcaIsDown();
-    const { closed, tabs, rules, skills, paused, projects } = await restartSessions(bots, { bot: values.bot, session: values.session });
-    const answer = { bots, created: [], completed: [], rules, skills, tabs, paused, projects, closed };
+    const { closed, tabs, rules, skills, permissions, paused, projects } = await restartSessions(bots, { bot: values.bot, session: values.session });
+    const answer = { bots, created: [], completed: [], rules, skills, permissions, tabs, paused, projects, closed };
     const what = values.session === undefined ? values.bot : `${values.bot} ${values.session}`;
     return {
       answer,
@@ -570,7 +576,10 @@ const commands = {
     // A new bot is given what the lists already name, so it is whole before
     // anybody opens a tab on it.
     const skills = [linkSkills(bots, made.home, readBot(made.home))];
-    const answer = { bots, bot: made.bot, home: made.home, created: made.created, rules, skills };
+    // Nothing is allowed yet, so this writes nothing: it says which of the
+    // kit's rules wait for the user's yes (#344).
+    const permissions = [writePermissions(bots, made.home, readBot(made.home))].filter((entry) => entry !== undefined);
+    const answer = { bots, bot: made.bot, home: made.home, created: made.created, rules, skills, permissions };
     // A bot whose rules would not build is made but not finished: it has no
     // instructions, so `up` will not start it, and saying "give it a session"
     // would send the caller past the thing that needs settling first.
@@ -581,6 +590,7 @@ const commands = {
         ...made.created.map((entry) => `created    ${entry}`),
         ...rulesLines(rules, bots),
         ...skillsLines(skills),
+        ...permissionsLines(permissions, bots),
         trouble
           ? `${made.bot} is written, and its rules are not. Settle what the line above says, then:  ${shellWord(ownCli())} rules build --bots ${shellWord(bots)} --bot ${made.bot}`
           : `${made.bot} is written. Give it a session:  ${shellWord(ownCli())} session add --bots ${shellWord(bots)} --bot ${made.bot} --name <name>`,
@@ -593,22 +603,45 @@ const commands = {
     if (values.harness !== undefined) {
       throw new Error(`bot change does not change a bot's harness: its sessions' conversations belong to the harness they ran on. To move to ${values.harness}, give it a session on ${values.harness} with obk session add, or retire the bot with obk retire and create a new one.`);
     }
-    const changed = changeBot(bots, values.bot, { charter: values.charter });
-    // Rebuilt at once, as bot create builds it, so the charter a session reads
-    // is the one the bot now has.
-    const rules = [buildAgents(bots, changed.home, readBot(changed.home))];
-    const trouble = rules[0].trouble !== undefined;
-    return {
-      answer: { bots, bot: changed.bot, home: changed.home, charter: changed.charter, rules },
-      lines: [
+    if (values.charter === undefined && values.allow === undefined) {
+      throw new Error('bot change needs --charter <text> or --allow <rule>: what to change.');
+    }
+    // Refused before anything is written, so a bad rule, or a bad list already
+    // there, leaves the charter as it was too.
+    if (values.allow !== undefined) allowedNow(bots, values.bot, values.allow);
+
+    const answer = { bots, bot: values.bot, home: botDir(bots, values.bot) };
+    const lines = [];
+    let trouble = false;
+    if (values.charter !== undefined) {
+      const changed = changeBot(bots, values.bot, { charter: values.charter });
+      // Rebuilt at once, as bot create builds it, so the charter a session reads
+      // is the one the bot now has.
+      const rules = [buildAgents(bots, changed.home, readBot(changed.home))];
+      trouble = rules[0].trouble !== undefined;
+      Object.assign(answer, { charter: changed.charter, rules });
+      lines.push(
         `changed    the charter in ${path.join('bots', changed.bot, 'bot.yaml')}`,
         ...rulesLines(rules, bots),
         trouble
           ? `${changed.bot}'s charter is written, and its rules are not. Settle what the line above says, then:  ${shellWord(ownCli())} rules build --bots ${shellWord(bots)} --bot ${changed.bot}`
           : `${changed.bot}'s charter is changed. A session that is running read the old one when it started; it reads this one when it next starts.`,
-      ],
-      code: trouble ? 1 : 0,
-    };
+      );
+    }
+    if (values.allow !== undefined) {
+      const allowed = allowRules(bots, values.bot, values.allow);
+      // Written at once, as the charter's rules are built at once (#344).
+      const permissions = [writePermissions(bots, allowed.home, readBot(allowed.home))].filter((entry) => entry !== undefined);
+      Object.assign(answer, { allow: allowed.allow, permissions });
+      lines.push(
+        ...allowed.added.map((rule) => `${'allowed'.padEnd(9)}  ${rule}`),
+        ...permissionsLines(permissions, bots),
+        allowed.added.length === 0
+          ? `${allowed.bot} was allowed every one of these already.`
+          : `${allowed.bot}'s allow list in ${path.join('bots', allowed.bot, 'bot.yaml')} holds the user's yes.`,
+      );
+    }
+    return { answer, lines, code: trouble ? 1 : 0 };
   },
 
   'skills build'(bots, values) {
@@ -701,17 +734,19 @@ const commands = {
 
   'rules build'(bots, values) {
     const rules = buildRules(bots, { bot: values.bot });
-    const trouble = rules.filter((entry) => entry.trouble !== undefined);
+    const permissions = rules.flatMap((entry) => permissionsOf(bots, entry.bot));
+    const trouble = [...rules, ...permissions].filter((entry) => entry.trouble !== undefined);
     return {
-      answer: { bots, rules },
+      answer: { bots, rules, permissions },
       lines: [
         ...rulesLines(rules, bots),
+        ...permissionsLines(permissions, bots),
         trouble.length === 0
           ? `Rules are built. Your bots folder: ${bots}`
           // Not "not built": the file itself may be fine and the trouble be
           // the CLAUDE.md beside it, which is a bot whose rules still do not
           // reach both harnesses.
-          : `${trouble.map((entry) => entry.bot).join(', ')}: the rules are not in place. Settle what the lines above say, then build again.`,
+          : `${[...new Set(trouble.map((entry) => entry.bot))].join(', ')}: the rules are not in place. Settle what the lines above say, then build again.`,
       ],
       // The build is the whole of this command, so a build it could not make is
       // what the command ends in. `up` answers for its tabs and is not held to
@@ -1173,6 +1208,47 @@ function sessionLines(session) {
 }
 
 /**
+ * The permission rules of one bot, written as `rules build` writes them: its
+ * entry, one with the trouble that stopped it, or none for a bot that does not
+ * run on Claude. A bot.yaml that cannot be read is the rules build's to report.
+ */
+function permissionsOf(bots, name) {
+  const home = botDir(bots, name);
+  let bot;
+  try {
+    bot = readBot(home, name);
+  } catch {
+    return [];
+  }
+  try {
+    const entry = writePermissions(bots, home, bot);
+    return entry === undefined ? [] : [entry];
+  } catch (error) {
+    return [{ bot: name, file: path.join(home, '.claude', 'settings.json'), written: [], waiting: [], trouble: error.message }];
+  }
+}
+
+/**
+ * What became of each bot's permission rules: the file the allowed ones were
+ * written into, and the kit's rules that still wait for the user's yes, each
+ * word for word, with the one command that allows them once the user has said
+ * it (#344). Nothing for a bot with nothing written and nothing waiting.
+ */
+function permissionsLines(permissions, bots) {
+  return permissions.flatMap((entry) => [
+    ...(entry.trouble === undefined ? [] : [`${'refused'.padEnd(9)}  ${entry.trouble}`]),
+    ...(entry.written.length === 0
+      ? []
+      : [`${'wrote'.padEnd(9)}  ${path.relative(bots, entry.file)}  ${entry.written.length} permission rule${entry.written.length === 1 ? '' : 's'} the user allowed`]),
+    ...(entry.waiting.length === 0 ? [] : [
+      `${'waiting'.padEnd(9)}  ${entry.bot}: these permission rules wait for the user's yes, and none of them is written until then:`,
+      ...entry.waiting.map((rule) => `             ${rule}`),
+      `             Show them to the user. Once they say yes:  ${allowCommand(bots, entry.bot, entry.waiting)}`,
+    ]),
+  ]);
+}
+
+/**
  * What became of each bot's `AGENTS.md`, in the same column as the rest of the
  * report: what the build did, the file it did it to, and what it carries. A
  * build that would not go through says what is in the way instead, in the
@@ -1255,12 +1331,13 @@ function settingsLine({ bot, session, running, settings, rules }) {
   return `${word.padEnd(9)}  ${who}  ${each.join('  ')}  rules ${rules.state}`;
 }
 
-function tabLines({ bots, created, completed, rules, skills, tabs, paused = [], projects = [], found = [] }, summary) {
+function tabLines({ bots, created, completed, rules, skills, permissions = [], tabs, paused = [], projects = [], found = [] }, summary) {
   const lines = [
     ...created.map((entry) => `created    ${entry}`),
     ...completed.map((entry) => `completed  ${entry}`),
     ...rulesLines(rules, bots),
     ...skillsLines(skills),
+    ...permissionsLines(permissions, bots),
   ];
 
   for (const tab of tabs) {

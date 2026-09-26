@@ -125,9 +125,14 @@ This makes the folder a git repository, seeds it, writes Bot Father, and opens
 its two tabs in Orca: the management tab where they will talk to it, and an ops
 tab, which is a plain shell for work across the whole fleet.
 
-Read everything it prints. Two parts of it matter to them:
+Read everything it prints. Three parts of it matter to them:
 
 - **what it created** — say it in a sentence, not as a file listing;
+- **the permission rules it says wait for their yes**, when Bot Father runs on
+  Claude Code: its mail through the kit, reading a long message beside the
+  bots folder, and its commits, so auto mode does not stop it for those. Show
+  them the rules word for word and ask. Only on a yes, run the one command
+  `init` printed for them; on a no, run nothing, and nothing is written;
 - **anything it says about Orca's own default launch arguments.** Orca adds
   these to every agent it launches, relaunches and resumes. When they carry a
   permission bypass, every session runs in that mode whatever approval level the

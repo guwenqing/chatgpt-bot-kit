@@ -27,6 +27,7 @@ import { transcriptsIn } from './conversations.js';
 import { hookTrouble } from './hooks.js';
 import { bypassFlags, harnessOf, HARNESSES, ownCli, sessionTrouble, SHELL_ENV, shellWord } from './launch.js';
 import { frontOfTab, orcaDefaultArgs, projects, tabs, wordsOfProcess } from './orca.js';
+import { permissionsTrouble } from './permissions.js';
 import { TAB_ENV } from './record.js';
 import { agentsTrouble, rulesStamp } from './rules.js';
 import { settingsInUse } from './settings.js';
@@ -191,6 +192,7 @@ function aboutBot(bots, name, setups, sessions) {
     ...sessionSettings(home, bot).map(said('config')),
     ...agentsTrouble(bots, home, bot).map(said('config')),
     ...hooksOf(bots, home, bot).map(said('config')),
+    ...permissionsTrouble(home, bot).map(said('config')),
     ...skillsTrouble(bots, home, bot).map(said('skill')),
     ...inOrca(bots, home, bot, setups, sessions),
   ];
