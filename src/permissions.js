@@ -70,15 +70,19 @@ export function broadness(rule) {
   }
   const bash = /^Bash(?:\((.*)\))?$/s.exec(rule);
   if (bash === null) return undefined;
-  const spec = (bash[1] ?? '').trim();
+  // The program is the first word after any shell assignments in front of it.
+  const spec = (bash[1] ?? '').trim().replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*/, '');
   const words = spec.split(/\s+/).filter((word) => word !== '');
   const star = spec.indexOf('*');
   if (words.length === 0) return 'it lets the bot run any command';
   if (star === -1) return undefined;
 
   const program = path.basename(words[0].replace(/:?\*.*$/, ''));
-  if (RUNNERS.has(program) && !(words[1] ?? '').startsWith('/')) {
-    return `${program} runs whatever its arguments say, so it lets the bot run any command`;
+  if (RUNNERS.has(program)) {
+    // Only a fixed script by its absolute path, itself no runner, narrows it.
+    const next = (words[1] ?? '').replace(/:\*$/, '');
+    const fixed = next.startsWith('/') && !next.includes('*') && !RUNNERS.has(path.basename(next));
+    if (!fixed) return `${program} runs whatever its arguments say, so it lets the bot run any command`;
   }
   const before = spec.slice(0, star).replace(/:$/, '').split(/\s+/).filter((word) => word !== '');
   if (before.length === 0) return 'it lets the bot run any command';

@@ -41,18 +41,23 @@ any command or any file on the disk:
 - a Bash rule with no command, or with fewer than two words before its first
   wildcard (`Bash(*)`, `Bash(gh:*)`, `Bash(git * main)`);
 - a shell, an interpreter or a command wrapper with a wildcard, unless the
-  word after it is a script's absolute path (`Bash(python3 -c:*)`,
-  `Bash(npx prettier:*)` are broad; `Bash(python3 /abs/tool.py:*)` is not);
+  word after it is a fixed script by its absolute path, with no wildcard in it
+  and itself no shell, interpreter or wrapper (`Bash(python3 -c:*)`,
+  `Bash(npx prettier:*)`, `Bash(env /bin/sh -c:*)` are broad;
+  `Bash(python3 /abs/tool.py:*)` is not);
 - `Read`, `Edit` or `Write` with no path, or on the whole disk or the whole
   home (`Edit(//**)`, `Write(~/**)`).
+
+A Bash rule is judged from its program, the first word after any shell
+assignments in front of it: `Bash(X=1 gh:*)` is broad.
 
 A user who wants such a rule for a bot adds it to that bot's settings file
 themselves. Health still names it, as it names every entry the kit did not
 write, and says only that the user added it and not the kit, and that it stays.
 
 `bot change --charter` names the rules the bot is allowed now beyond the
-kit's defaults, and says none is taken out and none added until the user
-answers. A charter change writes no rule.
+kit's defaults, says they stay allowed until the user takes them out, and that
+no new one is written until the user answers. A charter change writes no rule.
 
 Codex's form of these rules is #354's.
 

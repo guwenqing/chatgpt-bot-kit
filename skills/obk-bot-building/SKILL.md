@@ -222,7 +222,9 @@ bot's rules give it and every folder absolute, or the rule will not match.
 Show the user the list word for word, with a line on what each lets the bot do,
 and only after their yes run `obk bot change --allow`, once per rule they said
 yes to. On a no, run nothing. `obk bot change --charter` names the rules the
-bot is allowed now; say which of them the new charter no longer grants. Keep
+bot is allowed now; say which of them the new charter no longer grants, and
+that they stay allowed until the user takes them out, since the kit takes none
+out. Keep
 each rule narrow: a program and what it does. The kit refuses a rule that lets
 the bot run any command, a program with any arguments, or a shell or
 interpreter with any arguments; a user who wants one for a bot adds it to that

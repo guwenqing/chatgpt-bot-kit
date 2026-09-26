@@ -1244,16 +1244,16 @@ function permissionsOf(bots, name) {
 
 /**
  * What a charter change says about the permission rules: the ones the bot is
- * allowed now beyond the kit's defaults, word for word, and that none is taken
- * out or added until the user has answered for the new charter.
+ * allowed now beyond the kit's defaults, word for word, which stay allowed, and
+ * that a new one is written only after the user's yes to the new charter's.
  */
 function charterRulesLines(bots, bot, rules) {
-  const until = `None is taken out and none added until the user answers: list the rules the new charter grants, show them to the user word for word, and allow the ones they say yes to with  ${shellWord(ownCli())} bot change --bots ${shellWord(bots)} --bot ${shellWord(bot)} --allow <rule>`;
+  const until = `No new rule is written until the user answers: list the rules the new charter grants, show them to the user word for word, and allow the ones they say yes to with  ${shellWord(ownCli())} bot change --bots ${shellWord(bots)} --bot ${shellWord(bot)} --allow <rule>`;
   if (rules.length === 0) return [`${bot} is allowed no permission rules beyond the kit's defaults. ${until}`];
   return [
     `${bot} is allowed these permission rules beyond the kit's defaults, from before this change:`,
     ...rules.map((rule) => `             ${rule}`),
-    until,
+    `They stay allowed, whatever the user answers, until the user takes one out of ${path.join('bots', bot, 'bot.yaml')} and ${path.join('bots', bot, '.claude', 'settings.json')}; the kit takes none out. ${until}`,
   ];
 }
 
