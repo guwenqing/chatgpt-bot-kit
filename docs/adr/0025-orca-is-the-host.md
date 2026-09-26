@@ -1,9 +1,9 @@
-# ADR 0023: Orca is the host
+# ADR 0025: Orca is the host
 
 Date: 2026-09-26.
-Status: superseded by [ADR 0024](0024-orca-is-the-host.md).
-Decided by: the owner, in his design session of 2026-09-19, and on 2026-09-20 for the plain folder; the architect, for #232 and PR #260, for the sentences marked so; the owner on 2026-09-24 for calling Orca's runtime through Orca's own client (#224), with the architect deciding how the user is told, for the sentences marked so; the architect, for #329, for the kit's own reading of a tab's screen before it types into it, for the sentences marked so. The owner may overrule the architect's sentences. Consulted: the coordinator, who researched Orca. A sentence marked (proposed) is not decided yet.
-Supersedes: [ADR 0021](0021-orca-is-the-host.md).
+Status: accepted.
+Decided by: the owner, in his design session of 2026-09-19, and on 2026-09-20 for the plain folder; the architect, for #232 and PR #260, for the sentences marked so; the owner on 2026-09-24 for calling Orca's runtime through Orca's own client (#224), with the architect deciding how the user is told, for the sentences marked so; the architect, for #329, for the kit's own reading of a tab's screen before it types into it, for the sentences marked so; the architect, for #298, for asking Orca's runtime who is in front of a tab where `ps` cannot read it, for the sentences marked so; the owner on 2026-09-26 for Orca's own Force Reload after a removal (#343), with the architect deciding how the menu item is found, for the sentences marked so. The owner may overrule the architect's sentences. Consulted: the coordinator, who researched Orca. A sentence marked (proposed) is not decided yet.
+Supersedes: [ADR 0024](0024-orca-is-the-host.md).
 
 ## Context
 
@@ -39,6 +39,32 @@ Codex 0.156.1, macOS 26.6.2, measured 2026-09-24, #232):
 
 The kit runs only on the machine Orca runs on (PRD 5's "No cloud execution",
 itself still marked proposed), so reading the local process table is enough.
+
+Not from everywhere the kit runs, though (#298). A Codex session at the kit's
+`auto` level runs its commands in Codex's `workspace-write` sandbox, and
+there `/bin/ps`, which is setuid root, does not start at all: `Operation not
+permitted`, exit 126, even for its own pid (codex-cli 0.156.1, seen
+2026-09-24). So every `obk message send` from a Codex reviewer said it could
+not tell, and typed no nudge. Orca's runtime has a method its CLI does not
+expose, `terminal.inspectProcess`, that reads the same thing from inside Orca:
+its terminal daemon runs `ps` over the process table, walks down from the
+tab's own process to its terminal's foreground group, and names what leads it
+(read in the Orca 1.4.212 bundle, 2026-09-26). Orca's runtime runs in the app,
+outside any sandbox of the caller, and only `orchestration.*` methods go
+through Orca's attestation of the caller. Seen live on Orca 1.4.212 from a tab
+of a probe's own: the shell at its prompt answered verdict `live` with no
+process named and no child in front, `less` answered `foregroundProcess:
+"less"`, and a `node` program `"node"`. A harness answers under its own name
+(`processName` `claude` or `codex`, from its arguments): read in the bundle,
+and seen for an idle Claude Code in #298's attended system test. Not while
+it runs a command, though. On macOS `ps` prints `??` for a process with no
+terminal, and Orca takes that for another terminal: any process in the tab
+with no terminal makes the answer `unverifiable`, reason `tty_boundary`, with
+`foregroundProcess` the leader's short kernel name (`2.1.282`, the version
+file, for a native Claude Code). Claude Code runs its commands in a shell
+with no terminal, so a Claude session running a command, or holding one in
+the background, gets that answer (seen live in the same run, and read in
+Orca's source; an Orca bug, #350).
 
 Orca's word on whether something on a tab's screen wants answering does not
 cover every question a harness asks (#329). Read in the Orca 1.4.212 bundle on
@@ -79,8 +105,30 @@ Orca's own `bin/orca` runs its CLI as `ELECTRON_RUN_AS_NODE=1
 <Orca.app>/Contents/MacOS/Orca <script>`, and a script run that way can load
 Orca's client from `app.asar.unpacked/out/cli/runtime-client.js`. Live on
 2026-09-24, that client answered `project.list`, and refused `project.update`
-on an id that does not exist with `Project not found`. Nobody here has seen the
-window re-read: no session can see Orca's window on this machine.
+on an id that does not exist with `Project not found`. No session can see
+Orca's window on this machine; the owner looked for them in #343.
+
+A re-read does not take a removed project out of the sidebar (Orca 1.4.212,
+2026-09-26, #343). Read in the bundle: on the event the window replaces its
+list of repos, but the sidebar builds its rows from the window's own list of
+workspaces, and nothing drops the workspaces of a repo that has gone; only the
+window's own removal does. Seen by the owner, with a throwaway folder project:
+after `project setup-delete` its row stayed under its old name; after the
+kit's `project.update` call the row stayed, now under "Unknown"; after Orca's
+menu item View › Force Reload it was gone, and Orca had 11 terminals before and
+11 after. Before that, the owner saw the project appear after the kit's call
+on it. Force Reload rebuilds the window's page
+(`webContents.reloadIgnoringCache()`, the same code as the `app.forceReload`
+shortcut, ⌘⇧R by default). No runtime call and no CLI command does it. macOS
+System Events can click that menu item in Orca's process without a keystroke,
+when macOS allows the app it runs from to (Accessibility); from a kit session
+inside Orca it was allowed and worked, with Orca the front app. With another
+app in front, the click is taken and Orca does nothing: seen twice on
+2026-09-26, once after a system test and once on its own, with the sidebar
+read through Accessibility before and after (#343). One Force Reload drops
+every stale row, not only the last removal's. The item's name is localized,
+and it carries the shortcut after a tab, as the menu draws it:
+`Force Reload\t⌘⇧R`. The shortcut is the user's to change.
 
 ## Decision
 
@@ -99,6 +147,17 @@ is "cannot tell", as is a pid or group that cannot be read; then the kit says
 it cannot tell, and it types nothing. (The architect, #232 and PR #260; the
 owner may overrule.)
 
+Where `ps` cannot read the tab, as inside Codex's sandbox, the kit asks
+Orca's runtime `terminal.inspectProcess` for the tab instead, through Orca's
+own client, the same way as the window call below. Only an answer with the
+verdict `live` counts. A process named there, by `processName` or else by
+`foregroundProcess`, is the program in front, under that name, and the rules
+above apply to it as to one `ps` named. No process named and nothing but the
+shell in front (`hasChildProcesses` false) is the shell. Anything else, and
+anything that goes wrong with the call, is "cannot tell". Where `ps` reads the
+tab, Orca's runtime is not asked. The call is given at most 3 seconds and is
+never retried. (The architect, #298; the owner may overrule.)
+
 Before the kit types a line into a tab with a harness running in it, it also
 reads the tab's rendered screen with `terminal read --screen`. When the
 lowest row there that starts with the harness's pointer is on a numbered
@@ -113,23 +172,37 @@ started. (The architect, #329; the owner may overrule.)
 
 Where Orca's CLI has no call for what the kit needs, the kit calls Orca's
 runtime through Orca's own client, loaded from the installed app and run by
-Orca's own binary the way Orca's `bin/orca` runs its CLI. Today that is one
-call. After a run makes a bot's project, or turns a registration into its
+Orca's own binary the way Orca's `bin/orca` runs its CLI. Today that is two
+calls: `terminal.inspectProcess`, above, and the window call. After a run makes a bot's project, or turns a registration into its
 folder project, the kit calls `project.update` with no changes on that
-project; after `retire` removes one, it makes the same call on Bot Father's
-project, which is never retired, and makes none when Orca has no project for
-Bot Father. The call is made once and never retried, is given at most 3
+project. The call is made once and never retried, is given at most 3
 seconds, and anything that goes wrong with it is passed over in silence: the
 command succeeds and says the same thing. It lives in `src/orca.js` with every
 other Orca call. This is the owner's yes of 2026-09-24: "can be as dirty as it
 is, try to be protective in case orca changes".
 
-After any run that made, renamed or removed a project, the kit prints one
-line, whatever became of the call: "If Orca's sidebar does not show it, reload
-the window with Cmd+Shift+R." After a removal it stays for good, because of
-stablyai/orca#20102. After a make or a rename it stays until the owner has seen
-the window re-read with no reload. (The architect, #224; the owner may
-overrule.)
+After `retire` has removed a bot's project, and Orca's list no longer has it,
+the kit has Orca's window force-reload itself when Orca is the front app: it
+has macOS System Events click Orca's menu item Force Reload. When another app
+is in front it clicks nothing, and never brings Orca to the front. (The
+architect, #343; the owner may overrule.) That is the owner's ask of 2026-09-26, that
+the sidebar drop a removed project "automatically, not that I have to do it"
+(#343). The system tests do the same after they remove their throwaway
+projects. The click is aimed at the Orca the kit talks to, the app its Orca CLI
+belongs to, and at nothing else. The item is the one named "Force Reload" or
+drawn with ⌘⇧R, Orca's own shortcut for it, in any of Orca's menus but the
+Apple menu, so it is found in any language while the shortcut is Orca's own.
+(The architect, #343; the owner may overrule.) It is tried once, given at most
+5 seconds, and anything that goes wrong is passed over in silence, as with the
+call above; it lives in `src/orca.js` too. The kit no longer makes the
+`project.update` call after a removal: it only relabels the row.
+
+After any run that made or renamed a project, the kit prints one line, whatever
+became of the call: "If Orca's sidebar does not show it, reload the window with
+Cmd+Shift+R." It stays until the owner has seen the window re-read with no
+reload. After a removal the kit prints the same line only when the Force Reload
+was not done, and otherwise says that it reloaded Orca's window. (The
+architect, #224 and #343; the owner may overrule.)
 
 ## Alternatives considered
 
@@ -146,6 +219,31 @@ overrule.)
   idle harness (#232).
 - **`agentIdentity` alone.** Not chosen: it is late, and it can name a harness
   that has quit, so a nudge could go into a shell (#232).
+- **`terminal.inspectProcess` for every tab, in place of `ps`.** Not chosen:
+  the `ps` reading is what #232 measured, it rests on no unpublished method,
+  and it needs no second process per look. The runtime is asked only where
+  `ps` cannot answer (#298).
+- **Orca's `terminal.isRunningAgent` or `terminal.agentStatus`.** Not chosen:
+  both are guesses from the tab's title, its recent output, hook reports and
+  the process name (read in the 1.4.212 bundle), so a stale title can say a
+  harness is there after it quit. `isRunningAgent` also took more than 5
+  seconds on a `node` program in front, and timed out (seen, #298).
+- **Opening Codex's sandbox further, or changing the user's Codex config.**
+  Out: ADR 0015 already opens the network for Orca, and any further opening is
+  the owner's call (#298).
+- **Reading the tab from the harness's hook**, which Codex runs outside its
+  sandbox (tech notes, section 3). Not now: the nudge is typed by the
+  sender's own `obk message send`, which runs where the sender's commands run,
+  and handing it to a hook needs a hook event beside SessionStart and a queue.
+  It is the road for a busy receiver if Orca has not fixed `tty_boundary`
+  when #350 comes up.
+- **On `tty_boundary`, taking the tab as the harness's when Orca's hook
+  status says one is running there.** Not chosen: that is a guess from hooks
+  where #232 asks for the process in front (#298).
+- **Taking an `unverifiable` answer's `foregroundProcess` as the program in
+  front.** Not chosen: it is the kernel's short name, which for a native
+  Claude Code is its version file, and differs between sessions started
+  before and after an update.
 - **Orca's hook state from `orca worktree ps`.** Not enough: a resumed Codex
   has no entry until its first prompt (#226, #232).
 - **Any program in front with an identity counts as the harness.** Not
@@ -182,7 +280,23 @@ overrule.)
   reload by hand after every new bot, when one call can spare them that.
 - **Reloading the window by keystroke, or through Orca's computer-use
   helper.** Not chosen: it types into the user's window and takes their screen,
-  which the kit does not do (#224).
+  which the kit does not do (#224). Clicking the menu item through System
+  Events does neither, and is what the kit does after a removal (#343).
+- **Force Reload after a make or a rename too.** Not chosen: the
+  `project.update` call is enough there, as far as the owner has seen, and a
+  reload redraws the whole window.
+- **Keeping the `project.update` call after a removal as well.** Not chosen:
+  the row it leaves reads "Unknown", which says less than the old name, and the
+  Force Reload does not need it (#343).
+- **Bringing Orca to the front for the click, and back after.** Not chosen
+  for now: it takes the user's screen, and while Orca is in front whatever
+  they type lands in Orca's focused tab, a harness or a shell, where an Enter
+  sends it. That is the owner's to accept; it is put to them (#343).
+- **The menu item by its English name alone.** Not chosen: Orca localizes it
+  (#343).
+- **The menu item by its place, the second in View.** Not chosen: a menu Orca
+  reorders would get the wrong item clicked, where a name or a shortcut that no
+  longer matches clicks nothing (#343).
 - **Speaking Orca's runtime protocol from the kit's own code.** Not chosen: the
   transport and its authentication would be the kit's to keep up with. Through
   Orca's own client, a change there is Orca's.
@@ -203,6 +317,17 @@ overrule.)
 - Bad: the kit reads the operating system's process table as well as Orca, and
   `diagnostics memory` may change. A harness installed through a wrapper gets
   "cannot tell", so its mail waits without a nudge, until #261.
+- Good: mail sent from a Codex session at the kit's `auto` level nudges an
+  idle receiver, as mail from a Claude session does, and `health`, `restart`,
+  the skills reload and grooming read a tab from there too (#298).
+- Bad: not a busy one. A Claude receiver running a command, or holding one in
+  the background, is "cannot tell" from inside the sandbox until Orca reads
+  `??` as no terminal, and its mail waits unannounced (#350).
+- Bad: from inside a sandbox, that reading rests on what Orca does not
+  publish: `terminal.inspectProcess` and the shape of its answer. If they go
+  in a release, a Codex sender is back to "cannot tell" and its mail waits
+  unannounced, as before #298. A look from a sandbox can take up to 3 seconds
+  longer when the client hangs.
 - Good: after `obk up` of a new bot, the window can show it with its name and
   as a folder project without the user doing anything.
 - Bad: the call rests on what Orca does not publish: where the client file is
@@ -210,8 +335,23 @@ overrule.)
   of them can go in a release, and then the call fails quietly and the user
   reloads by hand, as before. A run that makes or removes a project can take up
   to 3 seconds longer when the client hangs.
-- Bad: until the owner has seen the window re-read, every run that changes a
-  project prints the reload line, even when the call worked.
+- Bad: until the owner has seen the window re-read, every run that makes or
+  renames a project prints the reload line, even when the call worked.
+- Good: after `obk retire` run with Orca in front, as from one of its own
+  tabs, the sidebar drops the removed project, and every older stale row
+  with it, with no reload by hand and no restart (#343).
+- Bad: a removal made while another app is in front, a system test run
+  included, leaves its row until the next reload, and the user is told to
+  reload by hand, as before.
+- Bad: every `retire` redraws the whole of Orca's window, and every system
+  test file that removed a project does it once more. The Force Reload rests on
+  what Orca does not publish either: the menu item's name, its shortcut, and a
+  reload keeping every terminal, which was seen once, with 11. Without
+  Accessibility for the app the kit runs from, or with Orca in another
+  language and its shortcut changed, the click is not made and the user is
+  told to reload by hand, as before. The first time, macOS may ask the user
+  whether that app may control System Events; the kit does not wait for the
+  answer past its 5 seconds.
 - Good: the nudge and `/reload-skills` hold back on every numbered menu either
   harness draws, the update offer included, whether Orca names it or not.
 - Bad: one more Orca call before every line typed. A tab whose screen Orca
@@ -226,15 +366,19 @@ overrule.)
 - Revisit if: Orca offers a supported way to tell whether a harness is running
   in a tab, or the kit has to run where Orca does not; or Orca's
   `setup-update` and `setup-delete` send the event themselves, or its CLI
-  offers a call that does; or a harness draws its questions another way.
+  offers a call that does; or its window drops a removed project's row on a
+  re-read (stablyai/orca#20102, stablyai/orca#23224), when the Force Reload can
+  go behind a version check; or a harness draws its questions another way.
   Confidence: high for Orca as the host; the process-group reading was right
   in every run measured; low for the window call until the window has been
   seen to re-read. (Proposed in #262; not recorded when it was decided.)
 - Checked by: `test/harness-in-tab.test.js` for the reading of a tab,
+  `test/front-without-ps.test.js` for asking Orca's runtime where `ps` cannot,
   `test/question-on-screen.test.js` for the reading of its screen,
-  `test/orca-window.test.js` for the window call and its fallbacks, and the
+  `test/orca-window.test.js` for the window call, the Force Reload and their
+  fallbacks, and the
   system tests, which drive the real Orca, `test/system/harness-question.test.js`
-  among them.
+  and `test/system/codex-nudge.test.js` among them.
 
 ## History
 
@@ -261,6 +405,14 @@ overrule.)
   runtime through Orca's own client where the CLI has no call, today to make
   the window read its projects again, and prints a reload line after any
   change to a project (#224). It replaced ADR 0011.
-- 2026-09-26, this record: before it types into a tab, the kit also reads the
-  tab's rendered screen, and types nothing while a harness's own choice list is
-  up (#329). The marker question (#261) stays open. It replaces ADR 0021.
+- 2026-09-26, [ADR 0023](0023-orca-is-the-host.md): before it types into a
+  tab, the kit also reads the tab's rendered screen, and types nothing while a
+  harness's own choice list is up (#329). The marker question (#261) stays
+  open. It replaced ADR 0021.
+- 2026-09-26, [ADR 0024](0024-orca-is-the-host.md): where `ps` cannot read a
+  tab, as inside Codex's sandbox, the kit asks Orca's runtime
+  `terminal.inspectProcess` instead (#298). It replaced ADR 0023.
+- 2026-09-26, this record: after a removal, the kit has Orca's window
+  force-reload itself through Orca's menu when Orca is the front app, in
+  place of the `project.update` call, and prints the reload line only when
+  that was not done (#343). It replaces ADR 0024.

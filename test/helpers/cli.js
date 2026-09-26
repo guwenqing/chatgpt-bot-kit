@@ -5,6 +5,9 @@
 //   <root>/bin/obk       symlink to the repo's src/cli.js (what `npm link` makes)
 //   <root>/bin/orca      fake Orca (helpers/fake-orca.js), what OBK_ORCA names
 //   <root>/bin/fake-ps   fake ps (helpers/fake-ps.js), what OBK_PS names
+//   <root>/bin/fake-osascript
+//                        fake osascript (helpers/fake-osascript.js), what
+//                        OBK_OSASCRIPT names
 //   <root>/orca-fake/    the fake Orca's world: state.json and calls.log
 //   <root>/cwd           the working directory the CLI is spawned from
 //   <root>/home          HOME, so a stray write to the home dir shows up here
@@ -48,6 +51,8 @@ export const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 export const cliEntry = path.join(repoRoot, 'src', 'cli.js');
 const fakeOrcaEntry = fileURLToPath(new URL('./fake-orca.js', import.meta.url));
 const fakePsEntry = fileURLToPath(new URL('./fake-ps.js', import.meta.url));
+const fakeOsascriptEntry = fileURLToPath(new URL('./fake-osascript.js', import.meta.url));
+const asPlatformEntry = fileURLToPath(new URL('./as-platform.js', import.meta.url));
 
 /** Where the fake Orca keeps its world, inside a sandbox. */
 const FAKE_ORCA_DIR = 'orca-fake';
@@ -193,6 +198,21 @@ export async function createSandbox(t) {
   ].join('\n'));
   await chmod(fakePs, 0o755);
 
+  // The fake osascript (#343): the kit reloads Orca's window through it, and
+  // the real one would reach System Events and the real Orca's menu. Not called
+  // `osascript`, for the same reason as the fake ps; only OBK_OSASCRIPT names it.
+  const fakeOsascript = path.join(bin, 'fake-osascript');
+  await writeFile(fakeOsascript, [
+    '#!/usr/bin/env node',
+    `process.env.OBK_FAKE_ORCA_DIR = ${JSON.stringify(fakeDir)};`,
+    `import(${JSON.stringify(pathToFileURL(fakeOsascriptEntry).href)}).then((osascript) => osascript.runOsascript()).catch((error) => {`,
+    "  process.stderr.write(`fake osascript: ${error && error.stack || error}\\n`);",
+    '  process.exit(70);',
+    '});',
+    '',
+  ].join('\n'));
+  await chmod(fakeOsascript, 0o755);
+
   // The suite is often run from an Orca tab of its own, and Orca puts that
   // tab's variables in everything started there. None of them names a terminal
   // in the fake's world, and a kit that read them would behave one way on a
@@ -210,9 +230,23 @@ export async function createSandbox(t) {
     HOME: home,
     OBK_ORCA: fakeOrca,
     OBK_PS: fakePs,
+    OBK_OSASCRIPT: fakeOsascript,
   };
 
   const readState = async () => JSON.parse(await readFile(stateFile, 'utf8'));
+
+  /** One of the fake osascript's logs, `{ args }` per line, oldest first. */
+  const osascriptLog = async (name) => {
+    try {
+      return (await readFile(path.join(fakeDir, name), 'utf8'))
+        .split('\n')
+        .filter((line) => line !== '')
+        .map((line) => JSON.parse(line));
+    } catch (error) {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    }
+  };
 
   /** How many times the fake Orca has answered `terminal wait` so far. */
   const waitsSoFar = async () => {
@@ -278,6 +312,19 @@ export async function createSandbox(t) {
           throw error;
         }
       },
+    },
+    /**
+     * The fake osascript (helpers/fake-osascript.js): what it is, every argv the
+     * kit handed it, `{ args }` in order, and `answer`, which tells it what to
+     * answer from the next call on: one of its OSASCRIPT answers, or
+     * `{ stdout, stderr, code, delayMs }`. Untold, it refuses. `answered`
+     * is the calls that got as far as answering, which a killed one never does.
+     */
+    osascript: {
+      cli: fakeOsascript,
+      calls: () => osascriptLog('osascript.log'),
+      answered: () => osascriptLog('osascript-answered.log'),
+      answer: (told) => writeFile(path.join(fakeDir, 'osascript.json'), `${JSON.stringify(told)}\n`),
     },
     /** The fake Orca: what it is, what it knows, and what it was asked. */
     orca: {
@@ -401,6 +448,17 @@ export async function createSandbox(t) {
   };
 }
 
+/**
+ * From here on, every run of `box` that takes its environment from `box.env`
+ * believes it is on `platform` ('darwin', 'linux'): its `process.platform`
+ * says so (helpers/as-platform.js). The kit reloads Orca's window only on
+ * macOS (#343), and CI is Linux.
+ */
+export function asPlatform(box, platform) {
+  box.env.NODE_OPTIONS = [box.env.NODE_OPTIONS, `--import=${pathToFileURL(asPlatformEntry).href}`].filter(Boolean).join(' ');
+  box.env.OBK_TEST_PLATFORM = platform;
+}
+
 /** How long a fake runtime client told to hang keeps its process alive: far past any wait the kit should make. */
 export const CLIENT_HANG_MS = 30_000;
 
@@ -424,7 +482,19 @@ export const CLIENT_HANG_MS = 30_000;
  * `client` is how the runtime client behaves:
  *   'answers'            as Orca's runtime does: `project.update` on a project
  *                        Orca has resolves `{ id, ok: true, result, _meta }`, on
- *                        one it has not rejects with `Project not found`
+ *                        one it has not rejects with `Project not found`; and
+ *                        `terminal.inspectProcess` on a terminal Orca has, by
+ *                        its handle, resolves the same envelope with
+ *                        `result: { process }`, on one it has not rejects (#298).
+ *                        The `process` is what is in front of that tab, from
+ *                        the same world the fake `ps` reads (`runtimeViewOf` in
+ *                        helpers/fake-ps.js), unless the terminal in state.json
+ *                        carries `inspect`, which says what the runtime answers
+ *                        for that tab alone:
+ *                          { process }   the envelope, with this `process`
+ *                          { resolves }  `call` resolves this, as it is, in
+ *                                        place of the envelope
+ *                          { rejects }   `call` rejects with this message
  *   'missing'            there is no client file at all
  *   'no-export'          the file loads but exports no `RuntimeClient`
  *   'method-not-found'   `call` rejects with an error whose code is `method_not_found`
@@ -435,7 +505,8 @@ export const CLIENT_HANG_MS = 30_000;
  *
  * The client writes one line per load and per call to a log in the fake's
  * world, which `loads()` and `calls()` read back. A load carries the variables
- * of its environment the kit is meant to set or leave out.
+ * of its environment the kit is meant to set or leave out; a call, what its
+ * client was made with, which `clients()` reads back.
  */
 export async function orcaApp(box, { client = 'answers', executable = true } = {}) {
   const contents = path.join(box.root, 'Orca.app', 'Contents');
@@ -473,22 +544,37 @@ export async function orcaApp(box, { client = 'answers', executable = true } = {
       `const LOG = ${JSON.stringify(log)};`,
       `const STATE = ${JSON.stringify(path.join(fakeDir, 'state.json'))};`,
       `const MODE = ${JSON.stringify(client)};`,
+      `const FAKE_DIR = ${JSON.stringify(fakeDir)};`,
+      `const FAKE_PS = ${JSON.stringify(pathToFileURL(fakePsEntry).href)};`,
       "const note = (entry) => appendFileSync(LOG, JSON.stringify(entry) + '\\n');",
       'const { ELECTRON_RUN_AS_NODE, NODE_OPTIONS, NODE_REPL_EXTERNAL_MODULE } = process.env;',
       "note({ event: 'load', env: { ELECTRON_RUN_AS_NODE, NODE_OPTIONS, NODE_REPL_EXTERNAL_MODULE } });",
       'const refusal = (message, code) => Object.assign(new Error(message), code === undefined ? {} : { code });',
       'let answered = 0;',
+      '// What is in front of one tab, by its handle (#298). The envelope is the one the real call answers with.',
+      'async function inspect(params) {',
+      "  const state = JSON.parse(readFileSync(STATE, 'utf8'));",
+      '  const terminal = (state.terminals || []).find((one) => params != null && one.handle === params.terminal);',
+      "  if (terminal === undefined) throw refusal(`Terminal not found: ${params == null ? params : params.terminal}`);",
+      '  const told = terminal.inspect || {};',
+      "  if ('rejects' in told) throw refusal(told.rejects);",
+      "  if ('resolves' in told) return told.resolves;",
+      "  const inFront = 'process' in told ? told.process : (await import(FAKE_PS)).runtimeViewOf(state, terminal, FAKE_DIR);",
+      '  answered += 1;',
+      '  return { id: `rpc_${answered}`, ok: true, result: { process: inFront }, _meta: { durationMs: 1 } };',
+      '}',
       'class RuntimeClient {',
       '  constructor(profile, timeoutMs) {',
       '    this.profile = profile;',
       '    this.timeoutMs = timeoutMs;',
       '  }',
       '  call(method, params) {',
-      "    note({ event: 'call', method, params });",
+      "    note({ event: 'call', method, params, profileIsUndefined: this.profile === undefined, timeoutMs: this.timeoutMs });",
       "    if (MODE === 'method-not-found') return Promise.reject(refusal(`Unknown method: ${method}`, 'method_not_found'));",
       "    if (MODE === 'project-not-found') return Promise.reject(refusal('Project not found'));",
       "    if (MODE === 'never-settles') return new Promise(() => {});",
       `    if (MODE === 'hangs') { setTimeout(() => {}, ${CLIENT_HANG_MS}); return new Promise(() => {}); }`,
+      "    if (method === 'terminal.inspectProcess') return inspect(params);",
       "    if (method !== 'project.update') return Promise.reject(refusal(`Unknown method: ${method}`, 'method_not_found'));",
       "    const setups = JSON.parse(readFileSync(STATE, 'utf8')).setups || [];",
       '    const setup = setups.find((one) => params != null && one.projectId === params.projectId);',
@@ -522,6 +608,8 @@ export async function orcaApp(box, { client = 'answers', executable = true } = {
     calls: async () => (await entries('call')).map(({ method, params }) => ({ method, params })),
     /** Every time the client file was loaded, with the environment it was loaded in. */
     loads: () => entries('load'),
+    /** What the client of each call was made with, in order: { profileIsUndefined, timeoutMs }. */
+    clients: async () => (await entries('call')).map(({ profileIsUndefined, timeoutMs }) => ({ profileIsUndefined, timeoutMs })),
   };
 }
 
