@@ -260,23 +260,27 @@ test('N2 the six defaults in a bots folder with a space in its path, quoted by t
 
 // ----------------------------------------------------------------- a character that is not plain
 
-test('N5 a refusal for a character that is not plain names the character itself, and writes nothing', async (t) => {
-  const box = await createSandbox(t);
-  const bots = await withAllowedBot(box);
-  const rule = String.raw`Bash(/bin/s\h -c:*)`;
-  const before = await snapshot(bots, skipGit);
+for (const [rule, character, name] of [
+  [String.raw`Bash(/bin/s\h -c:*)`, '\\', 'the backslash'],
+  ['Bash(gh pr merge; rm:*)', ';', 'the ;'],
+]) {
+  test(`N5 refusing ${rule} names ${name} itself, apart from the rule, and writes nothing`, async (t) => {
+    const box = await createSandbox(t);
+    const bots = await withAllowedBot(box);
+    const before = await snapshot(bots, skipGit);
 
-  const result = await change(box, ...allowing(rule));
+    const result = await change(box, ...allowing(rule));
 
-  assertCleanFailure(result);
-  assertNamesRuleAndFile(result, rule, bots);
-  // The rule holds the backslash, so look for it in the rest of the message.
-  assert.ok(
-    result.stderr.replaceAll(rule, '').includes('\\'),
-    `the refusal should name the backslash itself, not only inside the rule, got: ${result.stderr}`,
-  );
-  await assertNothingWritten(bots, before);
-});
+    assertCleanFailure(result);
+    assertNamesRuleAndFile(result, rule, bots);
+    // The rule holds the character, so look for it in the rest of the message.
+    assert.ok(
+      result.stderr.replaceAll(rule, '').includes(character),
+      `the refusal should name ${name} itself, not only inside the rule, got: ${result.stderr}`,
+    );
+    await assertNothingWritten(bots, before);
+  });
+}
 
 // ----------------------------------------------------------------- a mix is refused as a whole
 
