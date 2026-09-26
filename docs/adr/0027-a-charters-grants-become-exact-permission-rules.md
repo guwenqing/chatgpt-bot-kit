@@ -59,8 +59,9 @@ version on its name, such as `python3.12`, is that shell or interpreter.
 
 `--allow` also refuses a Bash rule that is not plain words, naming the
 character: outside quotes a word holds only letters, digits, `-_./:=@%+,^`, a
-`~` at its start and `*` as the wildcard; inside double quotes no `$`, backtick
-or backslash; and every quote closes. An escape, an expansion, a glob or a
+`~` at its start, `*` as the wildcard, and `\'` for an apostrophe (the form
+the kit quotes one with in a path); inside double quotes no `$`, backtick or
+backslash; and every quote closes. An escape, an expansion, a glob or a
 second command could otherwise hide which program runs (`Bash(/bin/s\h -c:*)`
 runs `/bin/sh`), and chasing each such trick one by one would never end.
 

@@ -108,6 +108,10 @@ function shellWords(text) {
       if (special !== null) return { odd: `the character ${special[0]}` };
       word += inside;
       at = end;
+    } else if (char === '\\' && text[at + 1] === "'") {
+      // An apostrophe outside quotes, the form shellWord gives one in a path.
+      word += "'";
+      at += 1;
     } else if (PLAIN.test(char) || (char === '~' && word === '')) {
       word += char;
     } else {
