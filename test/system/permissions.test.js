@@ -414,19 +414,21 @@ function claudeRuleCovers(rule, call) {
 
 /**
  * The rules of one Claude settings file, by what they do: `{ allow, ask, deny }`,
- * each the file's `permissions.<kind>` list, empty for no file or no list.
+ * each the file's `permissions.<kind>` list. Every one is an empty list when
+ * there is no file (nothing at the path, or a path through a file), when the
+ * file is empty, or when it has no such list; the shape is the same either way.
  */
 function claudeRulesIn(file) {
   let text;
   try {
     text = readFileSync(file, 'utf8');
   } catch (error) {
-    if (error.code === 'ENOENT') return [];
-    throw error;
+    if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error;
+    text = '';
   }
   let settings;
   try {
-    settings = JSON.parse(text);
+    settings = text.trim() === '' ? {} : JSON.parse(text);
   } catch {
     assert.fail(`${file} is not JSON, so this test cannot say what rules it holds`);
   }
