@@ -212,6 +212,22 @@ settings. On a no, run nothing, and nothing is written. When the kit lists new
 rules for a bot later, ask again. Never write a permission rule into a settings
 file by hand.
 
+The charter decides what else the bot needs. What it lets the bot do without
+asking, such as merging pull requests, auto mode can still stop, so on Claude
+Code each grant needs its own rule. When the charter is written, and again
+whenever it changes, list the exact rules it grants: `Bash(gh pr merge:*)` for
+a bot that merges pull requests, `Bash(gh issue close:*)` for one that closes
+issues. Spell each command as the bot will run it, the kit by the path the
+bot's rules give it and every folder absolute, or the rule will not match.
+Show the user the list word for word, with a line on what each lets the bot do,
+and only after their yes run `obk bot change --allow`, once per rule they said
+yes to. On a no, run nothing. `obk bot change --charter` names the rules the
+bot is allowed now; say which of them the new charter no longer grants. Keep
+each rule narrow: a program and what it does. The kit refuses a rule that lets
+the bot run any command, a program with any arguments, or a shell or
+interpreter with any arguments; a user who wants one for a bot adds it to that
+bot's settings themselves. Propose no rule for what the charter does not grant.
+
 A bot that should learn across its sessions can use its harness's own memory,
 turned on for that bot alone, whatever the user's own setting is for everything
 else. The harness writes it, loads it and keeps it tidy itself. On Claude Code

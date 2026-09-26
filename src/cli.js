@@ -19,7 +19,7 @@ import { initBots } from './init.js';
 import { APPROVALS, HARNESSES, ownCli, shellWord, workDirOf } from './launch.js';
 import { checkMail, lookUp, noMailboxYet, sendMessage } from './message.js';
 import { orcaCli, orcaTrouble, RELOAD_LINE } from './orca.js';
-import { allowCommand, writePermissions } from './permissions.js';
+import { allowCommand, beyondDefaults, refuseBroad, runsOnClaude, writePermissions } from './permissions.js';
 import { pauseSessions, unpauseSessions } from './pause.js';
 import { recordSession, SHELL_ENV, TAB_ENV } from './record.js';
 import { restartSessions } from './restart.js';
@@ -61,7 +61,8 @@ Usage:
                             A running session reads it when it next starts.
                             --allow records a permission rule the user said
                             yes to, once per rule, and writes it into the bot's
-                            Claude settings.
+                            Claude settings. A broad rule, such as Bash(gh:*),
+                            is refused and nothing is written.
   obk session change --bots <path> --bot <bot> --session <session>
                   [--model <m>] [--effort <e>] [--context <c>]
                   [--approval ${APPROVALS.join('|')}]
@@ -608,7 +609,7 @@ const commands = {
     }
     // Refused before anything is written, so a bad rule, or a bad list already
     // there, leaves the charter as it was too.
-    if (values.allow !== undefined) allowedNow(bots, values.bot, values.allow);
+    if (values.allow !== undefined) refuseBroad(allowedNow(bots, values.bot, values.allow).home, values.allow);
 
     const answer = { bots, bot: values.bot, home: botDir(bots, values.bot) };
     const lines = [];
@@ -627,6 +628,19 @@ const commands = {
           ? `${changed.bot}'s charter is written, and its rules are not. Settle what the line above says, then:  ${shellWord(ownCli())} rules build --bots ${shellWord(bots)} --bot ${changed.bot}`
           : `${changed.bot}'s charter is changed. A session that is running read the old one when it started; it reads this one when it next starts.`,
       );
+      // The rules a charter grants are the user's to say yes to again, so the
+      // change names what is allowed now and writes none of it (#353).
+      // An allow list that is not a list is named by rules build and health,
+      // and a charter already written is not undone for it.
+      const bot = readBot(changed.home, changed.bot);
+      if (values.allow === undefined && runsOnClaude(bot)) {
+        try {
+          answer.beyondDefaults = beyondDefaults(bots, changed.home, bot);
+          lines.push(...charterRulesLines(bots, changed.bot, answer.beyondDefaults));
+        } catch {
+          // Nothing to name here.
+        }
+      }
     }
     if (values.allow !== undefined) {
       const allowed = allowRules(bots, values.bot, values.allow);
@@ -1226,6 +1240,21 @@ function permissionsOf(bots, name) {
   } catch (error) {
     return [{ bot: name, file: path.join(home, '.claude', 'settings.json'), written: [], waiting: [], trouble: error.message }];
   }
+}
+
+/**
+ * What a charter change says about the permission rules: the ones the bot is
+ * allowed now beyond the kit's defaults, word for word, and that none is taken
+ * out or added until the user has answered for the new charter.
+ */
+function charterRulesLines(bots, bot, rules) {
+  const until = `None is taken out and none added until the user answers: list the rules the new charter grants, show them to the user word for word, and allow the ones they say yes to with  ${shellWord(ownCli())} bot change --bots ${shellWord(bots)} --bot ${shellWord(bot)} --allow <rule>`;
+  if (rules.length === 0) return [`${bot} is allowed no permission rules beyond the kit's defaults. ${until}`];
+  return [
+    `${bot} is allowed these permission rules beyond the kit's defaults, from before this change:`,
+    ...rules.map((rule) => `             ${rule}`),
+    until,
+  ];
 }
 
 /**

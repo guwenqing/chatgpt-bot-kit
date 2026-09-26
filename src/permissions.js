@@ -43,6 +43,67 @@ export function defaultRules(bots, cli = ownCli()) {
   ];
 }
 
+/**
+ * Programs that run whatever their arguments tell them to: shells, interpreters
+ * and command wrappers. With a wildcard after one of them, a rule lets the bot
+ * run any command, unless the next word fixes the script by its absolute path.
+ */
+const RUNNERS = new Set([
+  'sh', 'bash', 'zsh', 'fish', 'dash', 'ksh', 'csh', 'tcsh',
+  'python', 'python2', 'python3', 'node', 'deno', 'bun', 'ruby', 'perl', 'php', 'osascript',
+  'npx', 'pnpx', 'bunx', 'uvx',
+  'env', 'xargs', 'sudo', 'eval', 'exec', 'nohup', 'timeout', 'nice', 'command', 'time', 'watch',
+]);
+
+/**
+ * Why a rule is broad, as the end of a sentence, or undefined for a narrow one
+ * (#353). A charter's grants are written as narrow, exact rules only; one that
+ * lets the bot run any command, a program with any arguments, or any file on
+ * the disk or in the home is the user's to add by hand (ADR 0027).
+ */
+export function broadness(rule) {
+  if (typeof rule !== 'string') return undefined;
+  const file = /^(Read|Edit|Write)(?:\((.*)\))?$/s.exec(rule);
+  if (file !== null) {
+    const spec = file[2] ?? '';
+    return spec === '' || /^(\/\/|~\/)[*/]*$/.test(spec) ? `it lets the bot ${file[1].toLowerCase()} any file` : undefined;
+  }
+  const bash = /^Bash(?:\((.*)\))?$/s.exec(rule);
+  if (bash === null) return undefined;
+  const spec = (bash[1] ?? '').trim();
+  const words = spec.split(/\s+/).filter((word) => word !== '');
+  const star = spec.indexOf('*');
+  if (words.length === 0) return 'it lets the bot run any command';
+  if (star === -1) return undefined;
+
+  const program = path.basename(words[0].replace(/:?\*.*$/, ''));
+  if (RUNNERS.has(program) && !(words[1] ?? '').startsWith('/')) {
+    return `${program} runs whatever its arguments say, so it lets the bot run any command`;
+  }
+  const before = spec.slice(0, star).replace(/:$/, '').split(/\s+/).filter((word) => word !== '');
+  if (before.length === 0) return 'it lets the bot run any command';
+  if (before.length < 2) return `it lets the bot run ${before[0]} with any arguments`;
+  return undefined;
+}
+
+/**
+ * Refuse the rules `--allow` was given when any is broad, before anything is
+ * written, naming the file the user can add it to themselves.
+ */
+export function refuseBroad(home, rules) {
+  for (const rule of rules) {
+    const why = broadness(rule);
+    if (why === undefined) continue;
+    throw new Error(`--allow ${rule} is broad: ${why}. The kit writes only narrow, exact rules, such as Bash(gh pr merge:*), so nothing was written. If the user wants this rule for ${path.basename(home)}, they add it to ${path.join(home, FILE)} themselves.`);
+  }
+}
+
+/** The rules the bot is allowed beyond the kit's defaults, in `allow`'s order. */
+export const beyondDefaults = (bots, home, bot) => {
+  const defaults = defaultRules(bots);
+  return allowOf(home, bot).filter((rule) => !defaults.includes(rule));
+};
+
 /** Whether any of a bot's sessions, or the bot itself, runs on Claude Code. */
 export const runsOnClaude = (bot) => bot.harness === 'claude'
   || bot.sessions.some((session) => harnessOf(session, bot.harness) === 'claude');
@@ -133,7 +194,11 @@ export function permissionsTrouble(home, bot) {
   return [
     ...present.filter((rule) => !allowed.includes(rule)).map((rule) => ({
       where: file,
-      says: `${file} allows ${rule}, and ${bot.name}'s bot.yaml does not: the kit did not write it. It stays where it is. If the user wants it, record their yes with obk bot change --allow; if not, take it out of the file.`,
+      // One `--allow` would refuse was added by the user by hand, which the
+      // boundary leaves to them: named, in neutral words, and left alone.
+      says: broadness(rule) === undefined
+        ? `${file} allows ${rule}, and ${bot.name}'s bot.yaml does not: the kit did not write it. It stays where it is. If the user wants it, record their yes with obk bot change --allow; if not, take it out of the file.`
+        : `${file} allows ${rule}, which the user added by hand, not the kit. It stays where it is.`,
     })),
     ...allowed.filter((rule) => !present.includes(rule)).map((rule) => ({
       where: file,
