@@ -75,12 +75,51 @@ export function broadness(rule) {
   }
   const bash = /^Bash(?:\((.*)\))?$/s.exec(rule);
   if (bash === null) return undefined;
-  // Shell words: quotes keep a space inside one word.
-  return commandBroadness((bash[1] ?? '').match(/(?:"[^"]*"|'[^']*'|[^\s"'])+/g) ?? []);
+  const { words, odd } = shellWords(bash[1] ?? '');
+  if (odd !== undefined) return `it holds ${odd}, which the shell reads specially, so the kit cannot tell what it runs`;
+  return commandBroadness(words);
 }
 
-/** A shell word without its quotes. */
-const unquoted = (word) => word.replace(/["']/g, '');
+/** What a word may hold outside quotes; anything else the shell reads specially. */
+const PLAIN = /[A-Za-z0-9\-_./:=@%+,^*]/;
+
+/**
+ * A Bash rule's command as the shell words it is, quotes taken off, or the
+ * first thing in it the shell reads specially: `{ words }` or `{ odd }`. Only
+ * plain words are judged, so an escape, an expansion or a second command can
+ * never hide which program runs.
+ */
+function shellWords(text) {
+  const words = [];
+  let word;
+  for (let at = 0; at < text.length; at += 1) {
+    const char = text[at];
+    if (char === ' ' || char === '\t') {
+      if (word !== undefined) words.push(word);
+      word = undefined;
+      continue;
+    }
+    word ??= '';
+    if (char === "'" || char === '"') {
+      const end = text.indexOf(char, at + 1);
+      if (end === -1) return { odd: `a ${char} that does not close` };
+      const inside = text.slice(at + 1, end);
+      const special = char === '"' ? /[$`\\]/.exec(inside) : null;
+      if (special !== null) return { odd: `the character ${special[0]}` };
+      word += inside;
+      at = end;
+    } else if (PLAIN.test(char) || (char === '~' && word === '')) {
+      word += char;
+    } else {
+      return { odd: char === '\n' ? 'a newline' : `the character ${char}` };
+    }
+  }
+  if (word !== undefined) words.push(word);
+  return { words };
+}
+
+/** The shell or interpreter a program name is, with a version on its name or not. */
+const runnerOf = (name) => [name, name.replace(/[\d.]+$/, '')].find((one) => RUNNERS.has(one));
 
 /** Why a Bash rule's command, as shell words, is broad, or undefined. */
 function commandBroadness(all) {
@@ -91,14 +130,14 @@ function commandBroadness(all) {
   const star = words.findIndex((word) => word.includes('*'));
   if (star === -1) return undefined;
 
-  const program = path.basename(unquoted(words[0]).replace(/:?\*.*$/, ''));
-  if (RUNNERS.has(program)) {
+  const program = path.basename(words[0].replace(/:?\*.*$/, ''));
+  if (runnerOf(program) !== undefined) {
     // Only what runs, fixed by its absolute path, narrows it. A wrapper's
     // program is then judged by itself; an interpreter's script is the end.
-    const next = unquoted(words[1] ?? '').replace(/:\*$/, '');
+    const next = (words[1] ?? '').replace(/:\*$/, '');
     const fixed = next.startsWith('/') && !next.includes('*');
     if (fixed && WRAPPERS.has(program)) return commandBroadness(words.slice(1));
-    if (fixed && !RUNNERS.has(path.basename(next))) return undefined;
+    if (fixed && runnerOf(path.basename(next)) === undefined) return undefined;
     return `${program} runs whatever its arguments say, so ${ANY}`;
   }
 
@@ -106,7 +145,7 @@ function commandBroadness(all) {
   const part = words[star].slice(0, words[star].indexOf('*')).replace(/:$/, '');
   const before = star + (part === '' ? 0 : 1);
   if (before === 0) return ANY;
-  if (before < 2) return `it lets the bot run ${unquoted(words[0]).replace(/:?\*.*$/, '')} with any arguments`;
+  if (before < 2) return `it lets the bot run ${words[0].replace(/:?\*.*$/, '')} with any arguments`;
   return undefined;
 }
 

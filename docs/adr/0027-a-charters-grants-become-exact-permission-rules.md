@@ -54,7 +54,15 @@ any command or any file on the disk:
 
 A Bash rule is read as shell words, quotes keeping a space inside one word,
 and judged from its program, the first word after any shell assignments in
-front of it: `Bash(X="a b" gh:*)` is broad.
+front of it: `Bash(X="a b" gh:*)` is broad. A shell or interpreter with a
+version on its name, such as `python3.12`, is that shell or interpreter.
+
+`--allow` also refuses a Bash rule that is not plain words, naming the
+character: outside quotes a word holds only letters, digits, `-_./:=@%+,^`, a
+`~` at its start and `*` as the wildcard; inside double quotes no `$`, backtick
+or backslash; and every quote closes. An escape, an expansion, a glob or a
+second command could otherwise hide which program runs (`Bash(/bin/s\h -c:*)`
+runs `/bin/sh`), and chasing each such trick one by one would never end.
 
 A user who wants such a rule for a bot adds it to that bot's settings file
 themselves. Health still names it, as it names every entry the kit did not
@@ -77,6 +85,10 @@ Codex's form of these rules is #354's.
   user's prose, and a guessed rule is not an exact one.
 - **Accepting broad rules on `--allow`.** Not chosen: the boundary leaves them
   to the user by hand, and a model passing one on by mistake is refused.
+- **Reading every shell escape and expansion to find the program.** Not
+  chosen: each review round found another one (a wrapper, a quoted
+  assignment, a backslash); refusing what is not plain words ends the class,
+  and a narrow rule a charter grants is plain words.
 - **Calling a hand-added broad rule broad or unsafe in health.** Not chosen:
   it is the user's rule, and they chose it (the architect).
 - **Taking back a rule a new charter no longer grants.** Not in this slice; a
