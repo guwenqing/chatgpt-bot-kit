@@ -43,13 +43,16 @@ import { parse } from 'yaml';
 import {
   assertCleanFailure,
   createSandbox,
+  sh,
   skipGit,
   snapshot,
 } from './helpers/cli.js';
 import {
+  allowCommand,
   allowedIn,
   allowOf,
   defaultRules,
+  offeredCommand,
   OWN_RULE,
   settingsOf,
 } from './helpers/permissions.js';
@@ -233,6 +236,46 @@ test('N2 the kit\'s six default rules are accepted together, none taken for broa
   assert.equal(result.code, 0, `the defaults are the kit's own narrow rules, got:\n${result.stdout}${result.stderr}`);
   assert.deepEqual(await allowOf(bots, BOT), defaults);
   assert.deepEqual(await allowedIn(bots, BOT), defaults);
+});
+
+test('N2 the six defaults in a bots folder with a space in its path, quoted by the kit, pass through the command it prints', async (t) => {
+  // The folder is a quoted word inside four of the rules: quotes are plain
+  // words, so the kit's own command must still go through as printed.
+  const box = await createSandbox(t);
+  assert.equal((await box.run(['init', '--bots', 'my bots', '--harness', 'claude'])).code, 0);
+  const made = await box.run(['bot', 'create', '--bots', 'my bots', '--name', BOT, '--harness', 'claude']);
+  assert.equal(made.code, 0, made.stderr);
+  const bots = box.path('my bots');
+  const defaults = defaultRules(box, bots);
+  assert.ok(defaults[0].includes(`--bots '${bots}':*)`), `the premise: the folder is quoted inside the rule, got: ${defaults[0]}`);
+  const command = offeredCommand(box, made.stdout, BOT);
+  assert.equal(command, allowCommand(box, bots, BOT, defaults), 'the premise: the kit prints the command for the six');
+
+  const ran = await sh(command, { env: box.env, cwd: box.cwd });
+
+  assert.equal(ran.code, 0, `the kit's own command should go through: ${command}\n${ran.stdout}${ran.stderr}`);
+  assert.deepEqual(await allowOf(bots, BOT), defaults);
+  assert.deepEqual(await allowedIn(bots, BOT), defaults);
+});
+
+// ----------------------------------------------------------------- a character that is not plain
+
+test('N5 a refusal for a character that is not plain names the character itself, and writes nothing', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await withAllowedBot(box);
+  const rule = String.raw`Bash(/bin/s\h -c:*)`;
+  const before = await snapshot(bots, skipGit);
+
+  const result = await change(box, ...allowing(rule));
+
+  assertCleanFailure(result);
+  assertNamesRuleAndFile(result, rule, bots);
+  // The rule holds the backslash, so look for it in the rest of the message.
+  assert.ok(
+    result.stderr.replaceAll(rule, '').includes('\\'),
+    `the refusal should name the backslash itself, not only inside the rule, got: ${result.stderr}`,
+  );
+  await assertNothingWritten(bots, before);
 });
 
 // ----------------------------------------------------------------- a mix is refused as a whole
