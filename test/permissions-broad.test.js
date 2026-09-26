@@ -44,6 +44,7 @@ import {
   assertCleanFailure,
   createSandbox,
   sh,
+  shellWord,
   skipGit,
   snapshot,
 } from './helpers/cli.js';
@@ -154,6 +155,8 @@ const BROAD = [
   // not plain words: a character the shell reads as more than itself
   [String.raw`Bash(/bin/s\h -c:*)`, 'plain: a backslash escape in the program'],
   [String.raw`Bash(X=a\ b /bin/sh -c:*)`, 'plain: a backslash escaping a space'],
+  [String.raw`Bash(gh pr merge \" x:*)`, 'plain: a backslash before a double quote'],
+  [String.raw`Bash(/bin/sh\  -c:*)`, 'plain: a backslash before a space after the program'],
   ['Bash(/bin/s? -c:*)', 'plain: a ? pattern'],
   ['Bash(/bin/s[h] -c:*)', 'plain: a [ ] pattern'],
   ['Bash($SHELL -c:*)', 'plain: a $ variable'],
@@ -190,6 +193,7 @@ const NARROW = [
   ['Bash(gh pr create --title "a b":*)', 'plain: a space inside double quotes'],
   ['Bash(~/bin/tool run:*)', 'plain: a ~ at the start of a word'],
   ['Bash(npm run build:*)', 'three plain words'],
+  [String.raw`Bash(gh pr merge --body 'it'\''s done':*)`, String.raw`plain: \' outside quotes, the kit's own form for an apostrophe`],
   ['Read(//Users/someone/project/**)', 'one folder, not the whole disk'],
   ['Edit(~/notes/**)', 'one folder, not the whole home'],
 ];
@@ -248,6 +252,28 @@ test('N2 the six defaults in a bots folder with a space in its path, quoted by t
   const bots = box.path('my bots');
   const defaults = defaultRules(box, bots);
   assert.ok(defaults[0].includes(`--bots '${bots}':*)`), `the premise: the folder is quoted inside the rule, got: ${defaults[0]}`);
+  const command = offeredCommand(box, made.stdout, BOT);
+  assert.equal(command, allowCommand(box, bots, BOT, defaults), 'the premise: the kit prints the command for the six');
+
+  const ran = await sh(command, { env: box.env, cwd: box.cwd });
+
+  assert.equal(ran.code, 0, `the kit's own command should go through: ${command}\n${ran.stdout}${ran.stderr}`);
+  assert.deepEqual(await allowOf(bots, BOT), defaults);
+  assert.deepEqual(await allowedIn(bots, BOT), defaults);
+});
+
+test('N2 the six defaults in a bots folder with an apostrophe and a space in its path pass through the command the kit prints', async (t) => {
+  // The kit writes the apostrophe as '\'' inside a quoted word: a backslash
+  // outside quotes right before a single quote, which stands for that quote.
+  const box = await createSandbox(t);
+  const folder = "bob's bots";
+  assert.equal((await box.run(['init', '--bots', folder, '--harness', 'claude'])).code, 0);
+  const made = await box.run(['bot', 'create', '--bots', folder, '--name', BOT, '--harness', 'claude']);
+  assert.equal(made.code, 0, made.stderr);
+  const bots = box.path(folder);
+  const defaults = defaultRules(box, bots);
+  assert.ok(shellWord(bots).includes(String.raw`'\''`), `the premise: the kit writes the apostrophe as '\\'', got: ${shellWord(bots)}`);
+  assert.ok(defaults[0].includes(`--bots ${shellWord(bots)}:*)`), `the premise: the folder is that word inside the rule, got: ${defaults[0]}`);
   const command = offeredCommand(box, made.stdout, BOT);
   assert.equal(command, allowCommand(box, bots, BOT, defaults), 'the premise: the kit prints the command for the six');
 
