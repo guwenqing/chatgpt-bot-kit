@@ -34,8 +34,8 @@
 //     creates anything;
 //   - touches only what it created, matched by handle and by workspace path;
 //   - closes its own tabs one by one (`--terminal <handle> --tab`) and deletes
-//     its own workspaces, whatever happened, and checks afterwards that no tab it
-//     closed was there before it.
+//     its own workspaces, whatever happened, and checks afterwards that it
+//     closed no tab it did not create.
 //
 // `orca terminal close --worktree … --all` is never run here. It would take
 // away tabs, layouts and resume records that belong to the person at the
@@ -198,7 +198,7 @@ function obkJson(args) {
   const done = obk([...args, '--json']);
   assert.equal(done.status, 0, `obk ${args.join(' ')} failed: ${done.stdout}${done.stderr}`);
   try {
-    return JSON.parse(done.stdout);
+    return guard.openedByKit(JSON.parse(done.stdout));
   } catch {
     assert.fail(`obk ${args.join(' ')} --json did not print JSON: ${done.stdout}`);
   }
@@ -481,7 +481,7 @@ function cleanUpAfter(t, { before, bots, homes }) {
     // tab open before it and gone now that it did not close was closed by
     // someone else on this shared machine, so that is said, not failed (#246).
     const { closedNotOurs, goneElsewhere } = guard.verdict(before.handles);
-    assert.deepEqual(closedNotOurs, [], 'this test closed tabs that were open before it began');
+    assert.deepEqual(closedNotOurs, [], 'this test closed tabs it did not create');
     if (goneElsewhere.length > 0) t.diagnostic(`tabs open before this test and closed elsewhere meanwhile: ${goneElsewhere.join(', ')}`);
     for (const home of homes) {
       assert.deepEqual(await terminalsAfterClosing(home, closed), [], `this test left tabs behind in ${home}`);

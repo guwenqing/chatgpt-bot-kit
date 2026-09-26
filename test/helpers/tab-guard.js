@@ -5,9 +5,11 @@
 // and close their own tabs while it runs. So "a tab open before this test is gone
 // now" says nothing about the test. What does is what the test itself closed:
 // every `terminal close` it asked Orca for, and every tab the kit said it closed
-// for it. A tab among those that was open before the test began was not the
-// test's to close, and that fails. One gone that the test did not close is
-// reported, not failed (#246).
+// for it. A tab among those that the test did not create (by its own `terminal
+// create`, or by a kit answer that says it opened the tab) was not the test's to
+// close, and that fails, whenever it was opened: another process can open a tab
+// in the test's own project while it runs (#357). One gone that the test did not
+// close is reported, not failed (#246).
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -18,6 +20,7 @@ import { spawnSync } from 'node:child_process';
  */
 export function tabGuard(cli, { env = process.env } = {}) {
   const closed = [];
+  const created = new Set();
 
   /** Ask Orca something and read its JSON. Never the blanket close, on any road. */
   function orca(args) {
@@ -39,6 +42,15 @@ export function tabGuard(cli, { env = process.env } = {}) {
     } catch {
       assert.fail(`orca ${args.join(' ')} did not answer JSON: ${done.stdout}${done.stderr}`);
     }
+    if (args[0] === 'terminal' && args[1] === 'create' && answer.ok === true) created.add(answer.result.terminal.handle);
+    return answer;
+  }
+
+  /** Every tab an `obk --json` answer says the kit opened for this test. Gives the answer back. */
+  function openedByKit(answer) {
+    for (const tab of answer?.tabs ?? []) {
+      if (tab.created === true) created.add(tab.terminal);
+    }
     return answer;
   }
 
@@ -48,8 +60,8 @@ export function tabGuard(cli, { env = process.env } = {}) {
   }
 
   /**
-   * What this test closed that it should not have, and what went that it did
-   * not close, against the handles open before it began.
+   * What this test closed that it did not create, and what went that it did
+   * not close from the handles open before it began.
    */
   function verdict(before) {
     const was = new Set(before);
@@ -58,10 +70,10 @@ export function tabGuard(cli, { env = process.env } = {}) {
     const left = new Set(answer.result.terminals.map((terminal) => terminal.handle));
     const ours = new Set(closed);
     return {
-      closedNotOurs: [...ours].filter((handle) => was.has(handle)),
+      closedNotOurs: [...ours].filter((handle) => !created.has(handle)),
       goneElsewhere: [...was].filter((handle) => !left.has(handle) && !ours.has(handle)),
     };
   }
 
-  return { orca, closedByKit, closed: () => [...closed], verdict };
+  return { orca, openedByKit, closedByKit, closed: () => [...closed], verdict };
 }

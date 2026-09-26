@@ -2,9 +2,13 @@
 // that is not its own (AGENTS.md, safety on the owner's machine). It used to
 // compare every terminal on the machine before and after, so a tab the owner's
 // other sessions closed in the meantime failed a test that had done nothing
-// wrong. Now it fails when, and only when, the test itself closed a tab that
-// was open before it started; a tab gone by some other hand is reported, not
-// failed.
+// wrong. Now it fails when, and only when, the test itself closed a tab it did
+// not create; a tab gone by some other hand is reported, not failed. A tab the
+// test created is one it opened through the guard, or one a kit run it started
+// says it opened (`created: true`). Being opened after the test began does not
+// make a tab the test's: another process can open one in the test's own
+// project at any time, and a teardown that closed it would be closing a
+// stranger's tab (found in review).
 //
 // Run here against the fake Orca only. "Another process" is the fake Orca CLI
 // called directly, the way the owner's other sessions call Orca, never through
@@ -28,6 +32,15 @@ function elsewhere(box, args) {
 
 /** Open a tab in `home` as some other process would, and give back its handle. */
 const openElsewhere = (box, home, title) => elsewhere(box, ['terminal', 'create', '--worktree', `path:${home}`, '--title', title]).terminal.handle;
+
+/**
+ * A tab entry of an obk JSON answer (init, up, restart, unpause), in the shape
+ * the kit writes it: `created` is false for a tab that was already there and
+ * the kit only reused.
+ */
+const kitTab = (handle, created) => ({
+  bot: 'example', name: 'daily', title: 'Example daily', tabId: `tab_of_${handle}`, terminal: handle, created, harnessStarted: created,
+});
 
 /** Close a tab as some other process would: the owner's other sessions, or the kit. */
 const closeElsewhere = (box, handle) => elsewhere(box, ['terminal', 'close', '--terminal', handle, '--tab']);
@@ -89,6 +102,77 @@ test('a tab closed by another process during the run does not fail the guard, an
   guard.orca(['terminal', 'close', '--terminal', mine, '--tab']);
 
   assert.deepEqual(guard.verdict(before), { closedNotOurs: [], goneElsewhere: [owner[0]] });
+});
+
+test('a tab another process opened in the test\'s own project after it began is not the test\'s to close', async (t) => {
+  // The review's case: the tab is not in `before`, and it is in the project a
+  // teardown sweeps, but the test did not create it.
+  const { box, ours, before } = await ownersMachine(t);
+  const guard = tabGuard(box.orca.cli, { env: box.env });
+  const mine = openOurs(guard, ours, 'mine');
+  const stranger = openElsewhere(box, ours, 'stranger');
+
+  guard.orca(['terminal', 'close', '--terminal', mine, '--tab']);
+  guard.orca(['terminal', 'close', '--terminal', stranger, '--tab']);
+
+  assert.deepEqual(guard.verdict(before), { closedNotOurs: [stranger], goneElsewhere: [] });
+});
+
+test('a tab a kit run says it created is the test\'s own to close', async (t) => {
+  // The kit opens tabs in a process of its own; the test knows them only from
+  // the kit's answer.
+  const { box, ours, before } = await ownersMachine(t);
+  const guard = tabGuard(box.orca.cli, { env: box.env });
+  const opened = openElsewhere(box, ours, 'Example daily');
+  const answer = { bots: box.path('bots'), tabs: [kitTab(opened, true)] };
+
+  guard.openedByKit(answer);
+  guard.orca(['terminal', 'close', '--terminal', opened, '--tab']);
+
+  assert.deepEqual(guard.closed(), [opened]);
+  assert.deepEqual(guard.verdict(before), { closedNotOurs: [], goneElsewhere: [] });
+});
+
+test('a tab the kit only reused, or an answer with no tabs, makes nothing the test\'s own', async (t) => {
+  const { box, ours, before } = await ownersMachine(t);
+  const guard = tabGuard(box.orca.cli, { env: box.env });
+  const reused = openElsewhere(box, ours, 'Example daily');
+  const created = openElsewhere(box, ours, 'Example ops');
+
+  guard.openedByKit({ bots: box.path('bots') });
+  guard.openedByKit({ bots: box.path('bots'), tabs: [] });
+  guard.openedByKit({ bots: box.path('bots'), tabs: [kitTab(reused, false), kitTab(created, true)] });
+  guard.orca(['terminal', 'close', '--terminal', reused, '--tab']);
+  guard.orca(['terminal', 'close', '--terminal', created, '--tab']);
+
+  assert.deepEqual(guard.verdict(before), { closedNotOurs: [reused], goneElsewhere: [] });
+});
+
+test('openedByKit gives the answer back as it was, so a caller can wrap it', async (t) => {
+  const { box } = await ownersMachine(t);
+  const guard = tabGuard(box.orca.cli, { env: box.env });
+
+  const answer = { bots: '/tmp/bots', tabs: [kitTab('term_7', true), kitTab('term_8', false)], paused: [] };
+  assert.deepEqual(guard.openedByKit(answer), {
+    bots: '/tmp/bots',
+    tabs: [
+      { bot: 'example', name: 'daily', title: 'Example daily', tabId: 'tab_of_term_7', terminal: 'term_7', created: true, harnessStarted: true },
+      { bot: 'example', name: 'daily', title: 'Example daily', tabId: 'tab_of_term_8', terminal: 'term_8', created: false, harnessStarted: false },
+    ],
+    paused: [],
+  });
+  assert.deepEqual(guard.openedByKit({ bots: '/tmp/bots' }), { bots: '/tmp/bots' });
+});
+
+test('a tab closed twice is named once, in the order first closed', async (t) => {
+  const { box, owner, before } = await ownersMachine(t);
+  const guard = tabGuard(box.orca.cli, { env: box.env });
+
+  guard.orca(['terminal', 'close', '--terminal', owner[2], '--tab']);
+  guard.orca(['terminal', 'close', '--terminal', owner[0], '--tab']);
+  guard.closedByKit([kitTab(owner[2], false)]);
+
+  assert.deepEqual(guard.verdict(before).closedNotOurs, [owner[2], owner[0]]);
 });
 
 test('a test that closes only its own tabs leaves both lists empty', async (t) => {
