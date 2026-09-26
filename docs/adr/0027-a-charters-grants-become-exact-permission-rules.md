@@ -40,16 +40,21 @@ any command or any file on the disk:
 
 - a Bash rule with no command, or with fewer than two words before its first
   wildcard (`Bash(*)`, `Bash(gh:*)`, `Bash(git * main)`);
-- a shell, an interpreter or a command wrapper with a wildcard, unless the
-  word after it is a fixed script by its absolute path, with no wildcard in it
-  and itself no shell, interpreter or wrapper (`Bash(python3 -c:*)`,
-  `Bash(npx prettier:*)`, `Bash(env /bin/sh -c:*)` are broad;
-  `Bash(python3 /abs/tool.py:*)` is not);
+- a shell or an interpreter with a wildcard, unless the word after it is a
+  fixed script by its absolute path, with no wildcard in it and itself no
+  shell, interpreter or wrapper (`Bash(python3 -c:*)`, `Bash(npx prettier:*)`
+  are broad; `Bash(python3 /abs/tool.py:*)` is not);
+- a command wrapper such as `env` or `sudo` with a wildcard, unless the word
+  after it is a fixed program by its absolute path, and then the rest of the
+  rule, from that program on, is judged by these same lines
+  (`Bash(env /bin/sh -c:*)` and `Bash(env /usr/bin/git:*)` are broad;
+  `Bash(env /abs/tool.sh run:*)` is not);
 - `Read`, `Edit` or `Write` with no path, or on the whole disk or the whole
   home (`Edit(//**)`, `Write(~/**)`).
 
-A Bash rule is judged from its program, the first word after any shell
-assignments in front of it: `Bash(X=1 gh:*)` is broad.
+A Bash rule is read as shell words, quotes keeping a space inside one word,
+and judged from its program, the first word after any shell assignments in
+front of it: `Bash(X="a b" gh:*)` is broad.
 
 A user who wants such a rule for a bot adds it to that bot's settings file
 themselves. Health still names it, as it names every entry the kit did not

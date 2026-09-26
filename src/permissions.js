@@ -43,17 +43,22 @@ export function defaultRules(bots, cli = ownCli()) {
   ];
 }
 
+/** Command wrappers: programs that run the command their arguments name. */
+const WRAPPERS = new Set(['env', 'xargs', 'sudo', 'eval', 'exec', 'nohup', 'timeout', 'nice', 'command', 'time', 'watch']);
+
 /**
  * Programs that run whatever their arguments tell them to: shells, interpreters
- * and command wrappers. With a wildcard after one of them, a rule lets the bot
- * run any command, unless the next word fixes the script by its absolute path.
+ * and the wrappers above. With a wildcard after one of them, a rule lets the bot
+ * run any command, unless the next word fixes what runs by its absolute path.
  */
 const RUNNERS = new Set([
   'sh', 'bash', 'zsh', 'fish', 'dash', 'ksh', 'csh', 'tcsh',
   'python', 'python2', 'python3', 'node', 'deno', 'bun', 'ruby', 'perl', 'php', 'osascript',
   'npx', 'pnpx', 'bunx', 'uvx',
-  'env', 'xargs', 'sudo', 'eval', 'exec', 'nohup', 'timeout', 'nice', 'command', 'time', 'watch',
+  ...WRAPPERS,
 ]);
+
+const ANY = 'it lets the bot run any command';
 
 /**
  * Why a rule is broad, as the end of a sentence, or undefined for a narrow one
@@ -70,23 +75,38 @@ export function broadness(rule) {
   }
   const bash = /^Bash(?:\((.*)\))?$/s.exec(rule);
   if (bash === null) return undefined;
+  // Shell words: quotes keep a space inside one word.
+  return commandBroadness((bash[1] ?? '').match(/(?:"[^"]*"|'[^']*'|[^\s"'])+/g) ?? []);
+}
+
+/** A shell word without its quotes. */
+const unquoted = (word) => word.replace(/["']/g, '');
+
+/** Why a Bash rule's command, as shell words, is broad, or undefined. */
+function commandBroadness(all) {
   // The program is the first word after any shell assignments in front of it.
-  const spec = (bash[1] ?? '').trim().replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*/, '');
-  const words = spec.split(/\s+/).filter((word) => word !== '');
-  const star = spec.indexOf('*');
-  if (words.length === 0) return 'it lets the bot run any command';
+  let words = all;
+  while (words.length > 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) words = words.slice(1);
+  if (words.length === 0) return ANY;
+  const star = words.findIndex((word) => word.includes('*'));
   if (star === -1) return undefined;
 
-  const program = path.basename(words[0].replace(/:?\*.*$/, ''));
+  const program = path.basename(unquoted(words[0]).replace(/:?\*.*$/, ''));
   if (RUNNERS.has(program)) {
-    // Only a fixed script by its absolute path, itself no runner, narrows it.
-    const next = (words[1] ?? '').replace(/:\*$/, '');
-    const fixed = next.startsWith('/') && !next.includes('*') && !RUNNERS.has(path.basename(next));
-    if (!fixed) return `${program} runs whatever its arguments say, so it lets the bot run any command`;
+    // Only what runs, fixed by its absolute path, narrows it. A wrapper's
+    // program is then judged by itself; an interpreter's script is the end.
+    const next = unquoted(words[1] ?? '').replace(/:\*$/, '');
+    const fixed = next.startsWith('/') && !next.includes('*');
+    if (fixed && WRAPPERS.has(program)) return commandBroadness(words.slice(1));
+    if (fixed && !RUNNERS.has(path.basename(next))) return undefined;
+    return `${program} runs whatever its arguments say, so ${ANY}`;
   }
-  const before = spec.slice(0, star).replace(/:$/, '').split(/\s+/).filter((word) => word !== '');
-  if (before.length === 0) return 'it lets the bot run any command';
-  if (before.length < 2) return `it lets the bot run ${before[0]} with any arguments`;
+
+  // Two words at least before the first wildcard: a program and what it does.
+  const part = words[star].slice(0, words[star].indexOf('*')).replace(/:$/, '');
+  const before = star + (part === '' ? 0 : 1);
+  if (before === 0) return ANY;
+  if (before < 2) return `it lets the bot run ${unquoted(words[0]).replace(/:?\*.*$/, '')} with any arguments`;
   return undefined;
 }
 
