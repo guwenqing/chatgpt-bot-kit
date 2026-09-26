@@ -16,9 +16,12 @@
 //   b. a `*` inside the program word;
 //   c. a wildcard with fewer than two words before the first `*`;
 //   d. a shell, interpreter or command wrapper as the program (by the program
-//      word's basename) with a wildcard, unless the word after it is an
-//      absolute path;
+//      word's basename) with a wildcard, unless the word after it is a fixed
+//      absolute path: no `*` in it, and no shell, interpreter or wrapper by
+//      its basename;
 //   e. Read, Edit or Write on the whole disk or the whole home.
+// The program is the first word after any leading shell assignments
+// (NAME=value words), and c and d are judged on it and the words after it.
 // Everything else is accepted exactly as slice A accepts it, the kit's six
 // defaults first of all.
 
@@ -123,6 +126,11 @@ const BROAD = [
   ['Bash(timeout 10 git:*)', 'd: timeout'],
   ['Bash(/usr/bin/python3 -m:*)', 'd: python3 by the basename of an absolute program word'],
   ['Bash(python3 ./tool.py:*)', 'd: a script by a relative path is no fixed script'],
+  ['Bash(python3 /tmp/*:*)', 'd: an absolute path with a star in it is no fixed script'],
+  ['Bash(env /bin/sh -c:*)', 'd: a wrapper running a shell by its absolute path'],
+  ['Bash(sudo /usr/bin/env bash:*)', 'd: a wrapper running a wrapper by its absolute path'],
+  ['Bash(X=1 /bin/sh -c:*)', 'd: a shell after a leading assignment'],
+  ['Bash(X=1 gh:*)', 'c: one program word after a leading assignment'],
   // e. the whole disk or the whole home
   ['Read', 'e: Read with no specifier'],
   ['Edit', 'e: Edit with no specifier'],
@@ -144,6 +152,8 @@ const NARROW = [
   ['Bash(node --version)', 'an interpreter with no wildcard'],
   ['Bash(python3 /abs/tool.py:*)', 'an interpreter running a fixed script by its absolute path'],
   ['Bash(node /abs/cli.js run:*)', 'node running a fixed script by its absolute path'],
+  ['Bash(env /abs/tool.sh run:*)', 'a wrapper running a fixed program by its absolute path'],
+  ['Bash(FOO=1 gh pr merge:*)', 'a leading assignment in front of a narrow rule'],
   ['Read(//Users/someone/project/**)', 'one folder, not the whole disk'],
   ['Edit(~/notes/**)', 'one folder, not the whole home'],
 ];
