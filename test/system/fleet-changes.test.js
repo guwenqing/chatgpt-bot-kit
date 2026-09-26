@@ -21,9 +21,9 @@
 // the system temp directory; writes down every terminal and workspace Orca
 // already had before it creates anything; touches only what it created, matched
 // by handle and by workspace path; closes its own tabs one by one and then
-// deletes its own workspaces, in that order; and checks afterwards that every
-// terminal that was there before is still there. `orca terminal close
-// --worktree … --all` is never run, and the helper below refuses to run it.
+// deletes its own workspaces, in that order; and checks afterwards that it
+// closed no tab it did not create. `orca terminal close --worktree … --all` is
+// never run, and the helper below refuses to run it.
 //
 // **It is attended**, for one screen: Claude Code's folder-trust list in the
 // `Fleet Claude daily` tab, which takes a down-arrow and then return. The book
@@ -42,6 +42,7 @@ import { setTimeout } from 'node:timers/promises';
 import { parse } from 'yaml';
 
 import { cliEntry } from '../helpers/cli.js';
+import { tabGuard } from '../helpers/tab-guard.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
 
 /**
@@ -75,22 +76,12 @@ const ORCA = process.env.OBK_ORCA || '/Applications/Orca.app/Contents/Resources/
  */
 const HOOK_MS = 180000;
 
-/** Ask Orca something and read its JSON. Never the blanket close, on any road. */
-function orca(args) {
-  assert.ok(
-    !(args.includes('--all') && args.includes('close')),
-    `refusing to run \`orca ${args.join(' ')}\`: it would take away someone else's tabs`,
-  );
-  const done = spawnSync(ORCA, [...args, '--json'], { encoding: 'utf8' });
-  assert.equal(done.error, undefined, `could not run ${ORCA}: ${done.error?.message}`);
-  let answer;
-  try {
-    answer = JSON.parse(done.stdout);
-  } catch {
-    assert.fail(`orca ${args.join(' ')} did not answer JSON: ${done.stdout}${done.stderr}`);
-  }
-  return answer;
-}
+/**
+ * Ask Orca something and read its JSON. Never the blanket close, on any road.
+ * Every tab it closes is counted as this test's, for the check at the end (#246).
+ */
+const guard = tabGuard(ORCA);
+const { orca } = guard;
 
 /** Every terminal Orca knows about right now. */
 function allTerminals() {
@@ -145,7 +136,7 @@ function obkJson(args) {
   const done = obk([...args, '--json']);
   assert.equal(done.status, 0, `obk ${args.join(' ')} failed: ${done.stdout}${done.stderr}`);
   try {
-    return JSON.parse(done.stdout);
+    return guard.openedByKit(JSON.parse(done.stdout));
   } catch {
     assert.fail(`obk ${args.join(' ')} --json did not print JSON: ${done.stdout}`);
   }
@@ -248,10 +239,12 @@ test('a bot is changed, paused, brought back and retired through the kit\'s comm
     if (deleted > 0 && !(await reloadWindow())) t.diagnostic(RELOAD_LINE);
     await removeBotsFolderAndSiblings(bots);
 
-    const left = new Set(allTerminals().map((terminal) => terminal.handle));
-    for (const handle of before.handles) {
-      assert.ok(left.has(handle), `${handle} was open before this test and is gone now`);
-    }
+    // The point of all the care above: this test closed no tab but its own. A
+    // tab open before it and gone now that it did not close was closed by
+    // someone else on this shared machine, so that is said, not failed (#246).
+    const { closedNotOurs, goneElsewhere } = guard.verdict(before.handles);
+    assert.deepEqual(closedNotOurs, [], 'this test closed tabs it did not create');
+    if (goneElsewhere.length > 0) t.diagnostic(`tabs open before this test and closed elsewhere meanwhile: ${goneElsewhere.join(', ')}`);
     for (const each of homes) {
       assert.deepEqual(await terminalsAfterClosing(each, closed), [], `this test left tabs behind in ${each}`);
     }
@@ -292,6 +285,7 @@ test('a bot is changed, paused, brought back and retired through the kit\'s comm
   // Paused: the tab is gone from Orca, the book keeps the conversation, `up`
   // leaves it closed and health does not call it lost.
   const paused = obkJson(['pause', '--bots', bots, '--bot', BOT.name]);
+  guard.closedByKit(paused.closed);
   assert.deepEqual(paused.closed.map((tab) => tab.tabId), [opened.tabId]);
   assert.deepEqual(await terminalsAfterClosing(home, [opened.terminal]), [], 'the paused bot has no tab in Orca');
   assert.equal(rosterOf(bots, BOT.name).paused, true);
@@ -314,6 +308,7 @@ test('a bot is changed, paused, brought back and retired through the kit\'s comm
   // Retired: no tab, no Orca project, the folder in retired/ with its book, and
   // nothing left for health to find.
   const retired = obkJson(['retire', '--bots', bots, '--bot', BOT.name]);
+  guard.closedByKit(retired.closed);
   assert.deepEqual(retired.closed.map((tab) => tab.tabId), [back.tabId]);
   await terminalsAfterClosing(home, [back.terminal]);
   assert.ok(!allSetups().some((setup) => setup.path === home), 'the bot\'s Orca project is gone');

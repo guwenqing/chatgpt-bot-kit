@@ -17,8 +17,8 @@
 //     creates anything;
 //   - touches only what it created, matched by handle and by workspace path;
 //   - closes its own tabs one by one (`--terminal <handle> --tab`) and deletes
-//     its own workspaces, whatever happened, and checks afterwards that every
-//     terminal that was there before is still there.
+//     its own workspaces, whatever happened, and checks afterwards that it
+//     closed no tab it did not create.
 //
 // `orca terminal close --worktree … --all` is never run here. It would take
 // away tabs, layouts and resume records that belong to the person at the
@@ -38,6 +38,7 @@ import { setTimeout } from 'node:timers/promises';
 import { parse } from 'yaml';
 
 import { cliEntry, HOOK_FILES, kitHooksIn, spellingsOf } from '../helpers/cli.js';
+import { tabGuard } from '../helpers/tab-guard.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
 
 /**
@@ -64,22 +65,12 @@ async function removeBotsFolderAndSiblings(bots) {
 /** The Orca CLI that works for a normal user (tech notes, section 1). */
 const ORCA = process.env.OBK_ORCA || '/Applications/Orca.app/Contents/Resources/bin/orca';
 
-/** Ask Orca something and read its JSON. Never the blanket close, on any road. */
-function orca(args) {
-  assert.ok(
-    !(args.includes('--all') && args.includes('close')),
-    `refusing to run \`orca ${args.join(' ')}\`: it would take away someone else's tabs`,
-  );
-  const done = spawnSync(ORCA, [...args, '--json'], { encoding: 'utf8' });
-  assert.equal(done.error, undefined, `could not run ${ORCA}: ${done.error?.message}`);
-  let answer;
-  try {
-    answer = JSON.parse(done.stdout);
-  } catch {
-    assert.fail(`orca ${args.join(' ')} did not answer JSON: ${done.stdout}${done.stderr}`);
-  }
-  return answer;
-}
+/**
+ * Ask Orca something and read its JSON. Never the blanket close, on any road.
+ * Every tab it closes is counted as this test's, for the check at the end (#246).
+ */
+const guard = tabGuard(ORCA);
+const { orca } = guard;
 
 /** Every terminal Orca knows about right now. */
 function allTerminals() {
@@ -148,7 +139,7 @@ function obkJson(args) {
   const done = obk([...args, '--json']);
   assert.equal(done.status, 0, `obk ${args.join(' ')} failed: ${done.stdout}${done.stderr}`);
   try {
-    return JSON.parse(done.stdout);
+    return guard.openedByKit(JSON.parse(done.stdout));
   } catch {
     assert.fail(`obk ${args.join(' ')} --json did not print JSON: ${done.stdout}`);
   }
@@ -234,11 +225,12 @@ test('two bots on the two harnesses come up in the real Orca, and nothing else i
     if (deleted > 0 && !(await reloadWindow())) t.diagnostic(RELOAD_LINE);
     await removeBotsFolderAndSiblings(bots);
 
-    // The point of all the care above: everything that was open is still open.
-    const left = new Set(allTerminals().map((terminal) => terminal.handle));
-    for (const handle of before.handles) {
-      assert.ok(left.has(handle), `${handle} was open before this test and is gone now`);
-    }
+    // The point of all the care above: this test closed no tab but its own. A
+    // tab open before it and gone now that it did not close was closed by
+    // someone else on this shared machine, so that is said, not failed (#246).
+    const { closedNotOurs, goneElsewhere } = guard.verdict(before.handles);
+    assert.deepEqual(closedNotOurs, [], 'this test closed tabs it did not create');
+    if (goneElsewhere.length > 0) t.diagnostic(`tabs open before this test and closed elsewhere meanwhile: ${goneElsewhere.join(', ')}`);
     for (const home of homes) {
       assert.deepEqual(await terminalsAfterClosing(home, closed), [], `this test left tabs behind in ${home}`);
     }
