@@ -17,19 +17,19 @@
 // create` shows the rules waiting for a yes and one command that allows them;
 // the bot's settings file holds none of them until that command is run, and
 // the test runs exactly the line the kit printed. The bot's charter says it
-// merges pull requests without asking, which grants `Bash(gh pr merge:*)`; the
-// settings file does not hold it until the user's yes to it is run too, `bot
-// change --allow 'Bash(gh pr merge:*)'` through the same CLI. Then `up` brings
-// the bot up.
+// publishes releases without asking, which grants `Bash(gh release create:*)`;
+// the settings file does not hold it until the user's yes to it is run too,
+// `bot change --allow 'Bash(gh release create:*)'` through the same CLI. Then
+// `up` brings the bot up.
 //
 // The bot is given its whole part in its start prompt, with every command it
 // runs spelled as the kit spells it (the CLI and the bots folder taken from the
 // rules the kit offered): check its mail, read the long body with its Read
 // tool, ask the road with `message to`, reply with the `message send` that
 // answer names, `git add` and `git commit -- <file>` a file the test put in its
-// folder, `gh pr merge --help` (its charter's grant; it prints help and merges
-// nothing), and last `touch` a file beside the bots folder, which no rule
-// covers.
+// folder, `gh release create --help` (its charter's grant; it prints help and
+// creates nothing), and last `touch` a file beside the bots folder, which no
+// rule covers.
 //
 // **Where the evidence comes from.** Nothing here rests on what the model says.
 //
@@ -44,7 +44,12 @@
 //     charter's rule the user allowed. Where a rule in
 //     another settings file covers it too (the user settings on the machine
 //     this was written on allow `Bash(git:*)`), that is said as a diagnostic: the kit's rule was there,
-//     and it was not the only one.
+//     and it was not the only one. The charter's grant is #353's whole
+//     claim, so for it an allow rule in any other file that covers the call
+//     makes the run inconclusive, and it fails saying so, with the file and
+//     the rule. That is why the grant is `gh release create`: the user
+//     settings on this machine allow `Bash(gh pr:*)` and `Bash(gh issue:*)`,
+//     which would cover a pull request or issue grant.
 //   - No prompt to the user: the bot's screen is read every two or three
 //     seconds for the whole of the default calls, and a question of the
 //     harness's own on it (a numbered choice with the pointer on it,
@@ -165,7 +170,7 @@ const READY_MS = 180000;
 /** How long the launch line's mailbox step is given to write the session's Run into the book. */
 const MAILBOX_MS = 60000;
 
-/** How long the bot is given for all of its covered calls: two reads, a road, a reply, a commit and the charter's merge help. */
+/** How long the bot is given for all of its covered calls: two reads, a road, a reply, a commit and the charter's release help. */
 const DEFAULTS_MS = 480000;
 
 /** How long the bot is given for the one uncovered command, after the rest. */
@@ -538,9 +543,10 @@ const HARNESSES = [
 
     /**
      * The exact rules the bot's charter grants (CHARTER_GRANT), as Bot Father
-     * lists them for the user's yes: only `gh pr merge`, in Claude Code's form.
+     * lists them for the user's yes: only `gh release create`, in Claude
+     * Code's form.
      */
-    granted: ['Bash(gh pr merge:*)'],
+    granted: ['Bash(gh release create:*)'],
 
     /** The bot's own settings file, the one the kit writes. */
     ownFile: (home) => path.join(home, '.claude', 'settings.json'),
@@ -574,8 +580,8 @@ const HARNESSES = [
   },
 ];
 
-/** What the bot's charter grants beyond the defaults: merging pull requests without asking (#353). */
-const CHARTER_GRANT = 'It merges pull requests without asking.';
+/** What the bot's charter grants beyond the defaults: publishing releases without asking (#353). */
+const CHARTER_GRANT = 'It publishes releases without asking.';
 
 /** The Codex bot the reply goes to. Codex, so that the pair is not Claude Code's own messaging road. */
 const PEN_PAL = { name: 'pen-pal', display: 'Pen Pal' };
@@ -606,7 +612,8 @@ const COMMIT_FILE = 'permissions-check.txt';
  * call is known in the transcript: `kind` and the text the call starts with.
  * `kit` holds the kit's CLI and bots folder as words (`cli`, `bots`), the bots
  * folder as a path (`folder`), and the bot's name. The last entry is the
- * charter's grant (#353), let through by the rule the user allowed for it.
+ * charter's grant (#353), marked `grant`, let through by the rule the user
+ * allowed for it and by no rule in another file.
  */
 const COVERED = [
   {
@@ -649,10 +656,11 @@ const COVERED = [
     starts: () => 'git commit',
   },
   {
-    what: 'its charter\'s merge, as help only',
-    step: () => 'Then run exactly: gh pr merge --help',
+    what: 'its charter\'s release, as help only',
+    step: () => 'Then run exactly: gh release create --help',
     kind: 'command',
-    starts: () => 'gh pr merge',
+    starts: () => 'gh release create',
+    grant: true,
   },
 ];
 
@@ -875,7 +883,8 @@ for (const harness of HARNESSES) {
 
     // What let each default call through: a rule in the bot's own settings,
     // which holds only what the user allowed. A rule elsewhere that covers it
-    // too is said, not failed: the kit's rule was there either way.
+    // too is said, not failed: the kit's rule was there either way. For the
+    // charter's grant it fails: the run could not show the kit's rule did it.
     const ruleFiles = harness.ruleFiles(bots, home);
     for (const step of COVERED) {
       for (const call of made.filter((one) => isCallOf(step, kit, one))) {
@@ -889,6 +898,14 @@ for (const harness of HARNESSES) {
           .filter((file) => file !== ownFile)
           .flatMap((file) => harness.allowIn(file).filter((rule) => harness.covers(rule, call)).map((rule) => `${rule} in ${file}`));
         t.diagnostic(`${step.what}: \`${call.text}\` let through by ${own.join(', ')}${elsewhere.length === 0 ? '' : `; also covered by ${elsewhere.join(', ')}`}`);
+        if (step.grant) {
+          assert.deepEqual(
+            elsewhere,
+            [],
+            `the gate is inconclusive: ${step.what}, run as \`${call.text}\`, is also covered by an allow rule outside ${ownFile} (${elsewhere.join('; ')}),`
+              + ' so this run cannot say the kit\'s rule for the charter\'s grant is what let it through.',
+          );
+        }
       }
     }
 
