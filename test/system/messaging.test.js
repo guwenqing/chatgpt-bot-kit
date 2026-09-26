@@ -452,8 +452,32 @@ const busyPrompts = (bots, bot) => (bot.harness === 'codex'
   ]
   : [...aBotOf(bots), 'Say nothing now and wait.']).join(' ');
 
-/** The start prompt for a bot with nothing to do: case 3 drives the mailbox itself. */
-const waitingPrompts = (bots) => [...aBotOf(bots), 'Say nothing now and wait.'].join(' ');
+/**
+ * Where the receiver in case 3 puts the two answers its mail check gave: its
+ * own folder, the one place a Codex bot in auto mode may write.
+ */
+const READ_FILES = ['first-read.json', 'second-read.json'];
+
+/**
+ * The start prompts for the long message. A session's mail is read only in its
+ * own tab (#317), so the Codex bot reads it there when the kit's nudge arrives:
+ * the kit's own check, twice, with its shell writing each answer to a file for
+ * the test to read. The model retypes nothing; what is in the files is the
+ * kit's answer.
+ */
+const longPrompts = (bots, bot) => {
+  const check = `${KIT} message check --bots ${bots} --bot ${bot.name} --session daily --json`;
+  const [first, second] = READ_FILES.map((file) => path.join(bots, 'bots', bot.name, file));
+  return (bot.harness === 'codex'
+    ? [
+      ...aBotOf(bots),
+      'When a line arrives saying fleet mail is waiting, do not run the command that line names.',
+      'Run exactly this command instead, once, and then wait and say nothing else.',
+      'The two files it writes in your folder are the only thing you write:',
+      `${check} > ${first}; ${check} > ${second}`,
+    ]
+    : [...aBotOf(bots), 'Say nothing now and wait.']).join(' ');
+};
 
 /** Everything this test made, taken away again, and a check that nothing else was. */
 function cleanUpAfter(t, { before, bots, homes }) {
@@ -647,9 +671,13 @@ test('a long, oddly formatted message arrives unchanged', async (t) => {
   // also the one check that says whether the fields the kit reads out of
   // `orchestration check` are the fields Orca really answers with.
   //
-  // Nothing here goes through an agent: what is being checked is the road, and
-  // a model retyping 5 KB of punctuation would be checking the model.
-  const { bots, homeOf } = await aFleet(t, 'long', waitingPrompts);
+  // The read is the receiver's own, in its own tab: the kit reads a session's
+  // mail nowhere else (#317), and this test runs in a tab of its own. The bot
+  // runs the kit's check and its shell writes the kit's answer to a file, so
+  // nothing read below went through the model: a model retyping 5 KB of
+  // punctuation would be checking the model. The subject and the sender are in
+  // the nudge that tab was told, but not in anything the model wrote.
+  const { bots, homeOf, tabs } = await aFleet(t, 'long', longPrompts);
   const odd = [
     'Line one, with "double quotes", \'single ones\' and a `backtick`.',
     'A line with a tab\there and trailing spaces   ',
@@ -674,9 +702,26 @@ test('a long, oddly formatted message arrives unchanged', async (t) => {
   assert.ok(sent.file.startsWith(`${bots}.`), `and beside the bots folder, not inside it: ${sent.file}`);
   assert.equal(await readFile(sent.file, 'utf8'), odd, 'the file holds what was sent, character for character');
 
-  // And it reads back out of Orca's own store the same way. This is the
-  // receiver's own read: it binds to its own Run first, as any session does.
-  const read = obkJson(['message', 'check', '--bots', bots, '--bot', 'mail-codex', '--session', 'daily']);
+  // And it reads back out of Orca's own store the same way. The kit nudged the
+  // receiver, and it read its mail twice in its own tab, binding to its own Run
+  // first, as any session does.
+  const home = homeOf('mail-codex');
+  const [firstFile, secondFile] = READ_FILES.map((file) => path.join(home, file));
+  const answerIn = async (file) => {
+    try {
+      return JSON.parse(await readFile(file, 'utf8'));
+    } catch {
+      return undefined;
+    }
+  };
+  const again = await until(
+    'the receiver to have read its mail twice',
+    ANSWER_MS,
+    () => answerIn(secondFile),
+    () => whatIsUp(tabs['mail-codex'].terminal),
+  );
+  const read = await answerIn(firstFile);
+  assert.ok(read !== undefined, `the first read should have answered JSON in ${firstFile}`);
   assert.equal(read.messages.length, 1, `one message should have been waiting: ${JSON.stringify(read)}`);
   const [message] = read.messages;
   assert.equal(message.subject, 'the long one');
@@ -684,12 +729,12 @@ test('a long, oddly formatted message arrives unchanged', async (t) => {
   assert.ok(message.body.includes(sent.file), `the message names the file: ${message.body}`);
 
   // Read once and acknowledged: Orca replays a message until it is acked, so a
-  // second check must not hand the same one over again.
-  const again = obkJson(['message', 'check', '--bots', bots, '--bot', 'mail-codex', '--session', 'daily']);
+  // second check must not hand the same one over again. A refused check hands
+  // nothing over either, so the second one has to have read.
+  assert.equal(again.read, true, `the second check should have read the mailbox: ${JSON.stringify(again)}`);
   assert.deepEqual(again.messages, [], `the mail was read already: ${JSON.stringify(again)}`);
 
   // Nothing of the kit's was left in the bot's own folder: the file lives
   // beside the bots folder, the way a long start prompt does (PRD 6.3).
-  const home = homeOf('mail-codex');
   assert.ok(!sent.file.startsWith(home), `the body file must not be in the bot home: ${sent.file}`);
 });
