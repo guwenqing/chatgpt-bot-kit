@@ -238,12 +238,12 @@ const unquoted = (word) => (word.startsWith("'") ? word.slice(1, -1).replaceAll(
  * cannot read as JSON is the user's, and guessing at it would lose what they
  * wrote, so the command says so and writes nothing.
  */
-function readSettings(file) {
+export function readSettings(file, what = "the kit's session hook") {
   if (!existsSync(file)) return {};
 
   const parsed = parse(readFileSync(file, 'utf8'));
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`${file} is not readable as JSON, and the kit's session hook goes in it. Fix it or move it aside, then run the command again.`);
+    throw new Error(`${file} is not readable as JSON, and ${what} goes in it. Fix it or move it aside, then run the command again.`);
   }
   return parsed;
 }
