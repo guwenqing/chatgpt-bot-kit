@@ -102,8 +102,11 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
   prefix on the same line is not enough: Codex's shell tool puts `/opt/homebrew/bin` back in front of
   it, so a Codex bot runs the machine's `obk` whatever the line said (measured by the architect for
   #220). A hook the harness runs inherits `PATH` from the harness's launch, on both harnesses. So the
-  kit names itself by path in its hook and nudge, and by `OBK_CLI` in the rules a bot reads.
-  **verified** (live, 2026-09-24, Claude Code 2.1.281, Codex 0.156.1)
+  kit names itself by path in its hook and nudge. **verified** (live, 2026-09-24, Claude Code
+  2.1.281, Codex 0.156.1) It named itself by `OBK_CLI` in the rules a bot reads too, until #344: a
+  Claude Code allow rule matches the command as written, not after the shell expands a variable, so
+  the rules build now writes the building CLI's path and the bots folder's path where a rule unit
+  says `"${OBK_CLI:-obk}"` and `<bots>` (ADR 0024).
 - `orca terminal wait --for exit|tui-idle --timeout-ms <n>`. **`tui-idle` is about a TUI, not a shell.**
   All four answers seen live:
   - a tab running no TUI, sitting at a clean shell prompt: exit 1, `ok:false`,

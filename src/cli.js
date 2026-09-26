@@ -12,7 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
-import { addSession, allowRules, botDir, changeBot, changeSession, createBot, leadsOutside, readBot, SESSION_FIELDS } from './bot.js';
+import { addSession, allowedNow, allowRules, botDir, changeBot, changeSession, createBot, leadsOutside, readBot, SESSION_FIELDS } from './bot.js';
 import { addCommand, groomCommand, grooming, upCommand } from './groom.js';
 import { checkHealth, orcaSettingFindings } from './health.js';
 import { initBots } from './init.js';
@@ -603,10 +603,9 @@ const commands = {
     if (values.charter === undefined && values.allow === undefined) {
       throw new Error('bot change needs --charter <text> or --allow <rule>: what to change.');
     }
-    // Refused before anything is written, so a bad rule leaves the charter too.
-    if (values.allow?.some((rule) => rule.trim() === '')) {
-      throw new Error('--allow is empty. Give it the exact permission rule the user said yes to, such as Bash(git add:*).');
-    }
+    // Refused before anything is written, so a bad rule, or a bad list already
+    // there, leaves the charter as it was too.
+    if (values.allow !== undefined) allowedNow(bots, values.bot, values.allow);
 
     const answer = { bots, bot: values.bot, home: botDir(bots, values.bot) };
     const lines = [];

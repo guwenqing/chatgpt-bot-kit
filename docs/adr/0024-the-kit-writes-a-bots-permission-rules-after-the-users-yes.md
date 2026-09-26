@@ -40,6 +40,14 @@ it there. `rules build`, `up` and `bot change --allow` write what `allow` holds
 into `permissions.allow` of the bot's `.claude/settings.json`, and nothing
 else. A later change to the default set shows up as rules waiting again.
 
+So that a bot runs its mail commands in exactly the form the rules allow, the
+rules build writes the kit's own path, as a shell word, where a rule unit says
+`"${OBK_CLI:-obk}"`, and the bots folder's path where it says `<bots>`. A bot's
+`AGENTS.md` therefore names the CLI that built it and the folder it was built
+in, and the next `up` or `rules build` from another CLI or another folder
+rebuilds it. Skills are linked files, the same on every machine, and keep their
+own wording (the architect, 2026-09-26).
+
 The kit owns only the entries `allow` holds. Any other entry stays where it
 is; `obk health` names it, and names an allowed rule the file lacks. The kit's
 rules tell every bot, Bot Father included, not to write permission rules into
@@ -62,6 +70,12 @@ are decided in their own issues.
   slice decides how its form is made from it.
 - **The kit taking out an entry it did not write.** Not chosen: the file is the
   user's as much as the kit's (PRD 6.3), as with the hook.
+- **Keeping `"${OBK_CLI:-obk}"` in the rules and allowing that text as a
+  seventh rule.** Not chosen: whether Claude Code approves a command whose
+  program is a variable is not established, and the variable is the bot's to
+  change in its own shell.
+- **Leaving the mail lookup to the auto-mode check.** Not chosen: the bot would
+  still be stopped, or not, by the check for what the kit's rules tell it to do.
 - **The owner's broader `Bash(<cli> message:*)`.** Narrowed to the three
   commands and this bots folder, which is what the kit prints for a bot to run.
 
@@ -71,10 +85,14 @@ are decided in their own issues.
   it, once the user has said yes, and the rules are exact.
 - Good: the user sees every rule before it is written, and again when the kit's
   default set changes.
-- A bot's rules are narrow on purpose. A command spelled differently, such as
-  the mail rule unit's `"${OBK_CLI:-obk}" message to`, may not match, and then
-  goes to the harness's check as before. Whether Claude Code matches it is not
-  established.
+- A bot's rules are narrow on purpose. A command spelled differently from what
+  the kit prints and its rules say, such as a relative bots folder or a mail
+  command a skill spells its own way, does not match, and goes to the harness's
+  check as before.
+- This changes #220's choice, which was in the PRD and the tech notes and in no
+  record: a bot's rules used to name the kit through `OBK_CLI`, so that
+  `AGENTS.md` carried no install path. It now carries two machine paths, like
+  the kit's hook beside it.
 - The kit-dev bot's hand-added entries are named by health until they are
   allowed through `obk`.
 - `git add` and `git commit` are allowed wherever the bot runs them, not only

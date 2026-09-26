@@ -216,3 +216,41 @@ for (const [label, value] of [
     assert.equal(health.code, 1);
   });
 }
+
+// ----------------------------------------------------------------- a bad allow already there: nothing written
+
+// `bot change --allow` onto a bot.yaml whose `allow` is not a list of non-empty
+// strings is refused before anything is written: not bot.yaml (its charter
+// included, when --charter comes too), not AGENTS.md, not the settings.
+for (const [label, value] of [
+  ['a list holding a number', [42]],
+  ['a list holding an empty string', ['Bash(git commit:*)', '']],
+  ['a list holding a mapping', [{ rule: 'Bash(git commit:*)' }]],
+  ['a line of text', 'Bash(git commit:*)'],
+  ['a mapping', { rule: 'Bash(git commit:*)' }],
+]) {
+  for (const [how, extra] of [
+    ['--allow', []],
+    ['--allow with --charter', ['--charter', NEW_CHARTER]],
+  ]) {
+    test(`A8 ${how} onto an allow that is ${label} is refused, and nothing is written`, async (t) => {
+      const box = await createSandbox(t);
+      const bots = await withBot(box);
+      // A rule allowed first, so the settings hold one: they must not change either.
+      assert.equal((await change(box, ...allowing(OWN_RULE))).code, 0);
+      const doc = parse(await botText(bots));
+      doc.allow = value;
+      await writeFile(botYamlOf(bots, BOT), stringify(doc));
+      const before = await snapshot(bots, skipGit);
+
+      const result = await change(box, ...extra, ...allowing('Bash(git add:*)'));
+
+      assertCleanFailure(result);
+      assert.ok(result.stderr.includes(botYamlOf(bots, BOT)), `the refusal should name the bot.yaml, got: ${result.stderr}`);
+      assert.ok(result.stderr.includes('allow'), `the refusal should say it is the allow entry, got: ${result.stderr}`);
+      const now = await snapshot(bots, skipGit);
+      const changed = Object.keys({ ...before, ...now }).filter((rel) => before[rel] !== now[rel]);
+      assert.deepEqual(changed, [], `a refusal writes nothing: not bot.yaml, not AGENTS.md, not the settings. bot.yaml now:\n${await botText(bots)}`);
+    });
+  }
+}

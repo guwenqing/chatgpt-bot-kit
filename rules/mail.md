@@ -6,8 +6,7 @@ applies: all
 
 To reach another session, ask the kit for the road rather than guessing an
 address: `"${OBK_CLI:-obk}" message to --bots <bots> --to <bot>/<session>`. It
-answers with the address and the command that carries it. Your bots folder is
-two levels above the folder you start in.
+answers with the address and the command that carries it.
 
 Mail is queued, not an interruption. Read it when you finish what you are on.
 

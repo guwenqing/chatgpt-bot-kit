@@ -25,13 +25,18 @@
 // run and does nothing else. A command that reached for the bare word would
 // find the decoy, and the effect the test waits for would not happen.
 //
-// A bot's AGENTS.md is the exception, and on purpose: it is versioned and the
-// same on every machine, so it names no install path at all. It tells the bot
-// to run `"${OBK_CLI:-obk}"`, which is the launch line's variable in a tab the
-// kit started and the machine's `obk` anywhere else.
+// A bot's AGENTS.md names the kit the same way (#344, which changes the choice
+// #220 made): where a rule unit says `"${OBK_CLI:-obk}"`, the built file says
+// the path of the CLI that built it, and where it says `<bots>`, the bots
+// folder's absolute path, each as the kit writes a shell word. The kit's
+// default permission rule `Bash(<cli> message to --bots <bots>:*)` is matched
+// by Claude Code against the command as written, not after the shell expands a
+// variable, so a command spelled through OBK_CLI never matches it. With two
+// machine paths in it, the file is built again when either changes. Skills are
+// linked files, the same on every machine, and are not changed.
 
 import assert from 'node:assert/strict';
-import { chmod, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { isDeepStrictEqual } from 'node:util';
@@ -57,6 +62,7 @@ import {
   typedInto,
 } from './helpers/cli.js';
 import { addRules, agentsIn } from './helpers/rules.js';
+import { allowedIn, defaultRules } from './helpers/permissions.js';
 import { addSkills, botYamlOf, defaultsOf } from './helpers/skills.js';
 import { commitIn, putSkills, repoAt, sourcesYaml, writeSources } from './helpers/sources.js';
 
@@ -987,43 +993,87 @@ for (const [label, { setup, args, rest, has, runs }] of Object.entries(FOLLOW_UP
 // The mail rule in a bot's AGENTS.md
 // ---------------------------------------------------------------------------
 
-/** How the mail rule tells a bot to reach the kit: the launch line's CLI, or the machine's `obk` without one. */
-const RULE_COMMAND = '"${OBK_CLI:-obk}" message to --bots <bots> --to <bot>/<session>';
+/**
+ * How the mail rule tells a bot to reach the kit: the path of the CLI that
+ * built its AGENTS.md and the bots folder's absolute path, each as the kit
+ * writes a shell word, with only the session to reach left for the bot to fill.
+ */
+const ruleCommand = (cli, bots) => `${shellWord(cli)} message to --bots ${shellWord(bots)} --to <bot>/<session>`;
 
-test('a bot\'s AGENTS.md tells it to ask for the road through "${OBK_CLI:-obk}"', async (t) => {
+/** The rule's command as a bot fills it in to reach `coder/daily`. */
+const ruleFilledIn = (cli, bots) => ruleCommand(cli, bots).replace('<bot>/<session>', 'coder/daily');
+
+/** The one `message to` command a bot's AGENTS.md gives, as written between its backticks. */
+function mailCommandIn(agents) {
+  const found = [...agents.matchAll(/`([^`\n]* message to --bots [^`\n]*)`/g)].map((match) => match[1]);
+  assert.equal(found.length, 1, `AGENTS.md should give one \`message to\` command, got:\n${agents}`);
+  return found[0];
+}
+
+/** What `obk health --json` says about the rules one session of one bot runs on. */
+async function rulesStateOf(box, folder, bot, session) {
+  const result = await box.run(['health', '--bots', folder, '--json']);
+  let answer;
+  try {
+    answer = JSON.parse(result.stdout);
+  } catch (error) {
+    return assert.fail(`health --json should print JSON, got: ${result.stdout}${result.stderr} (${error.message})`);
+  }
+  const entries = (answer.sessions ?? []).filter((one) => one.bot === bot && one.session === session);
+  assert.equal(entries.length, 1, `one health entry should be about ${bot} ${session}, got: ${result.stdout}`);
+  return entries[0].rules;
+}
+
+/** Copy a bots folder to another folder of the sandbox's working directory, as a user moving it would. */
+async function copied(box, bots, folder) {
+  const to = box.path(folder);
+  await cp(bots, to, { recursive: true, verbatimSymlinks: true });
+  return to;
+}
+
+test('a bot\'s AGENTS.md tells it to ask for the road through the CLI that built it and its own bots folder', async (t) => {
   const box = await createSandbox(t);
-  const bots = await mailFleet(box);
+  const bots = await mailFleet(box, 'my bots');
 
   const agents = await agentsIn(bots, 'writer');
 
-  assert.ok(agents.includes(RULE_COMMAND), `the mail rule should give the command as ${RULE_COMMAND}, got:\n${agents}`);
+  assert.ok(agents.includes(ruleCommand(box.cli, bots)), `the mail rule should give the command as ${ruleCommand(box.cli, bots)}, got:\n${agents}`);
+  assert.ok(!agents.includes('${OBK_CLI'), `AGENTS.md should not send the bot through OBK_CLI, got:\n${agents}`);
+  assert.ok(!agents.includes('<bots>'), `AGENTS.md should leave no bots folder for the bot to fill in, got:\n${agents}`);
 });
 
-test('the mail rule\'s command runs the CLI OBK_CLI names, and the obk on PATH when nothing names one', async (t) => {
-  // A tab the kit started has OBK_CLI from its launch line; a shell anywhere
-  // else has the machine's `obk`. The command has to work in both.
+test('the mail rule\'s command runs the CLI that built AGENTS.md, whatever OBK_CLI and PATH say', async (t) => {
+  // Claude Code matches a Bash allow rule against the command as written, not
+  // after the shell expands a variable, so the command names the CLI by path.
+  // Run as written, it reaches that CLI in a tab with some other OBK_CLI, and
+  // in a shell with none, with a decoy `obk` first on PATH either way.
   const box = await createSandbox(t);
-  const bots = await mailFleet(box);
+  const bots = await mailFleet(box, 'my bots');
+  const cli = await linkedAt(box, 'the kit');
+  const rebuilt = await runBy(box, cli, ['rules', 'build', '--bots', 'my bots', '--bot', 'writer']);
+  assert.equal(rebuilt.code, 0, rebuilt.stderr);
   const agents = await agentsIn(bots, 'writer');
-  assert.ok(agents.includes(RULE_COMMAND), `the mail rule should give the command as ${RULE_COMMAND}, got:\n${agents}`);
-  const command = RULE_COMMAND.replace('<bots>', shellWord(bots)).replace('<bot>/<session>', 'coder/daily');
+  assert.ok(agents.includes(ruleCommand(cli, bots)), `the mail rule should give the command as ${ruleCommand(cli, bots)}, got:\n${agents}`);
+  const command = ruleFilledIn(cli, bots);
   const writerTab = await tabOf(bots, 'writer');
   const other = await decoy(box);
+  const decoyObk = path.join(box.root, 'decoy', 'obk');
 
-  const named = await sh(command, { cwd: box.cwd, env: { ...other.env, ORCA_TAB_ID: writerTab, OBK_CLI: box.cli } });
-  const { OBK_CLI: _unset, ...plain } = box.env;
+  const named = await sh(command, { cwd: box.cwd, env: { ...other.env, ORCA_TAB_ID: writerTab, OBK_CLI: decoyObk } });
+  const { OBK_CLI: _unset, ...plain } = other.env;
   const unnamed = await sh(command, { cwd: box.cwd, env: { ...plain, ORCA_TAB_ID: writerTab } });
 
-  assert.equal(named.code, 0, named.stderr);
-  assert.deepEqual(await other.runs(), [], 'with OBK_CLI set, the obk on PATH is not the one run');
-  assert.ok(named.stdout.includes((await sessionIn(bots, 'coder', 'daily')).mailbox), `the road should be answered, got: ${named.stdout}`);
-  assert.equal(unnamed.code, 0, `with no OBK_CLI it falls back to the obk on PATH: ${unnamed.stderr}`);
-  assert.ok(unnamed.stdout.includes((await sessionIn(bots, 'coder', 'daily')).mailbox), `got: ${unnamed.stdout}`);
+  const { mailbox } = await sessionIn(bots, 'coder', 'daily');
+  assert.equal(named.code, 0, `${command}\n${named.stderr}`);
+  assert.ok(named.stdout.includes(mailbox), `with another OBK_CLI set, the road should be answered, got: ${named.stdout}`);
+  assert.equal(unnamed.code, 0, `${command}\n${unnamed.stderr}`);
+  assert.ok(unnamed.stdout.includes(mailbox), `with no OBK_CLI, the road should be answered, got: ${unnamed.stdout}`);
+  assert.deepEqual(await other.runs(), [], 'neither the CLI OBK_CLI names nor the obk on PATH should have been run');
 });
 
-test('a bot\'s AGENTS.md is the same whichever CLI built it, and names no install path', async (t) => {
-  // It is versioned with the bots folder and read on every machine the folder
-  // is cloned to, so a path to one machine's install has no business in it.
+test('a bot\'s AGENTS.md names the CLI that built it last, and no OBK_CLI', async (t) => {
+  // Built again by another CLI, the file follows it: the command a bot is told
+  // to run is the one the rules written by that CLI allow.
   const box = await createSandbox(t);
   const bots = await mailFleet(box);
   const byLink = await agentsIn(bots, 'writer');
@@ -1033,8 +1083,83 @@ test('a bot\'s AGENTS.md is the same whichever CLI built it, and names no instal
 
   assert.equal(rebuilt.code, 0, rebuilt.stderr);
   const bySpaced = await agentsIn(bots, 'writer');
-  assert.equal(bySpaced, byLink, 'built by another CLI, the file should not change');
-  for (const install of [box.cli, cli, cliEntry, path.dirname(cliEntry)]) {
-    assert.ok(!bySpaced.includes(install), `AGENTS.md should not name ${install}`);
+  assert.ok(byLink.includes(ruleCommand(box.cli, bots)), `built by ${box.cli}, got:\n${byLink}`);
+  assert.ok(bySpaced.includes(ruleCommand(cli, bots)), `built again by ${cli}, the command should name it as ${shellWord(cli)}, got:\n${bySpaced}`);
+  assert.ok(!bySpaced.includes(box.cli), `built again by ${cli}, it should no longer name ${box.cli}, got:\n${bySpaced}`);
+  assert.ok(!bySpaced.includes('${OBK_CLI'), `AGENTS.md should not send the bot through OBK_CLI, got:\n${bySpaced}`);
+});
+
+test('obk up by another CLI rebuilds AGENTS.md to name it, and the sessions it had are on older rules', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await mailFleet(box);
+  assert.deepEqual(await rulesStateOf(box, 'bots', 'writer', 'daily'), { state: 'current' }, 'the premise: writer started on the AGENTS.md there is');
+  const cli = await linkedAt(box, 'the kit');
+
+  const up = await runBy(box, cli, ['up', '--bots', 'bots']);
+
+  assert.equal(up.code, 0, up.stderr);
+  const agents = await agentsIn(bots, 'writer');
+  assert.ok(agents.includes(ruleCommand(cli, bots)), `up by ${cli} should name it, got:\n${agents}`);
+  assert.ok(!agents.includes(box.cli), `and no longer name ${box.cli}, got:\n${agents}`);
+  assert.deepEqual(
+    await rulesStateOf(box, 'bots', 'writer', 'daily'),
+    { state: 'older' },
+    'writer\'s session read the AGENTS.md that named the other CLI',
+  );
+});
+
+test('a bots folder moved elsewhere: obk rules build names the new path and none of the old', async (t) => {
+  // No session of the old folder runs in the new one (Orca knows its tabs by
+  // the old folder), so what a stale stamp does is pinned by the other CLI's up.
+  const box = await createSandbox(t);
+  const bots = await mailFleet(box);
+  const moved = await copied(box, bots, 'moved bots');
+
+  const rebuilt = await box.run(['rules', 'build', '--bots', 'moved bots']);
+
+  assert.equal(rebuilt.code, 0, rebuilt.stderr);
+  for (const bot of ['writer', 'coder']) {
+    const agents = await agentsIn(moved, bot);
+    assert.ok(agents.includes(ruleCommand(box.cli, moved)), `${bot}'s AGENTS.md should name the folder it is in now, got:\n${agents}`);
+    assert.ok(!agents.includes(bots), `${bot}'s AGENTS.md should no longer name ${bots}, got:\n${agents}`);
   }
+});
+
+test('a bots folder moved elsewhere: obk up builds AGENTS.md naming the new path and none of the old', async (t) => {
+  const box = await createSandbox(t);
+  assert.equal((await box.run(['init', '--bots', 'bots', '--harness', 'claude'])).code, 0);
+  assert.equal((await box.run(['bot', 'create', '--bots', 'bots', '--name', 'writer', '--harness', 'claude'])).code, 0);
+  assert.equal((await box.run(['session', 'add', '--bots', 'bots', '--bot', 'writer', '--name', 'daily'])).code, 0);
+  const bots = box.path('bots');
+  assert.ok((await agentsIn(bots, 'writer')).includes(ruleCommand(box.cli, bots)), 'the premise: bot create built AGENTS.md in the first folder');
+  const moved = await copied(box, bots, 'moved bots');
+
+  const up = await box.run(['up', '--bots', 'moved bots']);
+
+  assert.equal(up.code, 0, up.stderr);
+  const agents = await agentsIn(moved, 'writer');
+  assert.ok(agents.includes(ruleCommand(box.cli, moved)), `up should name the folder it is in now, got:\n${agents}`);
+  assert.ok(!agents.includes(bots), `and no longer name ${bots}, got:\n${agents}`);
+});
+
+test('the command a bot\'s AGENTS.md gives for mail is one its default `message to` rule allows', async (t) => {
+  // Claude Code's `Bash(<prefix>:*)` allows a command that starts with
+  // <prefix>, compared as text. So the command the bot is told to run, with
+  // only the session to reach filled in, has to start with the rule's prefix.
+  const box = await createSandbox(t);
+  const bots = await mailFleet(box, 'my bots');
+  const said = await box.run(['bot', 'change', '--bots', 'my bots', '--bot', 'writer', ...defaultRules(box, bots).flatMap((rule) => ['--allow', rule])]);
+  assert.equal(said.code, 0, said.stderr);
+  const allowed = await allowedIn(bots, 'writer');
+  const rules = allowed.filter((rule) => rule.startsWith('Bash(') && rule.includes(' message to --bots '));
+  assert.equal(rules.length, 1, `one \`message to\` rule should be allowed, got: ${JSON.stringify(allowed)}`);
+  const [rule] = rules;
+  assert.ok(rule.endsWith(':*)'), `the rule should be a prefix rule, got: ${rule}`);
+  const prefix = rule.slice('Bash('.length, -':*)'.length);
+
+  const given = mailCommandIn(await agentsIn(bots, 'writer'));
+
+  assert.equal(given, ruleCommand(box.cli, bots), 'the command should name the kit\'s CLI and the bots folder, each as one shell word');
+  const command = given.replace('<bot>/<session>', 'coder/daily');
+  assert.ok(command.startsWith(prefix), `the rule ${rule} should allow the command the bot is told to run:\n${command}`);
 });

@@ -254,6 +254,24 @@ export function changeBot(bots, bot, { charter }) {
 }
 
 /**
+ * The bot's `allow` list as it is, after refusing what `allowRules` would refuse:
+ * an empty rule, or a list already there that is not a list of rules. Asked
+ * before anything is written, so a refused `bot change` changes nothing, its
+ * charter included.
+ */
+export function allowedNow(bots, bot, rules) {
+  if (rules.some((rule) => rule.trim() === '')) {
+    throw new Error('--allow is empty. Give it the exact permission rule the user said yes to, such as Bash(git add:*).');
+  }
+  const home = existingBot(bots, bot);
+  const was = readBot(home, bot).allow ?? [];
+  if (!Array.isArray(was) || was.some((rule) => typeof rule !== 'string' || rule.trim() === '')) {
+    throw new Error(`the allow entry in ${path.join(home, BOT_YAML)} is not a list of permission rules, so nothing was written. Fix it, then run the command again.`);
+  }
+  return { home, was };
+}
+
+/**
  * Add the permission rules the user said yes to, `rules`, to the bot's `allow`,
  * after the ones already there and never twice. Returns { bot, home, allow,
  * added }: the whole list now, and what this call put in it.
@@ -262,14 +280,7 @@ export function changeBot(bots, bot, { charter }) {
  * caller, as the rules build is run by the caller of `changeBot`.
  */
 export function allowRules(bots, bot, rules) {
-  if (rules.some((rule) => rule.trim() === '')) {
-    throw new Error('--allow is empty. Give it the exact permission rule the user said yes to, such as Bash(git add:*).');
-  }
-  const home = existingBot(bots, bot);
-  const was = readBot(home, bot).allow ?? [];
-  if (!Array.isArray(was)) {
-    throw new Error(`the allow entry in ${path.join(home, BOT_YAML)} is not a list of permission rules, so nothing was added to it. Fix it, then run the command again.`);
-  }
+  const { home, was } = allowedNow(bots, bot, rules);
   const added = [...new Set(rules)].filter((rule) => !was.includes(rule));
   const allow = [...was, ...added];
   if (added.length > 0) {
