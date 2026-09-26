@@ -20,8 +20,12 @@
 //      absolute path: no `*` in it, and no shell, interpreter or wrapper by
 //      its basename;
 //   e. Read, Edit or Write on the whole disk or the whole home.
-// The program is the first word after any leading shell assignments
-// (NAME=value words), and c and d are judged on it and the words after it.
+// A rule's words are shell words: quotes keep a space inside one word. The
+// program is the first word after any leading shell assignments (NAME=value
+// words), and c and d are judged on it and the words after it. A command
+// wrapper is narrowed only by a fixed program by absolute path right after
+// it, and the rule from that program on is then judged by itself under all
+// the same rules.
 // Everything else is accepted exactly as slice A accepts it, the kit's six
 // defaults first of all.
 
@@ -131,6 +135,11 @@ const BROAD = [
   ['Bash(sudo /usr/bin/env bash:*)', 'd: a wrapper running a wrapper by its absolute path'],
   ['Bash(X=1 /bin/sh -c:*)', 'd: a shell after a leading assignment'],
   ['Bash(X=1 gh:*)', 'c: one program word after a leading assignment'],
+  ['Bash(env /usr/bin/git:*)', 'c: a wrapper\'s fixed program, judged by itself, takes any arguments'],
+  ['Bash(env /abs/tool.sh:*)', 'c: a wrapper\'s fixed program, judged by itself, takes any arguments'],
+  ['Bash(X="a b" /bin/sh -c:*)', 'd: a shell after a quoted assignment, one word'],
+  ['Bash(X=\'a b\' gh:*)', 'c: one program word after a quoted assignment, one word'],
+  ['Bash(\'/opt/my tools/sh\' -c:*)', 'd: a shell by a quoted absolute path with a space in it'],
   // e. the whole disk or the whole home
   ['Read', 'e: Read with no specifier'],
   ['Edit', 'e: Edit with no specifier'],
@@ -154,6 +163,7 @@ const NARROW = [
   ['Bash(node /abs/cli.js run:*)', 'node running a fixed script by its absolute path'],
   ['Bash(env /abs/tool.sh run:*)', 'a wrapper running a fixed program by its absolute path'],
   ['Bash(FOO=1 gh pr merge:*)', 'a leading assignment in front of a narrow rule'],
+  ['Bash(X="a b" gh pr merge:*)', 'a quoted assignment, one word, in front of a narrow rule'],
   ['Read(//Users/someone/project/**)', 'one folder, not the whole disk'],
   ['Edit(~/notes/**)', 'one folder, not the whole home'],
 ];
