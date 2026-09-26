@@ -25,7 +25,13 @@
 // words), and c and d are judged on it and the words after it. A command
 // wrapper is narrowed only by a fixed program by absolute path right after
 // it, and the rule from that program on is then judged by itself under all
-// the same rules.
+// the same rules. A shell or interpreter with a version on its name
+// (python3.12, node20) counts as that shell or interpreter.
+//
+// And a Bash rule must be plain words, or it is refused the same way: outside
+// quotes only letters, digits, `-_./:=@%+,^`, a leading `~` and the `*`
+// wildcard; inside single quotes anything, the quote closed; inside double
+// quotes anything but `$`, a backtick and a backslash.
 // Everything else is accepted exactly as slice A accepts it, the kit's six
 // defaults first of all.
 
@@ -140,6 +146,18 @@ const BROAD = [
   ['Bash(X="a b" /bin/sh -c:*)', 'd: a shell after a quoted assignment, one word'],
   ['Bash(X=\'a b\' gh:*)', 'c: one program word after a quoted assignment, one word'],
   ['Bash(\'/opt/my tools/sh\' -c:*)', 'd: a shell by a quoted absolute path with a space in it'],
+  ['Bash(/opt/homebrew/bin/python3.12 -c:*)', 'd: python3 with a version on its name'],
+  ['Bash(node20 -e:*)', 'd: node with a version on its name'],
+  // not plain words: a character the shell reads as more than itself
+  [String.raw`Bash(/bin/s\h -c:*)`, 'plain: a backslash escape in the program'],
+  [String.raw`Bash(X=a\ b /bin/sh -c:*)`, 'plain: a backslash escaping a space'],
+  ['Bash(/bin/s? -c:*)', 'plain: a ? pattern'],
+  ['Bash(/bin/s[h] -c:*)', 'plain: a [ ] pattern'],
+  ['Bash($SHELL -c:*)', 'plain: a $ variable'],
+  ['Bash(`which sh` -c:*)', 'plain: a backtick command'],
+  ['Bash(gh pr merge; rm:*)', 'plain: a ; ending the command'],
+  ['Bash(gh pr merge "$(id)":*)', 'plain: a $ inside double quotes'],
+  ['Bash(gh pr merge \'unclosed:*)', 'plain: a quote that does not close'],
   // e. the whole disk or the whole home
   ['Read', 'e: Read with no specifier'],
   ['Edit', 'e: Edit with no specifier'],
@@ -164,6 +182,11 @@ const NARROW = [
   ['Bash(env /abs/tool.sh run:*)', 'a wrapper running a fixed program by its absolute path'],
   ['Bash(FOO=1 gh pr merge:*)', 'a leading assignment in front of a narrow rule'],
   ['Bash(X="a b" gh pr merge:*)', 'a quoted assignment, one word, in front of a narrow rule'],
+  ['Bash(git log --format=%H:*)', 'plain: % and = are plain characters'],
+  ['Bash(gh pr merge --body \'fix: a (small) thing; really\':*)', 'plain: anything inside single quotes'],
+  ['Bash(gh pr create --title "a b":*)', 'plain: a space inside double quotes'],
+  ['Bash(~/bin/tool run:*)', 'plain: a ~ at the start of a word'],
+  ['Bash(npm run build:*)', 'three plain words'],
   ['Read(//Users/someone/project/**)', 'one folder, not the whole disk'],
   ['Edit(~/notes/**)', 'one folder, not the whole home'],
 ];
