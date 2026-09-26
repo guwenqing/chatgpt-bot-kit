@@ -58,11 +58,13 @@
 // modes page): a matching allow, ask or deny rule first; then read-only calls
 // and edits inside the working folder; then the classifier, which may refuse,
 // and Claude is told why. So the test shows the first two did not decide it:
-// no allow rule in any settings file Claude Code reads for this bot matches the
-// command as the bot ran it (the user's, the bot folder's, the bots repo
-// root's, and the managed file where there is one), and `touch` on a file
-// outside the bot's folder is neither read-only nor an edit inside it. What the
-// check then did is written down as it happened: it ran (the file is there),
+// no allow, ask or deny rule in any settings file Claude Code reads for this
+// bot matches the command as the bot ran it (the user's, the bot folder's, the
+// bots repo root's, and the managed file where there is one), and `touch` on a
+// file outside the bot's folder is neither read-only nor an edit inside it. An
+// ask or deny rule that matches makes the run inconclusive, and it fails
+// saying so, with the file and the rule. What the check then did is written
+// down as it happened: it ran (the file is there),
 // it was refused (an error result, and no file), or the user was asked. That
 // the classifier and not something else made the call is what the docs say
 // comes next; nothing a test can read names the classifier.
@@ -410,8 +412,11 @@ function claudeRuleCovers(rule, call) {
   return false;
 }
 
-/** The `permissions.allow` list of one Claude settings file: an empty list for no file. */
-function claudeAllowIn(file) {
+/**
+ * The rules of one Claude settings file, by what they do: `{ allow, ask, deny }`,
+ * each the file's `permissions.<kind>` list, empty for no file or no list.
+ */
+function claudeRulesIn(file) {
   let text;
   try {
     text = readFileSync(file, 'utf8');
@@ -423,12 +428,21 @@ function claudeAllowIn(file) {
   try {
     settings = JSON.parse(text);
   } catch {
-    assert.fail(`${file} is not JSON, so this test cannot say what it allows`);
+    assert.fail(`${file} is not JSON, so this test cannot say what rules it holds`);
   }
-  const allow = settings?.permissions?.allow ?? [];
-  assert.ok(Array.isArray(allow), `${file}'s permissions.allow should be a list, got: ${JSON.stringify(allow)}`);
-  return allow;
+  const rules = {};
+  for (const kind of RULE_KINDS) {
+    rules[kind] = settings?.permissions?.[kind] ?? [];
+    assert.ok(Array.isArray(rules[kind]), `${file}'s permissions.${kind} should be a list, got: ${JSON.stringify(rules[kind])}`);
+  }
+  return rules;
 }
+
+/** The `permissions.allow` list of one Claude settings file: an empty list for no file. */
+const claudeAllowIn = (file) => claudeRulesIn(file).allow;
+
+/** What a rule can do to a call, as Claude Code's settings name the lists: let it through, ask the user, or refuse it. */
+const RULE_KINDS = ['allow', 'ask', 'deny'];
 
 /** The text of a tool result's content, which is a string or a list of text blocks. */
 const textOf = (content) => (typeof content === 'string'
@@ -528,6 +542,7 @@ const HARNESSES = [
     ],
 
     allowIn: claudeAllowIn,
+    rulesIn: claudeRulesIn,
     covers: claudeRuleCovers,
     callsOf: (home, session) => {
       const id = bookIn(home).sessions?.[session]?.session;
@@ -900,11 +915,27 @@ for (const harness of HARNESSES) {
     t.diagnostic(`${UNCOVERED.what}, \`${outcome.call.text}\`: ${outcome.how}${outcome.how === 'refused' ? `, saying: ${outcome.call.result.output.slice(0, 500)}` : ''}`);
 
     // No rule was what decided it: none, in any file the harness takes rules
-    // from, covers the command as the bot ran it. The kit wrote none for it.
-    const covering = ruleFiles.flatMap((file) => harness.allowIn(file)
-      .filter((rule) => harness.covers(rule, outcome.call))
-      .map((rule) => `${rule} in ${file}`));
-    assert.deepEqual(covering, [], `no allow rule may cover \`${outcome.call.text}\`, or this run shows nothing about the check`);
+    // from, covers the command as the bot ran it, whether it allows, asks or
+    // refuses. The kit wrote none for it. An allow rule would have let it
+    // through, an ask rule would have put the question, and a deny rule would
+    // have refused it, each before auto mode's check was reached, so a run with
+    // any of them says nothing about the check, whatever became of the command.
+    const covering = Object.fromEntries(RULE_KINDS.map((kind) => [kind, []]));
+    for (const file of ruleFiles) {
+      const rules = harness.rulesIn(file);
+      for (const kind of RULE_KINDS) {
+        covering[kind].push(...rules[kind].filter((rule) => harness.covers(rule, outcome.call)).map((rule) => `${rule} in ${file}`));
+      }
+    }
+    assert.deepEqual(covering.allow, [], `no allow rule may cover \`${outcome.call.text}\`, or this run shows nothing about the check`);
+    for (const kind of ['ask', 'deny']) {
+      assert.deepEqual(
+        covering[kind],
+        [],
+        `the gate is inconclusive: the command ${outcome.how}, and a ${kind} rule covers \`${outcome.call.text}\` (${covering[kind].join('; ')}).`
+          + ` Claude Code decides a call by a matching ${kind} rule before auto mode's check, so this run cannot say the check decided it.`,
+      );
+    }
     assert.deepEqual(harness.allowIn(ownFile), waiting, `${ownFile} should still hold exactly the rules the user allowed`);
 
     // And the disk agrees with what the transcript says became of it.
