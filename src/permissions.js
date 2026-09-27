@@ -13,8 +13,12 @@
 //
 // The kit owns only the entries `allow` holds. Any other entry in the file is
 // left where it is, and health names it.
+//
+// A bot on Codex gets the same yes in Codex's own form (#354, ADR 0028): each
+// `Bash(<words>:*)` becomes a `prefix_rule` of those words in
+// `.codex/rules/obk.rules`, a file the kit owns whole and rewrites from `allow`.
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { leadsOutside } from './bot.js';
@@ -23,6 +27,10 @@ import { harnessOf, ownCli, shellWord } from './launch.js';
 
 /** Where Claude Code reads a project's settings, inside the bot home. */
 const FILE = '.claude/settings.json';
+
+/** Where Codex reads a trusted project's rules, and the one file of them the kit owns. */
+const CODEX_RULES = '.codex/rules';
+const CODEX_FILE = `${CODEX_RULES}/obk.rules`;
 
 /**
  * The rules every Claude bot is offered, in this order. The mail commands are
@@ -186,11 +194,60 @@ export function allowOf(home, bot) {
   return value;
 }
 
-/** The default rules this bot has not been allowed yet, in the default order. */
-export function waitingFor(bots, home, bot) {
-  if (!runsOnClaude(bot)) return [];
+/** Whether any of a bot's sessions, or the bot itself, runs on Codex. */
+export const runsOnCodex = (bot) => bot.harness === 'codex'
+  || bot.sessions.some((session) => harnessOf(session, bot.harness) === 'codex');
+
+/**
+ * The default rules this bot has not been allowed yet for one harness's file,
+ * in the default order. Codex is not offered the Read rule: its sandbox reads
+ * every file already.
+ */
+function waitingFor(bots, home, bot, harness) {
   const allowed = allowOf(home, bot);
-  return defaultRules(bots).filter((rule) => !allowed.includes(rule));
+  return defaultRules(bots)
+    .filter((rule) => harness === 'claude' || codexForm(rule).line !== undefined)
+    .filter((rule) => !allowed.includes(rule));
+}
+
+/**
+ * A rule's Codex form: `{ line }`, `{ needless: true }` for a Read rule, which
+ * Codex's sandbox does not need, or `{ why }` for a rule Codex has none for.
+ * Only a prefix of plain words has one; a prefix rule for one exact command
+ * would let the bot add any arguments the user did not say yes to.
+ */
+export function codexForm(rule) {
+  if (/^Read(\(.*\))?$/s.test(rule)) return { needless: true };
+  const bash = /^Bash\((.*)\)$/s.exec(rule);
+  if (bash === null) return { why: 'Codex has no rule for anything but a command, so its sandbox decides it' };
+  const { words, odd } = shellWords(bash[1]);
+  if (odd !== undefined) return { why: `Codex has no rule for it: it holds ${odd}` };
+  if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0] ?? '')) {
+    return { why: 'Codex has no rule for a command with a variable set in front of it' };
+  }
+  if (!words.some((word) => word.includes('*'))) {
+    return { why: 'Codex has no rule for one exact command: its rules match a command\'s first words, whatever comes after them' };
+  }
+  const last = words.at(-1);
+  const prefix = [...words.slice(0, -1), last === '*' ? '' : last.replace(/:\*$/, '')].filter((word) => word !== '');
+  if (prefix.length === 0 || prefix.some((word) => word.includes('*'))) {
+    return { why: 'Codex has no rule for a wildcard anywhere but at the end, as a word of its own or after a colon' };
+  }
+  return { line: `prefix_rule(pattern=[${prefix.map((word) => JSON.stringify(word)).join(', ')}], decision="allow")` };
+}
+
+/**
+ * Refuse the rules `--allow` was given for a bot that runs only on Codex when
+ * Codex has no form for one, before anything is written: recorded, it would
+ * let the bot do nothing.
+ */
+export function refuseNoCodexForm(bot, rules) {
+  if (runsOnClaude(bot) || !runsOnCodex(bot)) return;
+  for (const rule of rules) {
+    const { why } = codexForm(rule);
+    if (why === undefined) continue;
+    throw new Error(`--allow ${rule} is not for ${bot.name}: ${why}, and ${bot.name} runs only on Codex, so nothing was written.`);
+  }
 }
 
 /** The one command that allows `rules` for `bot`, as the user can run it. */
@@ -200,19 +257,34 @@ export const allowCommand = (bots, bot, rules) => [
 ].join(' ');
 
 /**
- * Write what the bot is allowed into its Claude settings, and say what waits:
- * `{ bot, file, written, waiting }`, with `written` the rules this run added.
- * Nothing for a bot that does not run on Claude.
+ * Write what the bot is allowed into the files of the harnesses it runs on, and
+ * say what waits: one entry per file, Claude's first. With `keepGoing`, a file
+ * the kit may not write is an entry with its `trouble` rather than a throw.
+ */
+export function writePermissions(bots, home, bot, { keepGoing = false } = {}) {
+  const writers = [[runsOnClaude, FILE, writeClaude], [runsOnCodex, CODEX_FILE, writeCodex]];
+  return writers.filter(([runs]) => runs(bot)).map(([, file, write]) => {
+    try {
+      return write(bots, home, bot);
+    } catch (error) {
+      if (!keepGoing) throw error;
+      return { bot: bot.name, file: path.join(home, file), written: [], waiting: [], trouble: error.message };
+    }
+  });
+}
+
+/**
+ * Write what the bot is allowed into its Claude settings: `{ bot, file,
+ * written, waiting }`, with `written` the rules this run added.
  *
  * Only rules `allow` holds are written. Everything else in the file stays as it
  * is, the user's own entries and their order included; a rule missing from the
  * file goes after them, and a run with nothing to add writes nothing.
  */
-export function writePermissions(bots, home, bot) {
-  if (!runsOnClaude(bot)) return undefined;
+function writeClaude(bots, home, bot) {
   const file = path.join(home, FILE);
   const allowed = allowOf(home, bot);
-  const waiting = waitingFor(bots, home, bot);
+  const waiting = waitingFor(bots, home, bot, 'claude');
   const answer = { bot: bot.name, file, written: [], waiting };
   if (allowed.length === 0) return answer;
 
@@ -229,21 +301,69 @@ export function writePermissions(bots, home, bot) {
 }
 
 /**
+ * The Codex form of what the bot is allowed: the file's rule lines, each once,
+ * with the rules that gave them, and the rules Codex has no form for.
+ */
+function codexOf(home, bot) {
+  const lines = new Map();
+  const unwritten = [];
+  for (const rule of allowOf(home, bot)) {
+    const form = codexForm(rule);
+    if (form.why !== undefined) unwritten.push({ rule, why: form.why });
+    if (form.line === undefined) continue;
+    lines.set(form.line, [...(lines.get(form.line) ?? []), rule]);
+  }
+  return { lines, unwritten };
+}
+
+/** The lines of a rules file that are rules: not blank, not a comment. */
+const ruleLines = (text) => text.split('\n').map((line) => line.trim()).filter((line) => line !== '' && !line.startsWith('#'));
+
+/**
+ * Write the Codex form of what the bot is allowed into `.codex/rules/obk.rules`:
+ * `{ bot, file, written, waiting, unwritten }`, with `written` every rule in
+ * the file when this run wrote it. The kit owns the file whole and writes it
+ * only when it would change; with nothing to write and no file, it makes none.
+ */
+function writeCodex(bots, home, bot) {
+  const file = path.join(home, CODEX_FILE);
+  const { lines, unwritten } = codexOf(home, bot);
+  const answer = { bot: bot.name, file, written: [], waiting: waitingFor(bots, home, bot, 'codex'), unwritten };
+  if (lines.size === 0 && !existsSync(file)) return answer;
+
+  refuseOutside(home, file);
+  const text = [
+    `# Written by obk from ${bot.name}'s bot.yaml, where the user's yes to each rule is kept.`,
+    '# obk rewrites this whole file: put rules of your own in another file in this folder.',
+    ...lines.keys(),
+  ].join('\n');
+  if (existsSync(file) && readFileSync(file, 'utf8') === `${text}\n`) return answer;
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, `${text}\n`);
+  return { ...answer, written: [...lines.values()].flat() };
+}
+
+/**
  * What health has to say about a bot's permission rules: `{ where, says }` for
  * each entry in the file that `allow` does not hold, and each rule `allow`
  * holds that the file lacks. Read only: an entry the kit did not write is named,
  * never taken out.
  */
 export function permissionsTrouble(home, bot) {
-  if (!runsOnClaude(bot)) return [];
-  const file = path.join(home, FILE);
-
   let allowed;
   try {
     allowed = allowOf(home, bot);
   } catch (error) {
+    if (!runsOnClaude(bot) && !runsOnCodex(bot)) return [];
     return [{ where: path.join(home, 'bot.yaml'), says: error.message }];
   }
+  return [...claudeTrouble(home, bot, allowed), ...codexTrouble(home, bot)];
+}
+
+/** Health's findings in the bot's Claude settings. */
+function claudeTrouble(home, bot, allowed) {
+  if (!runsOnClaude(bot)) return [];
+  const file = path.join(home, FILE);
   if (!existsSync(file) && allowed.length === 0) return [];
 
   // A link out of the bot folder is named by the hook's check already; here it
@@ -272,6 +392,48 @@ export function permissionsTrouble(home, bot) {
       says: `${file} does not hold ${rule}, which ${bot.name}'s bot.yaml allows, so ${bot.name}'s Claude sessions are asked about it. obk up writes it.`,
     })),
   ];
+}
+
+/**
+ * Health's findings in the bot's Codex rules: each rule in a file of the
+ * user's beside obk.rules, named and left alone, and an obk.rules that is not
+ * what the kit writes from `allow`.
+ */
+function codexTrouble(home, bot) {
+  if (!runsOnCodex(bot)) return [];
+  const folder = path.join(home, CODEX_RULES);
+  const file = path.join(home, CODEX_FILE);
+  const { lines } = codexOf(home, bot);
+  if (leadsOutside(home, file) !== undefined) {
+    if (lines.size === 0) return [];
+    try {
+      refuseOutside(home, file);
+    } catch (error) {
+      return [{ where: file, says: error.message }];
+    }
+  }
+
+  const theirs = (existsSync(folder) ? readdirSync(folder) : [])
+    .filter((name) => name.endsWith('.rules') && name !== path.basename(file))
+    .sort()
+    .flatMap((name) => ruleLines(readFileSync(path.join(folder, name), 'utf8')).map((line) => ({
+      where: path.join(folder, name),
+      says: `${path.join(folder, name)} holds ${line}, which the user added, not the kit. It stays where it is.`,
+    })));
+
+  const wanted = [...lines.keys()];
+  const present = existsSync(file) ? ruleLines(readFileSync(file, 'utf8')) : [];
+  const missing = wanted.filter((line) => !present.includes(line));
+  const extra = present.filter((line) => !wanted.includes(line));
+  if (missing.length === 0 && extra.length === 0) return theirs;
+  const what = [
+    ...(missing.length === 0 ? [] : [`it lacks ${missing.join(' and ')}, which ${bot.name}'s bot.yaml allows`]),
+    ...(extra.length === 0 ? [] : [`it holds ${extra.join(' and ')}, which the kit did not write`]),
+  ].join(', and ');
+  return [...theirs, {
+    where: file,
+    says: `${file} is not what the kit writes from ${bot.name}'s bot.yaml: ${what}. The kit owns this file, and obk up rewrites it; a rule of the user's own goes in another file in ${folder}.`,
+  }];
 }
 
 /** The file's `permissions.allow`, or a refusal when it is there and is not a list. */

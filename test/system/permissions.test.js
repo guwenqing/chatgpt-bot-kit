@@ -1,43 +1,65 @@
 // A system test: the kit's default permission rules, live, on the real Claude
 // Code in the real Orca on this machine (#344, slice A), and a rule the bot's
-// charter grants, once the user has said yes to it (#353, slice B). Run it alone with
+// charter grants, once the user has said yes to it (#353, slice B); and the
+// same two, written in Codex's own form, on the real Codex (#354, slice C).
+// Run it alone with
 // `npm run test:system -- --yes test/system/permissions.test.js`; `npm test`
 // cannot, and no CI machine could.
 //
-// What it is the live check for, in the issue's words: a new Claude bot in
-// auto mode reads its own mail (`obk message check`, and a long message's body
-// file) and sends a reply without a single prompt to the user; it runs a
-// default command (its commit, its mail) without a refusal; and a command no
-// rule covers still goes to the check. And for #353: a command the bot's
-// charter grants runs without a refusal once the user has said yes to its
-// exact rule through `obk bot change --allow`, as Bot Father runs it after
-// showing the user the rule.
+// What it is the live check for, in the issues' words: a new Claude bot, and a
+// new Codex bot, in auto mode reads its own mail (`obk message check`, and a
+// long message's body file) and sends a reply without a single prompt to the
+// user; it runs a default command (its commit, its mail) without a refusal;
+// and a command no rule covers still goes to the check (Codex: its sandbox and
+// its reviewer). And for #353 and #354: a command the bot's charter grants
+// runs without a refusal once the user has said yes to its exact rule through
+// `obk bot change --allow`, as Bot Father runs it after showing the user the
+// rule.
 //
 // The order the kit promises is followed as a user would follow it. `bot
 // create` shows the rules waiting for a yes and one command that allows them;
-// the bot's settings file holds none of them until that command is run, and
-// the test runs exactly the line the kit printed. The bot's charter says it
-// publishes releases without asking, which grants `Bash(gh release create:*)`;
-// the settings file does not hold it until the user's yes to it is run too,
-// `bot change --allow 'Bash(gh release create:*)'` through the same CLI. Then
-// `up` brings the bot up.
+// the bot's own rules file (Claude: `.claude/settings.json`; Codex:
+// `.codex/rules/obk.rules`) holds none of them until that command is run, and
+// the test runs exactly the line the kit printed. A Codex bot is offered five,
+// the six without the Read rule, since Codex's sandbox reads every file. The
+// bot's charter says it publishes releases without asking, which grants
+// `Bash(gh release create:*)`; the file does not hold it until the user's yes
+// to it is run too, `bot change --allow 'Bash(gh release create:*)'` through
+// the same CLI. Then `up` brings the bot up.
 //
 // The bot is given its whole part in its start prompt, with every command it
 // runs spelled as the kit spells it (the CLI and the bots folder taken from the
-// rules the kit offered): check its mail, read the long body with its Read
-// tool, ask the road with `message to`, reply with the `message send` that
-// answer names, `git add` and `git commit -- <file>` a file the test put in its
-// folder, `gh release create --help` (its charter's grant; it prints help and
-// creates nothing), and last `touch` a file beside the bots folder, which no
-// rule covers.
+// rules the kit offered): check its mail, read the long body (Claude with its
+// Read tool; Codex, which has no Read tool, with `cat`), ask the road with
+// `message to`, reply with the `message send` that answer names, `git add` and
+// `git commit -- <file>` a file the test put in its folder, `gh release create
+// --help` (its charter's grant; it prints help and creates nothing), and last
+// `touch` a file beside the bots folder, which no rule covers.
 //
 // **Where the evidence comes from.** Nothing here rests on what the model says.
 //
-//   - What the bot ran and what each call answered: Claude Code's own
-//     transcript of the conversation the kit's hook wrote into the book, its
-//     `tool_use` items and the `tool_result` for each (tech notes, section 2).
-//     A refusal comes back as a `tool_result` with `is_error`, so every default
-//     call must have a result that is not one.
+//   - What the bot ran and what each call answered: the harness's own record
+//     of the conversation the kit's hook wrote into the book. Claude Code's
+//     transcript has `tool_use` items and the `tool_result` for each (tech
+//     notes, section 2); a refusal comes back with `is_error`. Codex's rollout,
+//     `~/.codex/sessions/<yyyy>/<mm>/<dd>/rollout-<stamp>-<id>.jsonl`, has each
+//     command as a `response_item` (0.157.1: a `custom_tool_call` named `exec`
+//     whose JavaScript input calls `tools.exec_command({cmd: ...})`; older: a
+//     `function_call` named `exec_command` with `cmd` in its JSON arguments)
+//     and its result under the same `call_id`; a refusal says so in the text
+//     (`Script failed`, `Rejected(... policy forbids ...)`, the sandbox's
+//     `Operation not permitted`). Every default call must have a result that
+//     is not one.
+//   - On Codex, that nobody reviewed it either: an allow rule runs its command
+//     outside the sandbox with no review (tech notes, section 3). A command
+//     that asks to leave the sandbox carries `sandbox_permissions:
+//     "require_escalated"`, and the auto reviewer's verdict is a rollout of its
+//     own whose `session_meta` has `parent_thread_id` set to the bot's
+//     conversation and `thread_source: "guardian_review"`, its last answer JSON
+//     with `outcome`. So a default call went through with no review when its
+//     result is no refusal and it did not ask to escalate, or no such review
+//     names it. The long body's `cat` needs no rule at all, since the sandbox
+//     reads every file; it is held to the same no-review line.
 //   - That it was the rule that let a default call through: the call as it was
 //     run matches a rule in the bot's own `.claude/settings.json`, which holds
 //     exactly the rules the kit offered and the user allowed, then the
@@ -49,7 +71,13 @@
 //     makes the run inconclusive, and it fails saying so, with the file and
 //     the rule. That is why the grant is `gh release create`: the user
 //     settings on this machine allow `Bash(gh pr:*)` and `Bash(gh issue:*)`,
-//     which would cover a pull request or issue grant.
+//     which would cover a pull request or issue grant. On Codex the files are
+//     every `.rules` file in `~/.codex/rules`, in `<bots>/.codex/rules` and in
+//     `<bot home>/.codex/rules`, and `codex execpolicy check --rules
+//     <file> -- <words>`, which only evaluates rules, says which rule of a file
+//     matches a call. This machine's `~/.codex/rules/default.rules` allows
+//     `git add` and `git commit` (a diagnostic) and holds no `gh release` rule
+//     (read in the file when this was written).
 //   - No prompt to the user: the bot's screen is read every two or three
 //     seconds for the whole of the default calls, and a question of the
 //     harness's own on it (a numbered choice with the pointer on it,
@@ -85,13 +113,33 @@
 // the classifier and not something else made the call is what the docs say
 // comes next; nothing a test can read names the classifier.
 //
+// On Codex the kit's `auto` is a `workspace-write` sandbox with the auto
+// reviewer (`--approve-for-me`). With no rule matching (none allows, prompts
+// or forbids it, in any rules file Codex reads for this bot), the `touch` is
+// stopped by the sandbox, and the bot is told to ask once to leave it; that
+// ask goes to the reviewer, whose verdict is read from its own rollout. What
+// happened is written down: the sandbox stopped it and no escalation was asked,
+// the reviewer allowed or denied it, or the user was asked. The run fails when
+// the command ran inside the sandbox (it may not write there, so the sandbox
+// settings below did not hold) or left the sandbox with no review.
+//
+// **The Codex bot's own sandbox settings.** The throwaway bots folder lives
+// under `$TMPDIR`, and Codex's sandbox writes `/tmp` and `$TMPDIR` by default,
+// so there it would let the bot write the bots repo's `.git` and the file
+// beside the bots folder with no rule at all, where a real bots folder would
+// not. So the Codex bot's session, and only this test's own session, gets
+// `--extra-arg=-c --extra-arg=sandbox_workspace_write.exclude_tmpdir_env_var=true`
+// and the same for `sandbox_workspace_write.exclude_slash_tmp=true`. The
+// product's launch line is unchanged.
+//
 // **Made to grow.** #353 turned charter grants into rules and #354 writes the
 // same rules for Codex bots; both need this same check. So a harness is one
 // entry in HARNESSES (how its rules are written and read, how its calls are
 // read back, what its own questions look like, and the rule its charter grant
-// becomes), and a rule is one entry in COVERED (the step the bot is given, and
-// how its call is known). Claude is the only harness today; COVERED holds the
-// default set and the charter's grant.
+// becomes), and a rule is one entry in `coveredFor` (the step the bot is
+// given, and how its call is known). HARNESSES holds Claude and Codex;
+// `coveredFor` holds the default set and the charter's grant, and takes the
+// step that reads the long body from the harness.
 //
 // The machine it runs on is someone's working machine, with their own tabs
 // open. So this test, like the others beside it:
@@ -105,35 +153,45 @@
 //   - closes its own tabs one by one (`--terminal <handle> --tab`) and then
 //     deletes its own workspaces and folders, whatever happened, and checks
 //     afterwards that it closed no tab it did not create;
-//   - reads the user's own Claude settings and never writes them.
+//   - reads the user's own Claude settings and Codex rules and never writes
+//     them; `codex execpolicy check` only evaluates a rules file.
 //
 // `orca terminal close --worktree … --all` is never run here, and the helper
 // below refuses to run it at all.
 //
 // It leaves behind what every system test does: the Run mailboxes Orca cannot
-// delete, offline entries in Claude Code's Remote Control list, and the bot's
-// transcript under `~/.claude/projects/`.
+// delete, offline entries in Claude Code's Remote Control list, the bot's
+// transcript under `~/.claude/projects/`, the Codex bot's rollouts and its
+// reviewer's under `~/.codex/sessions/`, and the trust Codex saves in
+// `~/.codex/config.toml` for the throwaway folder and its hooks.
 //
-// **It is attended.** Answer only these, in the order they come:
+// **It is attended.** It runs once per harness, Claude first. Answer only
+// these, in the order they come:
 //
 //   1. `Bot Father daily`: Claude Code's folder trust. Leave it; nothing here
 //      needs Bot Father.
 //   2. `Pen Pal daily` (Codex): leave it on whatever it shows. Its mailbox is
 //      made before its harness starts, and the reply only has to reach that.
-//   3. `Perm Claude daily`: Claude Code's folder trust. Its selection starts on
-//      `No, exit`, so it takes a down-arrow and then return. If Claude Code
-//      then offers `Teach auto mode about your environment?`, answer `2`, "Not
-//      now".
-//   4. **Nothing else.** A permission question in `Perm Claude daily` is what
-//      this test is looking for: leave it on the screen, and the test fails
-//      and shows it.
+//   3. In the Claude run, `Perm Claude daily`: Claude Code's folder trust. Its
+//      selection starts on `No, exit`, so it takes a down-arrow and then
+//      return. If Claude Code then offers `Teach auto mode about your
+//      environment?`, answer `2`, "Not now".
+//   4. In the Codex run, `Perm Codex daily`: Codex's folder trust, answer `1`,
+//      "Trust and continue"; its hooks review, answer `2`, "Trust all and
+//      continue"; and if Codex offers an update, accept it: `1`, "Update
+//      now" (the owner's standing decision, #69; tech notes, first-run
+//      screens).
+//   5. **Nothing else.** A permission question in `Perm Claude daily` or
+//      `Perm Codex daily` is what this test is looking for: leave it on the
+//      screen, and the test fails and shows it.
 //
-// It takes three to six minutes when the trust screen is answered at once:
-// three tabs, one bot's short run of commands, and a look at the mailbox.
+// Each run takes three to six minutes when the first-run screens are answered
+// at once: three tabs, one bot's short run of commands, and a look at the
+// mailbox.
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
 import { mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -179,6 +237,12 @@ const UNCOVERED_MS = 240000;
 
 /** How long Orca's inbox is given to list a message the bot's own send already answered for. */
 const INBOX_MS = 30000;
+
+/** How long a Codex bot is given, after the sandbox stopped the uncovered command, to ask to leave the sandbox. */
+const ESCALATION_MS = 60000;
+
+/** When this file began: a Codex rollout this test's bot or its reviewer wrote is no older. */
+const STARTED = Date.now();
 
 /**
  * Ask Orca something and read its JSON. Never the blanket close, on any road.
@@ -499,28 +563,348 @@ function claudeCalls(home, id) {
 }
 
 /**
+ * The rules of one Claude settings file that cover `call`, by what they do:
+ * `{ allow, ask, deny }`, each a list of the rules as the file spells them.
+ */
+function claudeCovering(file, call) {
+  const rules = claudeRulesIn(file);
+  return Object.fromEntries(RULE_KINDS.map((kind) => [kind, rules[kind].filter((rule) => claudeRuleCovers(rule, call))]));
+}
+
+/**
+ * The words of a command or a rule as a shell reads plain words: a space ends
+ * a word, single and double quotes keep one and come off, and a backslash
+ * stands for the character after it (the kit's `'\''` is an apostrophe).
+ * Undefined for a quote that does not close. Enough for the commands and rules
+ * this test spells; it expands nothing.
+ */
+function shellWords(text) {
+  const words = [];
+  let word;
+  for (let at = 0; at < text.length;) {
+    const char = text[at];
+    if (/\s/.test(char)) {
+      if (word !== undefined) words.push(word);
+      word = undefined;
+      at += 1;
+    } else if (char === "'" || char === '"') {
+      const end = text.indexOf(char, at + 1);
+      if (end < 0) return undefined;
+      word = (word ?? '') + text.slice(at + 1, end);
+      at = end + 1;
+    } else if (char === '\\' && at + 1 < text.length) {
+      word = (word ?? '') + text[at + 1];
+      at += 2;
+    } else {
+      word = (word ?? '') + char;
+      at += 1;
+    }
+  }
+  if (word !== undefined) words.push(word);
+  return words;
+}
+
+/**
+ * The line the kit writes into a Codex bot's obk.rules for one allowed Claude
+ * rule, as #354 gives it: `Bash(<words>:*)` or `Bash(<words> *)` becomes
+ * `prefix_rule(pattern=[<words>], decision="allow")`, each word a JSON string.
+ * Only the Bash rules this test allows are read here.
+ */
+function codexLineOf(rule) {
+  const found = /^Bash\((.+?)(?::\*| \*)\)$/s.exec(rule);
+  assert.ok(found !== null, `this test only allows prefix Bash rules on Codex, and was given ${rule}`);
+  const words = shellWords(found[1]);
+  assert.ok(words !== undefined, `the words of ${rule} do not close their quotes`);
+  return `prefix_rule(pattern=[${words.map((word) => JSON.stringify(word)).join(', ')}], decision="allow")`;
+}
+
+/** The lines a Codex bot's obk.rules should hold for the rules `allow` holds: no Read rule, and none twice. */
+const codexLinesFor = (rules) => [...new Set(rules.filter((rule) => !rule.startsWith('Read(')).map(codexLineOf))];
+
+/** The rule lines of a Codex rules file, in its order, without blank lines and `#` comments: an empty list for no file. */
+function codexLinesIn(file) {
+  let text;
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch (error) {
+    if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error;
+    return [];
+  }
+  return text.split('\n').filter((line) => line.trim() !== '' && !line.startsWith('#'));
+}
+
+/** Every `.rules` file in `dir`, by name: none when there is no such folder. */
+function rulesFilesIn(dir) {
+  try {
+    return readdirSync(dir).filter((name) => name.endsWith('.rules')).sort().map((name) => path.join(dir, name));
+  } catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return [];
+    throw error;
+  }
+}
+
+/** What a Codex rule decides, by the names this test gives Claude Code's lists. */
+const CODEX_KINDS = { allow: 'allow', prompt: 'ask', forbidden: 'deny' };
+
+/**
+ * The rules of one Codex rules file that match `call`, by what they do:
+ * `{ allow, ask, deny }`. Codex itself says, through `codex execpolicy check
+ * --rules <file> -- <words>`, which only evaluates the file: it answers
+ * `{ matchedRules, decision }`, or `{ matchedRules: [] }` for no match.
+ */
+function codexCovering(file, call) {
+  const found = Object.fromEntries(RULE_KINDS.map((kind) => [kind, []]));
+  if (call.kind !== 'command' || !existsSync(file)) return found;
+  const words = shellWords(call.text) ?? call.text.split(/\s+/).filter((word) => word !== '');
+  const done = spawnSync('codex', ['execpolicy', 'check', '--rules', file, '--', ...words], { encoding: 'utf8' });
+  assert.equal(done.error, undefined, `could not run codex execpolicy check: ${done.error?.message}`);
+  let answer;
+  try {
+    answer = JSON.parse(done.stdout);
+  } catch {
+    assert.fail(`codex execpolicy check --rules ${file} did not answer JSON (exit ${done.status}): ${done.stdout}${done.stderr}`);
+  }
+  for (const rule of answer?.matchedRules ?? []) {
+    const said = JSON.stringify(rule);
+    const decision = /"decision":"(\w+)"/.exec(said)?.[1] ?? answer.decision;
+    const kind = CODEX_KINDS[decision];
+    assert.ok(kind !== undefined, `codex execpolicy check answered a decision this test does not know, ${decision}: ${done.stdout}`);
+    found[kind].push(said);
+  }
+  return found;
+}
+
+/**
+ * The folders of Codex's own record a rollout begun during this test can be
+ * in: `~/.codex/sessions/<yyyy>/<mm>/<dd>`, from the day before it began to
+ * the day after now, by local and by UTC date.
+ */
+function rolloutDays() {
+  const days = new Set();
+  for (let at = STARTED - 86400000; at <= Date.now() + 86400000; at += 86400000) {
+    const day = new Date(at);
+    for (const [year, month, date] of [
+      [day.getFullYear(), day.getMonth() + 1, day.getDate()],
+      [day.getUTCFullYear(), day.getUTCMonth() + 1, day.getUTCDate()],
+    ]) {
+      days.add(path.join(os.homedir(), '.codex', 'sessions', String(year), String(month).padStart(2, '0'), String(date).padStart(2, '0')));
+    }
+  }
+  return [...days];
+}
+
+/** Every rollout written to since this test began, by its path. */
+function rolloutsSince() {
+  return rolloutDays()
+    .flatMap((dir) => {
+      try {
+        return readdirSync(dir).filter((name) => name.startsWith('rollout-') && name.endsWith('.jsonl')).map((name) => path.join(dir, name));
+      } catch (error) {
+        if (error.code === 'ENOENT') return [];
+        throw error;
+      }
+    })
+    .filter((file) => {
+      try {
+        return statSync(file).mtimeMs >= STARTED;
+      } catch (error) {
+        if (error.code === 'ENOENT') return false;
+        throw error;
+      }
+    });
+}
+
+/** The first line of a file, read without reading the rest: a rollout's `session_meta`. */
+function firstLineOf(file) {
+  const fd = openSync(file, 'r');
+  try {
+    const chunks = [];
+    const buffer = Buffer.alloc(65536);
+    for (let read = 0, total = 0; total < 8 * 1024 * 1024; total += read) {
+      read = readSync(fd, buffer, 0, buffer.length, total);
+      if (read === 0) break;
+      const end = buffer.subarray(0, read).indexOf(0x0a);
+      chunks.push(Buffer.from(buffer.subarray(0, end < 0 ? read : end)));
+      if (end >= 0) break;
+    }
+    return Buffer.concat(chunks).toString('utf8');
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Every JSON line of a rollout that parses, in order; a line still being written is left for the next look. */
+function rolloutLines(file) {
+  const lines = [];
+  for (const line of readFileSync(file, 'utf8').split('\n')) {
+    try {
+      lines.push(JSON.parse(line));
+    } catch {
+      // not a whole line yet
+    }
+  }
+  return lines;
+}
+
+/** The text of a Codex tool result: a string, a list of `{ type, text }`, or an object holding either. */
+const codexTextOf = (output) => (typeof output === 'string'
+  ? output
+  : Array.isArray(output)
+    ? output.map((item) => (typeof item === 'string' ? item : item?.text ?? '')).join('\n')
+    : output !== null && typeof output === 'object' ? codexTextOf(output.content ?? output.output ?? '') : '');
+
+/** What a refusal says in a Codex result: a rule forbidding it, a script that failed, or the sandbox stopping it. */
+const CODEX_REFUSED = /Script failed|Rejected\(|policy forbids|Operation not permitted/i;
+
+/** A JavaScript string literal in a Codex `exec` script, as its value: double, single or backtick quoted. */
+function jsStringAt(text) {
+  const quote = text[0];
+  if (!['"', "'", '`'].includes(quote)) return undefined;
+  let value = '';
+  for (let at = 1; at < text.length; at += 1) {
+    const char = text[at];
+    if (char === quote) return value;
+    if (char === '\\') {
+      const next = text[at + 1];
+      value += { n: '\n', t: '\t', r: '\r' }[next] ?? next;
+      at += 1;
+    } else {
+      value += char;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The commands of one Codex 0.157.1 `exec` script, in order: each
+ * `tools.exec_command({ cmd: ... })` in it, and whether that call asked to
+ * leave the sandbox (`sandbox_permissions: "require_escalated"`).
+ */
+function commandsOfScript(input) {
+  return String(input).split('exec_command(').slice(1).flatMap((call) => {
+    const found = /\bcmd\s*:\s*/.exec(call);
+    const text = found === null ? undefined : jsStringAt(call.slice(found.index + found[0].length));
+    return text === undefined ? [] : [{ text, escalated: /sandbox_permissions\s*:\s*["'`]require_escalated/.test(call) }];
+  });
+}
+
+/**
+ * The commands a Codex conversation made, oldest first, each with its result
+ * once the rollout has one: `{ kind: 'command', text, escalated, result: {
+ * error, output } }`. Read from the conversation's rollout, both the 0.157.1
+ * form and the older one (tech notes, section 3).
+ */
+function codexCalls(file) {
+  const uses = [];
+  const results = new Map();
+  for (const entry of rolloutLines(file)) {
+    if (entry?.type !== 'response_item') continue;
+    const item = entry.payload ?? {};
+    if (item.type === 'custom_tool_call' && item.name === 'exec') {
+      for (const command of commandsOfScript(item.input)) uses.push({ id: item.call_id, ...command });
+    } else if (item.type === 'function_call' && item.name === 'exec_command') {
+      let args = {};
+      try {
+        args = JSON.parse(item.arguments);
+      } catch {
+        // an argument list still being written
+      }
+      const text = Array.isArray(args.cmd) ? args.cmd.join(' ') : String(args.cmd ?? '');
+      uses.push({ id: item.call_id, text, escalated: args.sandbox_permissions === 'require_escalated' });
+    } else if (item.type === 'custom_tool_call_output' || item.type === 'function_call_output') {
+      const output = codexTextOf(item.output);
+      results.set(item.call_id, { error: CODEX_REFUSED.test(output), output });
+    }
+  }
+  return uses.map(({ id, ...use }) => ({ kind: 'command', ...use, result: results.get(id) }));
+}
+
+/** The rollout of a Codex conversation, by its id in the file's name, or undefined while there is none. */
+function rolloutOf(id) {
+  for (const dir of rolloutDays()) {
+    let names = [];
+    try {
+      names = readdirSync(dir);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    const name = names.find((one) => one.startsWith('rollout-') && one.endsWith(`-${id}.jsonl`));
+    if (name !== undefined) return path.join(dir, name);
+  }
+  return undefined;
+}
+
+/**
+ * The auto reviewer's verdicts on a Codex conversation, each a rollout of its
+ * own: `session_meta` with `parent_thread_id` the conversation's id and
+ * `thread_source: "guardian_review"`. Each as `{ file, text, outcome }`: every
+ * text the review was given or said, and the `outcome` of its last answer.
+ * Only rollouts written since this test began are looked at, and only their
+ * first line unless it is a review of this conversation.
+ */
+function guardianReviews(id) {
+  const reviews = [];
+  for (const file of rolloutsSince()) {
+    let meta;
+    try {
+      meta = JSON.parse(firstLineOf(file));
+    } catch {
+      continue;
+    }
+    if (meta?.payload?.parent_thread_id !== id || meta.payload.thread_source !== 'guardian_review') continue;
+    const texts = [];
+    let outcome;
+    for (const entry of rolloutLines(file)) {
+      const item = entry?.payload ?? {};
+      const said = entry?.type === 'response_item' && item.type === 'message'
+        ? codexTextOf(item.content)
+        : entry?.type === 'event_msg' && item.type === 'agent_message' ? String(item.message ?? '') : '';
+      if (said === '') continue;
+      texts.push(said);
+      if (item.role === 'assistant' || item.type === 'agent_message') {
+        try {
+          outcome = JSON.parse(said)?.outcome ?? outcome;
+        } catch {
+          // not the verdict
+        }
+      }
+    }
+    reviews.push({ file, text: texts.join('\n'), outcome });
+  }
+  return reviews;
+}
+
+/** The kit's CLI and bots folder, as words, out of the rules the kit offered: the mail check rule is `Bash(<CLI> message check --bots <BOTS>:*)`. */
+function kitIn(rules) {
+  const found = rules.map((rule) => /^Bash\((.+) message check --bots (.+):\*\)$/.exec(rule)).find((one) => one !== null);
+  assert.ok(found !== undefined, `the kit should offer a rule for its mail check, and offered: ${JSON.stringify(rules)}`);
+  return { cli: found[1], bots: found[2] };
+}
+
+/** The conversation the kit's hook wrote into the book for a session, or undefined while there is none. */
+function conversationOf(home, session) {
+  const id = bookIn(home).sessions?.[session]?.session;
+  return typeof id === 'string' ? id : undefined;
+}
+
+/**
  * The harnesses this check runs on, one entry each. An entry says, for its
  * harness: the default rules the kit offers a bot (so the words the bot's
- * commands are spelled with can be read back out of them), which files hold
- * the rules the harness goes by, how a rule is matched to a call, how the
- * calls a conversation made are read back, and which of its own questions are
- * first-run screens rather than a permission. #354 adds Codex here.
+ * commands are spelled with can be read back out of them), the bot's own rules
+ * file and what it holds for the rules the user allowed, which files hold the
+ * rules the harness goes by and which of their rules match a call, how the
+ * calls a conversation made are read back and whether a reviewer saw one, how
+ * the bot reads the long body, what became of the command no rule covers, and
+ * which of its own questions are first-run screens rather than a permission.
  */
 const HARNESSES = [
   {
     name: 'claude',
+    title: 'Claude Code',
     bot: 'perm-claude',
     display: 'Perm Claude',
 
-    /**
-     * The kit's CLI and bots folder, as words, out of the rules the kit offered:
-     * the mail check rule is `Bash(<CLI> message check --bots <BOTS>:*)`.
-     */
-    kitIn(rules) {
-      const found = rules.map((rule) => /^Bash\((.+) message check --bots (.+):\*\)$/.exec(rule)).find((one) => one !== null);
-      assert.ok(found !== undefined, `the kit should offer a rule for its mail check, and offered: ${JSON.stringify(rules)}`);
-      return { cli: found[1], bots: found[2] };
-    },
+    kitIn,
 
     /** The six rules the requirement gives, in its order, with the kit's words in them. */
     defaults: (kit, bots) => [
@@ -542,6 +926,10 @@ const HARNESSES = [
     /** The bot's own settings file, the one the kit writes. */
     ownFile: (home) => path.join(home, '.claude', 'settings.json'),
 
+    /** What the file allows, and what it should allow for the rules the user allowed: the same rules. */
+    inFile: claudeAllowIn,
+    linesFor: (rules) => rules,
+
     /**
      * Every file Claude Code's docs say it takes permission rules from for a
      * session started in `home`, a folder of the bots repo: the user's, the
@@ -558,16 +946,160 @@ const HARNESSES = [
       '/Library/Application Support/ClaudeCode/managed-settings.json',
     ],
 
-    allowIn: claudeAllowIn,
-    rulesIn: claudeRulesIn,
-    covers: claudeRuleCovers,
+    covering: claudeCovering,
     callsOf: (home, session) => {
-      const id = bookIn(home).sessions?.[session]?.session;
-      return typeof id === 'string' ? claudeCalls(home, id) : [];
+      const id = conversationOf(home, session);
+      return id === undefined ? [] : claudeCalls(home, id);
     },
+
+    /** Claude Code has no reviewer of its own to read back: its check is the classifier, which nothing names. */
+    reviewOf: () => undefined,
+
+    /** The long body, read with its Read tool. */
+    readStep: {
+      what: 'its read of the long message\'s file',
+      step: () => 'Then read the file the long message names with your Read tool, not with a shell command, and find code word two in it.',
+      kind: 'read',
+      starts: (kit) => `${kit.folder}.messages/`,
+    },
+    readsFile: (call, file) => call.kind === 'read' && call.text === file,
+
+    sessionArgs: [],
+    firstRun: (title) => ` Answer Claude Code's folder trust in ${title}.`,
+
+    uncoveredStep: (file) => `Last, run exactly this command, once: touch ${file} . If it is refused, do not run it again or try any other way.`,
+    uncoveredMs: UNCOVERED_MS,
+
+    /**
+     * What became of the command no rule covers, or undefined while nothing
+     * has: it ran, it was refused (an error result), or the user was asked.
+     */
+    decide: (tries, question) => {
+      const [call] = tries;
+      if (call?.result !== undefined) return { call, how: call.result.error ? 'refused' : 'ran' };
+      return call !== undefined && question !== undefined ? { call, how: 'asked', question } : undefined;
+    },
+
+    /** Any of those is the check deciding it. */
+    problem: () => undefined,
 
     /** Claude Code's offer to learn the machine: a first-run screen, answered `2. Not now` (tech notes). */
     ownQuestion: (rows) => rows.some((row) => row.includes('Teach auto mode about your environment')),
+  },
+  {
+    name: 'codex',
+    title: 'Codex',
+    bot: 'perm-codex',
+    display: 'Perm Codex',
+
+    kitIn,
+
+    /** The five rules a bot only on Codex is offered: the six without the Read rule, in their order. */
+    defaults: (kit) => [
+      `Bash(${kit.cli} message check --bots ${kit.bots}:*)`,
+      `Bash(${kit.cli} message send --bots ${kit.bots}:*)`,
+      `Bash(${kit.cli} message to --bots ${kit.bots}:*)`,
+      'Bash(git add:*)',
+      'Bash(git commit:*)',
+    ],
+
+    /** The same grant, in the same Claude text: bot.yaml keeps the yes in that text for either harness. */
+    granted: ['Bash(gh release create:*)'],
+
+    /** The bot's own Codex rules file, which the kit owns whole. */
+    ownFile: (home) => path.join(home, '.codex', 'rules', 'obk.rules'),
+
+    /** Its rule lines, and the lines it should hold for the rules the user allowed. */
+    inFile: codexLinesIn,
+    linesFor: codexLinesFor,
+
+    /**
+     * Every rules file Codex reads for a session started in `home`: each
+     * `.rules` file in the user's, the bots repo root's and the bot folder's
+     * `.codex/rules` (Codex's rules docs; the bot folder's seen live, tech
+     * notes section 3),
+     * the bot's own obk.rules first, whether it is there yet or not.
+     */
+    ruleFiles: (bots, home) => [...new Set([
+      path.join(home, '.codex', 'rules', 'obk.rules'),
+      ...[path.join(os.homedir(), '.codex', 'rules'), path.join(bots, '.codex', 'rules'), path.join(home, '.codex', 'rules')].flatMap(rulesFilesIn),
+    ])],
+
+    covering: codexCovering,
+    callsOf: (home, session) => {
+      const id = conversationOf(home, session);
+      const file = id === undefined ? undefined : rolloutOf(id);
+      return file === undefined ? [] : codexCalls(file);
+    },
+
+    /**
+     * The auto reviewer's verdict on a call, or undefined when it had none: a
+     * call that did not ask to leave the sandbox went to no reviewer, and one
+     * that did was reviewed when a review of this conversation names it.
+     */
+    reviewOf: (home, session, call) => {
+      const id = conversationOf(home, session);
+      if (!call.escalated || id === undefined) return undefined;
+      const said = call.text.replaceAll(/\s+/g, ' ');
+      return guardianReviews(id).find((review) => review.text.includes(call.text) || review.text.replaceAll(/\s+/g, ' ').includes(said));
+    },
+
+    /** The long body, read with `cat`: Codex has no Read tool, and its sandbox reads every file, so no rule is needed. */
+    readStep: {
+      what: 'its read of the long message\'s file',
+      step: () => 'Then read the file the long message names with exactly this command: cat <the file\'s path, as the message names it> , and find code word two in it.',
+      kind: 'command',
+      starts: (kit) => `cat ${kit.folder}.messages/`,
+      prefix: true,
+      ruled: false,
+    },
+    readsFile: (call, file) => call.kind === 'command' && call.text.startsWith('cat ') && call.text.includes(file),
+
+    /** The test's own sandbox: not /tmp and not $TMPDIR, where the throwaway bots folder is (see the header). */
+    sessionArgs: [
+      '--extra-arg=-c', '--extra-arg=sandbox_workspace_write.exclude_tmpdir_env_var=true',
+      '--extra-arg=-c', '--extra-arg=sandbox_workspace_write.exclude_slash_tmp=true',
+    ],
+    firstRun: (title) => ` Answer Codex's folder trust (1) and its hooks review (2, trust all) in ${title}, and accept an update offer (1).`,
+
+    uncoveredStep: (file) => `Last, run exactly this command: touch ${file} . If the sandbox stops it, ask once to run that same command outside the sandbox;`
+      + ' if that is refused too, do not run it again or try any other way.',
+    uncoveredMs: UNCOVERED_MS + ESCALATION_MS,
+
+    /**
+     * What became of the command no rule covers, or undefined while nothing
+     * has: the bot asked to leave the sandbox and the reviewer decided it (or
+     * nothing did), the sandbox stopped it and the bot did not ask to leave it
+     * within ESCALATION_MS, it ran inside the sandbox, or the user was asked.
+     */
+    decide: (tries, question, state, reviewOf) => {
+      const left = tries.find((call) => call.escalated);
+      if (left?.result !== undefined) {
+        const review = reviewOf(left);
+        return review === undefined
+          ? { call: left, how: `left the sandbox with no review and ${left.result.error ? 'was refused' : 'ran'}` }
+          : { call: left, how: `the reviewer's outcome was ${review.outcome}`, review };
+      }
+      if (left !== undefined) return question === undefined ? undefined : { call: left, how: 'asked', question };
+      const [first] = tries;
+      if (first === undefined) return undefined;
+      if (first.result === undefined) return question === undefined ? undefined : { call: first, how: 'asked', question };
+      if (!first.result.error) return { call: first, how: 'ran inside the sandbox' };
+      state.stoppedAt ??= Date.now();
+      return Date.now() - state.stoppedAt < ESCALATION_MS ? undefined : { call: first, how: 'stopped by the sandbox, and no escalation was asked' };
+    },
+
+    /** Only the sandbox and the reviewer may decide it: not a sandbox that let it write, and not leaving it with no review. */
+    problem: (outcome) => {
+      if (outcome.how === 'ran inside the sandbox') {
+        return 'the sandbox let it write beside the bots folder, so the test\'s own sandbox settings did not hold and this run shows nothing about the sandbox';
+      }
+      if (outcome.how.startsWith('left the sandbox with no review')) return 'it left the sandbox with no review, which only a rule does';
+      return undefined;
+    },
+
+    /** Codex's first-run screens, which the person running the test answers: folder trust, hooks review, update offer. */
+    ownQuestion: (rows) => rows.some((row) => /Trust this folder\?|Hooks need review|Update available!/.test(row)),
   },
 ];
 
@@ -599,14 +1131,17 @@ const COMMIT_FILE = 'permissions-check.txt';
 
 /**
  * What the bot is asked to do that an allowed rule must let through, in the
- * order it does it. Each entry is one step of its start prompt, and how its
- * call is known in the transcript: `kind` and the text the call starts with.
- * `kit` holds the kit's CLI and bots folder as words (`cli`, `bots`), the bots
- * folder as a path (`folder`), and the bot's name. The last entry is the
- * charter's grant (#353), marked `grant`, let through by the rule the user
+ * order it does it, for one harness. Each entry is one step of its start
+ * prompt, and how its call is known in the transcript: `kind` and the text the
+ * call starts with (`prefix` when that text is the start of a path). `kit`
+ * holds the kit's CLI and bots folder as words (`cli`, `bots`), the bots folder
+ * as a path (`folder`), and the bot's name. The read of the long body is the
+ * harness's own (`readStep`); on Codex it is marked `ruled: false`, since its
+ * sandbox reads every file and no rule is written for it. The last entry is
+ * the charter's grant (#353), marked `grant`, let through by the rule the user
  * allowed for it and by no rule in another file.
  */
-const COVERED = [
+const coveredFor = (harness) => [
   {
     what: 'its mail check',
     step: (kit) => `As soon as you are running, read your mail with exactly this command: ${kit.cli} message check --bots ${kit.bots} --bot ${kit.bot} --session daily`
@@ -615,12 +1150,7 @@ const COVERED = [
     kind: 'command',
     starts: (kit) => `${kit.cli} message check --bots ${kit.bots}`,
   },
-  {
-    what: 'its read of the long message\'s file',
-    step: () => 'Then read the file the long message names with your Read tool, not with a shell command, and find code word two in it.',
-    kind: 'read',
-    starts: (kit) => `${kit.folder}.messages/`,
-  },
+  harness.readStep,
   {
     what: 'its ask for the road',
     step: (kit) => `Then ask the kit for the road to ${PEN_PAL.name}/daily with exactly this command: ${kit.cli} message to --bots ${kit.bots} --to ${PEN_PAL.name}/daily`,
@@ -659,12 +1189,15 @@ const COVERED = [
  * The command no rule covers, last. `touch` on a file beside the bots folder:
  * not read-only, and not an edit inside the bot's working folder, so by the
  * order Claude Code's docs give it is neither of the two things decided before
- * the classifier. Harmless either way, and what became of it is on the disk.
+ * the classifier; and outside every folder Codex's sandbox (as this test sets
+ * it) may write. Harmless either way, and what became of it is on the disk.
+ * Its step is the harness's (`uncoveredStep`): a Codex bot is told to ask once
+ * to leave the sandbox, which is what brings its reviewer in.
  */
 const UNCOVERED = {
   what: 'a command no rule covers',
   file: (kit) => `${kit.folder}.uncovered.txt`,
-  step: (kit) => `Last, run exactly this command, once: touch ${kit.folder}.uncovered.txt . If it is refused, do not run it again or try any other way.`,
+  step: (kit, harness) => harness.uncoveredStep(`${kit.folder}.uncovered.txt`),
   kind: 'command',
   starts: (kit) => `touch ${kit.folder}.uncovered.txt`,
 };
@@ -673,11 +1206,11 @@ const UNCOVERED = {
 function isCallOf(entry, kit, call) {
   if (call.kind !== entry.kind) return false;
   const start = entry.starts(kit);
-  return entry.kind === 'read' ? call.text.startsWith(start) : call.text === start || call.text.startsWith(`${start} `);
+  return entry.kind === 'read' || entry.prefix ? call.text.startsWith(start) : call.text === start || call.text.startsWith(`${start} `);
 }
 
 /** The bot's whole part, in its start prompt: nothing is typed into its tab but the kit's own lines. */
-const botPrompt = (kit) => [
+const botPrompt = (kit, harness) => [
   'You are a system test\'s bot and you own nothing.',
   `Your bots folder is ${kit.folder}.`,
   'Do nothing that is not written here: read no file but the one the long message names, write nothing,'
@@ -686,8 +1219,8 @@ const botPrompt = (kit) => [
   + ' nothing before it or after it, no cd, no pipe and no redirection.',
   `Two messages from ${PEN_PAL.name}/daily are waiting for you: a short one with code word one in it,`
   + ' and a long one whose text is in a file the message names, with code word two in that text.',
-  ...COVERED.map((entry) => entry.step(kit)),
-  UNCOVERED.step(kit),
+  ...coveredFor(harness).map((entry) => entry.step(kit)),
+  UNCOVERED.step(kit, harness),
   'Then say nothing else and wait.',
 ].join(' ');
 
@@ -771,10 +1304,11 @@ for (const harness of HARNESSES) {
     assert.ok([bots, `'${bots}'`].includes(words.bots), `the rules should name this bots folder, ${bots}, and name ${words.bots}`);
     const kit = { ...words, folder: bots, bot: harness.bot };
     assert.deepEqual(waiting, harness.defaults(kit, bots), 'the rules waiting should be the default set, word for word');
+    const covered = coveredFor(harness);
 
     // Nothing is written before the yes.
     const ownFile = harness.ownFile(home);
-    assert.deepEqual(harness.allowIn(ownFile), [], `no rule should be in ${ownFile} before the user said yes`);
+    assert.deepEqual(harness.inFile(ownFile), [], `no rule should be in ${ownFile} before the user said yes`);
 
     // 2. The yes: the exact command the kit printed, run as a user would paste it.
     const command = offeredCommand(created.stdout, words.cli, harness.bot);
@@ -782,23 +1316,24 @@ for (const harness of HARNESSES) {
     assert.equal(allowed.status, 0, `the command the kit printed should run: ${command}\n${allowed.stdout}${allowed.stderr}`);
     assert.ok(!/worktree/i.test(allowed.stdout + allowed.stderr), `obk said "worktree": ${allowed.stdout}${allowed.stderr}`);
     assert.deepEqual(await allowedIn(home), waiting, 'bot.yaml should keep the yes, every rule of it');
-    assert.deepEqual(harness.allowIn(ownFile), waiting, `${ownFile} should hold exactly the rules the user allowed`);
+    assert.deepEqual(harness.inFile(ownFile), harness.linesFor(waiting), `${ownFile} should hold exactly the rules the user allowed`);
 
     // 2b. The yes to the charter's grant, as Bot Father runs it after showing
     //     the user the exact rule. Not written before it; after it, the
     //     defaults then the charter's rule, in bot.yaml and in the file.
     for (const rule of harness.granted) {
-      assert.ok(!harness.allowIn(ownFile).includes(rule), `${rule} should not be in ${ownFile} before the user said yes to it`);
+      const lines = harness.linesFor([rule]);
+      assert.ok(!harness.inFile(ownFile).some((line) => lines.includes(line)), `${rule} should not be in ${ownFile} before the user said yes to it`);
     }
     const grantedYes = obk(['bot', 'change', '--bots', bots, '--bot', harness.bot, ...harness.granted.flatMap((rule) => ['--allow', rule])]);
     assert.equal(grantedYes.status, 0, `the yes to the charter's rule should go through: ${grantedYes.stdout}${grantedYes.stderr}`);
     const allowedNow = [...waiting, ...harness.granted];
     assert.deepEqual(await allowedIn(home), allowedNow, 'bot.yaml should keep both yeses: the defaults, then the charter\'s rule');
-    assert.deepEqual(harness.allowIn(ownFile), allowedNow, `${ownFile} should hold the defaults, then the charter's rule`);
+    assert.deepEqual(harness.inFile(ownFile), harness.linesFor(allowedNow), `${ownFile} should hold the defaults, then the charter's rule`);
 
     // The bot's part, and the file it commits.
     await writeFile(path.join(home, COMMIT_FILE), 'A file for the permissions system test to commit.\n');
-    obkJson(['session', 'add', '--bots', bots, '--bot', harness.bot, '--name', 'daily', `--prompt=${botPrompt(kit)}`]);
+    obkJson(['session', 'add', '--bots', bots, '--bot', harness.bot, '--name', 'daily', `--prompt=${botPrompt(kit, harness)}`, ...harness.sessionArgs]);
 
     // 3. Up: the pen pal first, whose mailbox the reply goes to, then the bot.
     //    Nothing waits for a yes any more.
@@ -848,7 +1383,7 @@ for (const harness of HARNESSES) {
       `${harness.bot}/daily to report its conversation`,
       READY_MS,
       async () => ((await sessionIn(home, 'daily')).session === undefined ? undefined : true),
-      () => ` Answer Claude Code's folder trust in ${entry.title}.${whatIsUp(handle)}`,
+      () => `${harness.firstRun(entry.title)}${whatIsUp(handle)}`,
     );
 
     // 6. The default calls, each with its result, and nobody asked a thing
@@ -859,11 +1394,11 @@ for (const harness of HARNESSES) {
       DEFAULTS_MS,
       async () => {
         const now = calls();
-        for (const step of COVERED) {
+        for (const step of covered) {
           const refused = now.find((call) => isCallOf(step, kit, call) && call.result?.error === true);
           assert.equal(refused, undefined, `${step.what} came back as an error: ${JSON.stringify(refused)}`);
         }
-        if (COVERED.every((step) => now.some((call) => isCallOf(step, kit, call) && call.result !== undefined))) return now;
+        if (covered.every((step) => now.some((call) => isCallOf(step, kit, call) && call.result !== undefined))) return now;
         // Not done, so a default call is still to come or still waiting: a
         // question now is about it (or about something the bot was not asked).
         const open = now.filter((call) => call.result === undefined).at(-1);
@@ -873,14 +1408,26 @@ for (const harness of HARNESSES) {
       () => `${callLines(calls())}${whatIsUp(handle)}`,
     );
 
-    // What let each default call through: a rule in the bot's own settings,
+    // What let each default call through: a rule in the bot's own rules file,
     // which holds only what the user allowed. A rule elsewhere that covers it
     // too is said, not failed: the kit's rule was there either way. For the
     // charter's grant it fails: the run could not show the kit's rule did it.
+    // A call no rule is written for (Codex's read of the long body) is said as
+    // such. And on Codex, no default call went to the reviewer.
     const ruleFiles = harness.ruleFiles(bots, home);
-    for (const step of COVERED) {
+    for (const step of covered) {
       for (const call of made.filter((one) => isCallOf(step, kit, one))) {
-        const own = harness.allowIn(ownFile).filter((rule) => harness.covers(rule, call));
+        const review = harness.reviewOf(home, 'daily', call);
+        assert.equal(
+          review,
+          undefined,
+          `${step.what}, run as \`${call.text}\`, went to ${harness.title}'s reviewer (${review?.file}, outcome ${review?.outcome}): a default call must go through with no review`,
+        );
+        if (step.ruled === false) {
+          t.diagnostic(`${step.what}: \`${call.text}\` needs no rule, and went through with no review`);
+          continue;
+        }
+        const own = harness.covering(ownFile, call).allow;
         assert.notDeepEqual(
           own,
           [],
@@ -888,7 +1435,7 @@ for (const harness of HARNESSES) {
         );
         const elsewhere = ruleFiles
           .filter((file) => file !== ownFile)
-          .flatMap((file) => harness.allowIn(file).filter((rule) => harness.covers(rule, call)).map((rule) => `${rule} in ${file}`));
+          .flatMap((file) => harness.covering(file, call).allow.map((rule) => `${rule} in ${file}`));
         t.diagnostic(`${step.what}: \`${call.text}\` let through by ${own.join(', ')}${elsewhere.length === 0 ? '' : `; also covered by ${elsewhere.join(', ')}`}`);
         if (step.grant) {
           assert.deepEqual(
@@ -904,11 +1451,11 @@ for (const harness of HARNESSES) {
     // 7. The mail was read, by the harness's own record: the short message's
     //    word came back from the bot's own mail check, the long one's file was
     //    named there, and its word came back from the bot's own read of it.
-    const checks = made.filter((call) => isCallOf(COVERED.find((step) => step.what === 'its mail check'), kit, call));
+    const checks = made.filter((call) => isCallOf(covered.find((step) => step.what === 'its mail check'), kit, call));
     assert.ok(checks.some((call) => call.result.output.includes(SHORT_WORD)), `a mail check should have shown the short message's ${SHORT_WORD}:${callLines(checks)}`);
     assert.ok(checks.some((call) => call.result.output.includes(sentLong.file)), `a mail check should have named the long message's file:${callLines(checks)}`);
-    const reads = made.filter((call) => call.kind === 'read' && call.text === sentLong.file);
-    assert.ok(reads.some((call) => call.result.output.includes(LONG_WORD)), `the Read of ${sentLong.file} should have shown ${LONG_WORD}:${callLines(reads)}`);
+    const reads = made.filter((call) => harness.readsFile(call, sentLong.file));
+    assert.ok(reads.some((call) => call.result.output.includes(LONG_WORD)), `the read of ${sentLong.file} should have shown ${LONG_WORD}:${callLines(reads)}`);
 
     // And by Orca's store: both messages are in the bot's Run, read. The reply
     // is in the pen pal's, the only mail it has, carrying both words, one of
@@ -949,32 +1496,34 @@ for (const harness of HARNESSES) {
     assert.equal(git(['status', '--porcelain', '--', inRepo]), '', `${inRepo} should be committed and clean`);
 
     // 9. The command no rule covers. It is the bot's last step: it is decided
-    //    by the check (it runs, or is refused and the bot told why), or the
-    //    user is asked, and nothing here answers.
+    //    by the check (Claude: it runs, or is refused and the bot told why;
+    //    Codex: the sandbox stops it, and the reviewer decides the bot's ask to
+    //    leave it), or the user is asked, and nothing here answers.
+    const state = {};
     const outcome = await until(
       `${harness.bot} to make ${UNCOVERED.what}, and something to decide it`,
-      UNCOVERED_MS,
+      harness.uncoveredMs,
       async () => {
-        const call = calls().find((one) => isCallOf(UNCOVERED, kit, one));
-        if (call?.result !== undefined) return { call, how: call.result.error ? 'refused' : 'ran' };
-        const question = questionShown(handle, harness.ownQuestion);
-        return call !== undefined && question !== undefined ? { call, how: 'asked', question } : undefined;
+        const tries = calls().filter((one) => isCallOf(UNCOVERED, kit, one));
+        const question = tries.length === 0 ? undefined : questionShown(handle, harness.ownQuestion);
+        return harness.decide(tries, question, state, (call) => harness.reviewOf(home, 'daily', call));
       },
       () => `${callLines(calls())}${whatIsUp(handle)}`,
     );
-    t.diagnostic(`${UNCOVERED.what}, \`${outcome.call.text}\`: ${outcome.how}${outcome.how === 'refused' ? `, saying: ${outcome.call.result.output.slice(0, 500)}` : ''}`);
+    t.diagnostic(`${UNCOVERED.what}, \`${outcome.call.text}\`: ${outcome.how}${outcome.call.result?.error ? `, saying: ${outcome.call.result.output.slice(0, 500)}` : ''}`);
 
     // No rule was what decided it: none, in any file the harness takes rules
     // from, covers the command as the bot ran it, whether it allows, asks or
     // refuses. The kit wrote none for it. An allow rule would have let it
     // through, an ask rule would have put the question, and a deny rule would
-    // have refused it, each before auto mode's check was reached, so a run with
-    // any of them says nothing about the check, whatever became of the command.
+    // have refused it, each before the harness's own check was reached, so a
+    // run with any of them says nothing about the check, whatever became of
+    // the command. (Codex's `prompt` and `forbidden` are read as ask and deny.)
     const covering = Object.fromEntries(RULE_KINDS.map((kind) => [kind, []]));
     for (const file of ruleFiles) {
-      const rules = harness.rulesIn(file);
+      const found = harness.covering(file, outcome.call);
       for (const kind of RULE_KINDS) {
-        covering[kind].push(...rules[kind].filter((rule) => harness.covers(rule, outcome.call)).map((rule) => `${rule} in ${file}`));
+        covering[kind].push(...found[kind].map((rule) => `${rule} in ${file}`));
       }
     }
     assert.deepEqual(covering.allow, [], `no allow rule may cover \`${outcome.call.text}\`, or this run shows nothing about the check`);
@@ -983,17 +1532,23 @@ for (const harness of HARNESSES) {
         covering[kind],
         [],
         `the gate is inconclusive: the command ${outcome.how}, and a ${kind} rule covers \`${outcome.call.text}\` (${covering[kind].join('; ')}).`
-          + ` Claude Code decides a call by a matching ${kind} rule before auto mode's check, so this run cannot say the check decided it.`,
+          + ` ${harness.title} decides a call by a matching ${kind} rule before its own check, so this run cannot say the check decided it.`,
       );
     }
-    assert.deepEqual(harness.allowIn(ownFile), allowedNow, `${ownFile} should still hold exactly the rules the user allowed`);
+    assert.deepEqual(harness.inFile(ownFile), harness.linesFor(allowedNow), `${ownFile} should still hold exactly the rules the user allowed`);
 
-    // And the disk agrees with what the transcript says became of it.
+    // Only the harness's own check decided it (on Codex: the sandbox or the
+    // reviewer, not a sandbox that let it write, and not leaving it unreviewed).
+    const problem = harness.problem(outcome);
+    assert.equal(problem, undefined, `${UNCOVERED.what}, \`${outcome.call.text}\`, ${outcome.how}: ${problem}`);
+
+    // And the disk agrees with what the record says became of it.
     if (outcome.how !== 'asked') {
+      const ran = !outcome.call.result.error;
       assert.equal(
         existsSync(UNCOVERED.file(kit)),
-        outcome.how === 'ran',
-        `the transcript says it ${outcome.how}, and ${UNCOVERED.file(kit)} ${existsSync(UNCOVERED.file(kit)) ? 'is' : 'is not'} there`,
+        ran,
+        `the record says it ${outcome.how}${ran ? '' : ' (a refusal)'}, and ${UNCOVERED.file(kit)} ${existsSync(UNCOVERED.file(kit)) ? 'is' : 'is not'} there`,
       );
     }
   });

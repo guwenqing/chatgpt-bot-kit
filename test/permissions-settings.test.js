@@ -14,7 +14,8 @@
 // - nothing outside the bot folder, and never user-level settings: a settings
 //   file that is a link leading outside the bot folder is refused by name, as
 //   the hook is, and the sandbox's HOME stays as it was seeded;
-// - a bot that runs only on Codex gets no Claude settings from this.
+// - a bot that runs only on Codex gets no Claude settings from this; its rules
+//   go into its obk.rules instead (#354, permissions-codex.test.js).
 //
 // And the kit's rules: every bot's built AGENTS.md tells it that permission
 // rules are written by the kit through `obk bot change --allow`, never by hand.
@@ -34,9 +35,11 @@ import {
 } from './helpers/cli.js';
 import {
   allowedIn,
+  codexAllowedIn,
   defaultRules,
   FOREIGN_RULE,
   OWN_RULE,
+  prefixRule,
   settingsIn,
   settingsOf,
   writeAllow,
@@ -239,7 +242,7 @@ test('S7 allowing, building and bringing up write nothing in the user\'s home', 
 
 // ----------------------------------------------------------------- only Claude
 
-test('S8 a bot that runs only on Codex gets no Claude settings, whatever its allow holds', async (t) => {
+test('S8 a bot that runs only on Codex gets no Claude settings, whatever its allow holds: its rules go into obk.rules', async (t) => {
   const box = await createSandbox(t);
   const bots = await withBot(box, 'codex');
   await writeAllow(bots, BOT, ['Bash(git add:*)']);
@@ -248,6 +251,7 @@ test('S8 a bot that runs only on Codex gets no Claude settings, whatever its all
   await ok(box.run(['up', '--bots', 'bots', '--bot', BOT]));
 
   assert.equal(await settingsIn(bots, BOT), undefined, `${settingsOf(bots, BOT)} has no reason to exist`);
+  assert.deepEqual(await codexAllowedIn(bots, BOT), [prefixRule(['git', 'add'])], 'the yes went into the Codex form instead');
 });
 
 // ----------------------------------------------------------------- the kit's rules say so
