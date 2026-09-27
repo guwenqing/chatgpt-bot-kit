@@ -12,13 +12,14 @@
 // editing the file by hand may get the format wrong; code does not.
 //
 // The kit owns only the entries `allow` holds. Any other entry in the file is
-// left where it is, and health names it.
+// left where it is, and health names it. A rule the user says yes to taking
+// back leaves `allow` and the files through `bot change --disallow` (#360).
 //
 // A bot on Codex gets the same yes in Codex's own form (#354, ADR 0028): each
 // `Bash(<words>:*)` becomes a `prefix_rule` of those words in
 // `.codex/rules/obk.rules`, a file the kit owns whole and rewrites from `allow`.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { leadsOutside } from './bot.js';
@@ -302,6 +303,98 @@ function writeClaude(bots, home, bot) {
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, `${JSON.stringify(wanted, null, 2)}\n`);
   return { ...answer, written: missing };
+}
+
+/**
+ * Take the rules the user said yes to taking back out of the files of the
+ * harnesses the bot runs on (#360): from its Claude settings every entry of
+ * that exact text and nothing else, and its Codex rules rewritten from what
+ * `allow` still holds. Only rules `allow` holds are taken back; one it does not
+ * hold is refused, since the kit did not write it (ADR 0029).
+ *
+ * Everything is checked before anything is written, a file the kit could not
+ * write included, bot.yaml too. What comes back writes the files: one entry per file,
+ * Claude's first, with `removed` the rules taken out of it. The caller takes
+ * them out of `allow` after, so a write that fails leaves them there to take
+ * back again.
+ */
+export function takeBack(bots, home, bot, rules) {
+  const allowed = allowOf(home, bot);
+  const foreign = rules.find((rule) => !allowed.includes(rule));
+  if (foreign !== undefined) throw new Error(notAllowed(home, bot, foreign));
+  const after = { ...bot, allow: allowed.filter((rule) => !rules.includes(rule)) };
+  const taken = [...new Set(rules)];
+  // bot.yaml is written last, and a harness file taken out of step with it
+  // would leave nothing to say a running Codex session still has the rule.
+  refuseUnwritable(path.join(home, 'bot.yaml'));
+
+  const file = path.join(home, FILE);
+  let claude;
+  if (runsOnClaude(bot)) {
+    refuseOutside(home, file);
+    const settings = readSettings(file, 'the permission rules the user allowed');
+    const present = presentIn(settings, file);
+    claude = { settings, present, removed: taken.filter((rule) => present.includes(rule)) };
+    if (claude.removed.length > 0) refuseUnwritable(file);
+  }
+  const codex = path.join(home, CODEX_FILE);
+  let before = [];
+  if (runsOnCodex(bot)) {
+    refuseOutside(home, codex);
+    if (existsSync(codex)) {
+      before = ruleLines(readFileSync(codex, 'utf8'));
+      refuseUnwritable(codex);
+    }
+  }
+
+  return () => {
+    const entries = [];
+    if (claude !== undefined) {
+      const { settings, present, removed } = claude;
+      if (removed.length > 0) {
+        const allow = present.filter((rule) => !removed.includes(rule));
+        writeFileSync(file, `${JSON.stringify({ ...settings, permissions: { ...settings.permissions, allow } }, null, 2)}\n`);
+      }
+      entries.push({ bot: bot.name, file, written: [], removed, waiting: waitingFor(bots, home, after, 'claude') });
+    }
+    if (runsOnCodex(after)) {
+      const entry = writeCodex(bots, home, after);
+      // A line goes only when no rule still allowed gives it.
+      const kept = [...codexOf(home, after).lines.keys()];
+      const removed = taken.filter((rule) => {
+        const { line } = codexForm(rule);
+        return line !== undefined && before.includes(line) && !kept.includes(line);
+      });
+      entries.push({ ...entry, written: [], removed });
+    }
+    return entries;
+  };
+}
+
+/** A refusal, before anything is written, of a file the kit could not write. */
+function refuseUnwritable(file) {
+  try {
+    accessSync(file, constants.W_OK);
+  } catch (error) {
+    throw new Error(`${file} cannot be written (${error.code ?? error.message}), so nothing was changed. Let the kit write it, then run the command again.`);
+  }
+}
+
+/** Why `--disallow` refuses a rule `allow` does not hold, and where one of that text is. */
+function notAllowed(home, bot, rule) {
+  const yaml = path.join(home, 'bot.yaml');
+  const file = path.join(home, FILE);
+  let byHand = false;
+  try {
+    byHand = runsOnClaude(bot) && leadsOutside(home, file) === undefined
+      && presentIn(readSettings(file), file).includes(rule);
+  } catch {
+    // A file the kit cannot read holds nothing it would take out.
+  }
+  const where = byHand
+    ? ` ${file} allows it, which the user added by hand, not the kit: it stays theirs, to take out themselves.`
+    : '';
+  return `--disallow ${rule} is not in the allow list in ${yaml}, so it is not the kit's to take back, and nothing was changed.${where} The kit takes back only rules that list holds, spelled exactly as they are there.`;
 }
 
 /**

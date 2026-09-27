@@ -18,5 +18,5 @@ When something you were told to use is missing (a model, a tool, a file), say
 so and ask. Quietly using a different one hides the change.
 
 Permission rules in a harness's settings or rules files are the kit's to write,
-after the user's yes to the exact rules: `obk bot change --allow <rule>` records
-and writes them. Never edit them into such a file yourself, Bot Father included.
+after the user's yes to the exact rules: `obk bot change --allow <rule>` or
+`--disallow <rule>`. Never edit one in or out yourself, Bot Father included.
