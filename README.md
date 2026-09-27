@@ -547,7 +547,9 @@ For one session, that step, a `message check`, and `up` writing a new tab for it
 into the book take turns. So two starts of the same session at once leave its
 mailbox bound to the tab the book names, and no mail is read in the other one.
 Each waits a minute at most for its turn. A step that waits it out leaves the
-mailbox where it was and says so, and the harness starts all the same.
+mailbox where it was and says so, and the harness starts all the same. A check
+holds its turn for 40 seconds at most: with more mail than it reads in that
+time, it shows what it read and says the rest is still waiting.
 
 Nothing in a mailbox wakes anybody, so `message send` also types one line into
 the receiver's tab telling it to look. Both harnesses take a typed line as the

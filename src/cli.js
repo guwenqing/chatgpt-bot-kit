@@ -826,19 +826,22 @@ const commands = {
       peek: values.peek === true,
     });
     const where = `${answer.bot}/${answer.session}`;
+    const messages = answer.messages.flatMap((message) => [
+      `${'message'.padEnd(9)}  ${message.from}  ${message.at}`,
+      `             ${message.subject}`,
+      ...String(message.body ?? '').split('\n').map((line) => `             ${line}`),
+    ]);
 
+    // Trouble after some mail was read still shows that mail: it is read, and
+    // Orca will not hand it over again.
     if (answer.trouble !== undefined) {
-      return { answer, lines: [`${'trouble'.padEnd(9)}  ${where}`, `             ${answer.trouble}`], code: 1 };
+      return { answer, lines: [...messages, `${'trouble'.padEnd(9)}  ${where}`, `             ${answer.trouble}`], code: 1 };
     }
 
     return {
       answer,
       lines: [
-        ...answer.messages.flatMap((message) => [
-          `${'message'.padEnd(9)}  ${message.from}  ${message.at}`,
-          `             ${message.subject}`,
-          ...String(message.body ?? '').split('\n').map((line) => `             ${line}`),
-        ]),
+        ...messages,
         answer.messages.length === 0
           ? `Nothing is waiting for ${where}.`
           // Said plainly, because a peek leaves the same mail there to be found
