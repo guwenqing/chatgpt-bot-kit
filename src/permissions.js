@@ -267,10 +267,10 @@ export const allowCommand = (bots, bot, rules) => [
  * the kit may not write is an entry with its `trouble` rather than a throw.
  */
 export function writePermissions(bots, home, bot, { keepGoing = false } = {}) {
-  const writers = [[runsOnClaude, FILE, writeClaude], [runsOnCodex, CODEX_FILE, writeCodex]];
-  return writers.filter(([runs]) => runs(bot)).map(([, file, write]) => {
+  const writers = [[runsOnClaude, FILE, planClaude], [runsOnCodex, CODEX_FILE, planCodex]];
+  return writers.filter(([runs]) => runs(bot)).map(([, file, plan]) => {
     try {
-      return write(bots, home, bot);
+      return plan(bots, home, bot).write();
     } catch (error) {
       if (!keepGoing) throw error;
       return { bot: bot.name, file: path.join(home, file), written: [], waiting: [], trouble: error.message };
@@ -279,30 +279,55 @@ export function writePermissions(bots, home, bot, { keepGoing = false } = {}) {
 }
 
 /**
- * Write what the bot is allowed into its Claude settings: `{ bot, file,
- * written, waiting }`, with `written` the rules this run added.
+ * Check every file `bot change --allow` writes before any is written (#383):
+ * bot.yaml, and the files of the harnesses the bot runs on, read and found
+ * writable. `bot` is the bot as it will be, with the new rules in `allow`.
+ * What comes back writes the harness files, one entry per file, Claude's
+ * first; the caller writes bot.yaml after, so a write that fails leaves
+ * `allow` as it was, for the same command to run again.
+ */
+export function allowIn(bots, home, bot) {
+  refuseUnwritable(path.join(home, 'bot.yaml'));
+  const plans = [[runsOnClaude, planClaude], [runsOnCodex, planCodex]]
+    .filter(([runs]) => runs(bot)).map(([, plan]) => plan(bots, home, bot));
+  for (const plan of plans) if (plan.writes) refuseUnwritable(plan.answer.file);
+  return () => plans.map((plan) => plan.write());
+}
+
+/**
+ * What writing the bot's allowed rules into its Claude settings would do,
+ * read and refused before anything is written: `{ answer, writes, write }`.
+ * `write()` gives `{ bot, file, written, waiting }`, with `written` the rules
+ * it added.
  *
  * Only rules `allow` holds are written. Everything else in the file stays as it
  * is, the user's own entries and their order included; a rule missing from the
  * file goes after them, and a run with nothing to add writes nothing.
  */
-function writeClaude(bots, home, bot) {
+function planClaude(bots, home, bot) {
   const file = path.join(home, FILE);
   const allowed = allowOf(home, bot);
   const waiting = waitingFor(bots, home, bot, 'claude');
   const answer = { bot: bot.name, file, written: [], waiting };
-  if (allowed.length === 0) return answer;
+  const none = { answer, writes: false, write: () => answer };
+  if (allowed.length === 0) return none;
 
   refuseOutside(home, file);
   const settings = readSettings(file, 'the permission rules the user allowed');
   const present = presentIn(settings, file);
   const missing = [...new Set(allowed)].filter((rule) => !present.includes(rule));
-  if (missing.length === 0) return answer;
+  if (missing.length === 0) return none;
 
   const wanted = { ...settings, permissions: { ...settings.permissions, allow: [...present, ...missing] } };
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, `${JSON.stringify(wanted, null, 2)}\n`);
-  return { ...answer, written: missing };
+  return {
+    answer,
+    writes: true,
+    write: () => {
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, `${JSON.stringify(wanted, null, 2)}\n`);
+      return { ...answer, written: missing };
+    },
+  };
 }
 
 /**
@@ -358,7 +383,7 @@ export function takeBack(bots, home, bot, rules) {
       entries.push({ bot: bot.name, file, written: [], removed, waiting: waitingFor(bots, home, after, 'claude') });
     }
     if (runsOnCodex(after)) {
-      const entry = writeCodex(bots, home, after);
+      const entry = planCodex(bots, home, after).write();
       // A line goes only when no rule still allowed gives it.
       const kept = [...codexOf(home, after).lines.keys()];
       const removed = taken.filter((rule) => {
@@ -371,10 +396,15 @@ export function takeBack(bots, home, bot, rules) {
   };
 }
 
-/** A refusal, before anything is written, of a file the kit could not write. */
+/**
+ * A refusal, before anything is written, of a file the kit could not write: one
+ * not there yet is made in the nearest folder that is.
+ */
 function refuseUnwritable(file) {
+  let where = file;
+  while (!existsSync(where) && path.dirname(where) !== where) where = path.dirname(where);
   try {
-    accessSync(file, constants.W_OK);
+    accessSync(where, constants.W_OK);
   } catch (error) {
     throw new Error(`${file} cannot be written (${error.code ?? error.message}), so nothing was changed. Let the kit write it, then run the command again.`);
   }
@@ -417,16 +447,18 @@ function codexOf(home, bot) {
 const ruleLines = (text) => text.split('\n').map((line) => line.trim()).filter((line) => line !== '' && !line.startsWith('#'));
 
 /**
- * Write the Codex form of what the bot is allowed into `.codex/rules/obk.rules`:
+ * What writing the Codex form of what the bot is allowed into
+ * `.codex/rules/obk.rules` would do, as `planClaude` gives it. `write()` gives
  * `{ bot, file, written, waiting, unwritten }`, with `written` every rule in
- * the file when this run wrote it. The kit owns the file whole and writes it
- * only when it would change; with nothing to write and no file, it makes none.
+ * the file when it wrote it. The kit owns the file whole and writes it only
+ * when it would change; with nothing to write and no file, it makes none.
  */
-function writeCodex(bots, home, bot) {
+function planCodex(bots, home, bot) {
   const file = path.join(home, CODEX_FILE);
   const { lines, unwritten } = codexOf(home, bot);
   const answer = { bot: bot.name, file, written: [], waiting: waitingFor(bots, home, bot, 'codex'), unwritten };
-  if (lines.size === 0 && !existsSync(file)) return answer;
+  const none = { answer, writes: false, write: () => answer };
+  if (lines.size === 0 && !existsSync(file)) return none;
 
   refuseOutside(home, file);
   const text = [
@@ -434,10 +466,16 @@ function writeCodex(bots, home, bot) {
     '# obk rewrites this whole file: put rules of your own in another file in this folder.',
     ...lines.keys(),
   ].join('\n');
-  if (existsSync(file) && readFileSync(file, 'utf8') === `${text}\n`) return answer;
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, `${text}\n`);
-  return { ...answer, written: [...lines.values()].flat() };
+  if (existsSync(file) && readFileSync(file, 'utf8') === `${text}\n`) return none;
+  return {
+    answer,
+    writes: true,
+    write: () => {
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, `${text}\n`);
+      return { ...answer, written: [...lines.values()].flat() };
+    },
+  };
 }
 
 /**
