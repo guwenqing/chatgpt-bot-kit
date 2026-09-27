@@ -455,6 +455,19 @@ export function asPlatform(box, platform) {
 const CLIENT_HANG_MS = 30_000;
 
 /**
+ * How long every fake Orca app's binary takes to start unless a test says,
+ * from OBK_TEST_ORCA_START_DELAY_MS in the environment of the test run: 0
+ * when it is not set. So a whole run of the test files can be given a slow
+ * Orca start from outside (#384).
+ */
+function startDelayFromOutside() {
+  const told = process.env.OBK_TEST_ORCA_START_DELAY_MS;
+  if (told === undefined || told === '') return 0;
+  if (!/^\d+$/.test(told)) throw new Error(`OBK_TEST_ORCA_START_DELAY_MS should be a number of milliseconds, got: ${told}`);
+  return Number(told);
+}
+
+/**
  * Lay out a fake Orca app in `box`, the way the installed one is laid out, and
  * make it the Orca the kit runs:
  *
@@ -470,6 +483,14 @@ const CLIENT_HANG_MS = 30_000;
  * The binary acts as plain Node only with ELECTRON_RUN_AS_NODE=1, as the real
  * one does; without it the real one would open Orca's window, so the fake stops
  * there and says so.
+ *
+ * `startDelayMs` slows the binary's start by that many milliseconds, before
+ * Node runs and so before the runtime client loads: where the real Orca spends
+ * its start time, which a busy machine stretches (#384). The kit takes
+ * NODE_OPTIONS out of the client's environment, so a slower Node cannot be
+ * had that way (#381); the binary is a shell script, and sleeps. Unless a test
+ * says, it is OBK_TEST_ORCA_START_DELAY_MS from the environment of the test
+ * run, or 0. A binary killed while it sleeps takes its sleep with it.
  *
  * `client` is how the runtime client behaves:
  *   'answers'            as Orca's runtime does: `project.update` on a project
@@ -500,15 +521,26 @@ const CLIENT_HANG_MS = 30_000;
  * The client writes one line per load and per call to a log in the fake's
  * world, which `loads()` and `calls()` read back. A load carries the variables
  * of its environment the kit is meant to set or leave out; a call, what its
- * client was made with, which `clients()` reads back.
+ * client was made with, which `clients()` reads back. A client process that
+ * ends by itself writes down its exit code and how long after its binary was
+ * started it ended, which `exits()` reads back: one the kit killed never does.
  */
-export async function orcaApp(box, { client = 'answers', executable = true, hangMs = CLIENT_HANG_MS } = {}) {
+export async function orcaApp(box, {
+  client = 'answers',
+  executable = true,
+  hangMs = CLIENT_HANG_MS,
+  startDelayMs = startDelayFromOutside(),
+} = {}) {
   const contents = path.join(box.root, 'Orca.app', 'Contents');
   const cli = path.join(contents, 'Resources', 'bin', 'orca');
   const binary = path.join(contents, 'MacOS', 'Orca');
   const clientFile = path.join(contents, 'Resources', 'app.asar.unpacked', 'out', 'cli', 'runtime-client.js');
   const fakeDir = path.join(box.root, FAKE_ORCA_DIR);
   const log = path.join(fakeDir, 'runtime-client.log');
+  // Written by the binary as it starts, so the client can say how long after.
+  const started = path.join(fakeDir, 'orca-app-started');
+  if (!Number.isInteger(startDelayMs) || startDelayMs < 0) throw new Error(`startDelayMs should be a whole number of milliseconds, got: ${startDelayMs}`);
+  const shellWord = (text) => `'${text.replaceAll("'", "'\\''")}'`;
 
   await mkdir(path.dirname(cli), { recursive: true });
   await writeFile(cli, await readFile(box.orca.cli, 'utf8'));
@@ -524,7 +556,14 @@ export async function orcaApp(box, { client = 'answers', executable = true, hang
       '  echo "fake Orca: started without ELECTRON_RUN_AS_NODE=1, which would open Orca\'s window" >&2',
       '  exit 70',
       'fi',
-      `exec '${process.execPath.replaceAll("'", "'\\''")}' "$@"`,
+      `printf '%s\\n' "$$" > ${shellWord(started)}`,
+      ...(startDelayMs === 0 ? [] : [
+        "trap 'kill \"$!\" 2>/dev/null; exit 143' TERM",
+        `sleep ${startDelayMs / 1000} > /dev/null 2>&1 &`,
+        'wait "$!"',
+        'trap - TERM',
+      ]),
+      `exec ${shellWord(process.execPath)} "$@"`,
       '',
     ].join('\n'));
     await chmod(binary, 0o755);
@@ -534,8 +573,9 @@ export async function orcaApp(box, { client = 'answers', executable = true, hang
     await mkdir(path.dirname(clientFile), { recursive: true });
     await writeFile(clientFile, [
       "'use strict';",
-      "const { appendFileSync, readFileSync } = require('node:fs');",
+      "const { appendFileSync, readFileSync, statSync } = require('node:fs');",
       `const LOG = ${JSON.stringify(log)};`,
+      `const STARTED = ${JSON.stringify(started)};`,
       `const STATE = ${JSON.stringify(path.join(fakeDir, 'state.json'))};`,
       `const MODE = ${JSON.stringify(client)};`,
       `const FAKE_DIR = ${JSON.stringify(fakeDir)};`,
@@ -543,6 +583,12 @@ export async function orcaApp(box, { client = 'answers', executable = true, hang
       "const note = (entry) => appendFileSync(LOG, JSON.stringify(entry) + '\\n');",
       'const { ELECTRON_RUN_AS_NODE, NODE_OPTIONS, NODE_REPL_EXTERNAL_MODULE } = process.env;',
       "note({ event: 'load', env: { ELECTRON_RUN_AS_NODE, NODE_OPTIONS, NODE_REPL_EXTERNAL_MODULE } });",
+      '// A process the kit killed never gets here.',
+      "process.on('exit', (code) => {",
+      '  let sinceStartMs = null;',
+      '  try { sinceStartMs = Date.now() - statSync(STARTED).mtimeMs; } catch {}',
+      "  note({ event: 'exit', code, sinceStartMs });",
+      '});',
       'const refusal = (message, code) => Object.assign(new Error(message), code === undefined ? {} : { code });',
       'let answered = 0;',
       '// What is in front of one tab, by its handle (#298). The envelope is the one the real call answers with.',
@@ -606,6 +652,12 @@ export async function orcaApp(box, { client = 'answers', executable = true, hang
     clients: async () => (await entries('call')).map(({ profileIsUndefined, timeoutMs }) => ({ profileIsUndefined, timeoutMs })),
     /** Every time a client told to hang ran its hang out and ended by itself. */
     ended: () => entries('ended'),
+    /**
+     * Every client process that ended by itself, in order: { code, sinceStartMs },
+     * its exit code (0 only once it has printed the runtime's answer) and how
+     * many milliseconds after its binary was started it ended.
+     */
+    exits: async () => (await entries('exit')).map(({ code, sinceStartMs }) => ({ code, sinceStartMs })),
   };
 }
 

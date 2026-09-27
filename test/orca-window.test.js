@@ -636,3 +636,28 @@ for (const { label, orca } of [
     assert.equal(works.reloads.length, 1, 'it tries the reload');
   });
 }
+
+// ---------------------------------------------- an Orca slow to start (#384)
+
+test('W9 with Orca 1 s slow to start, init that makes a project still calls project.update on it and gets the answer, and prints the reload line once', async (t) => {
+  // The kit gives Orca's runtime client a few seconds, 3. Timed live beside
+  // the full unit suite, the real client took at most 721 ms to answer; here
+  // the fake app's binary sleeps 1 s before its Node starts. What the run
+  // prints is the same whether the call works or not (W7), so what shows the
+  // call worked is the fake's record: the client ended by itself with the
+  // answer printed, at least 1 s after its binary started.
+  const box = await createSandbox(t);
+  const app = await orcaApp(box, { startDelayMs: 1000 });
+
+  const result = await init(box);
+
+  assert.deepEqual(await app.calls(), [touch((await setupOf(box, 'bot-father')).projectId)], 'one call, on the project just made');
+  assert.deepEqual(
+    (await app.exits()).map(({ code }) => code),
+    [0],
+    'the client printed the runtime\'s answer and ended by itself: the kit did not kill it',
+  );
+  const [{ sinceStartMs }] = await app.exits();
+  assert.ok(sinceStartMs >= 1000, `it answered at least 1000 ms after its binary started: the start was slowed, got: ${sinceStartMs}`);
+  assert.equal(reloadLines(result), 1, `the reload line, once, got:\n${result.stdout}${result.stderr}`);
+});

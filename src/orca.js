@@ -180,7 +180,12 @@ export const deleteProject = (setupId) => orca(['project', 'setup-delete', '--se
 /** Said after a run that made or renamed a project, whatever `tellWindow` answered, and after a removal `reloadWindow` could not follow. */
 export const RELOAD_LINE = "If Orca's sidebar does not show it, reload the window with Cmd+Shift+R.";
 
-/** How long Orca's client waits for its runtime, and how long the kit waits for the client. */
+/**
+ * How long Orca's client waits for its runtime, and how long the kit waits for
+ * the client. Measured beside the full unit suite on Orca 1.4.214, the whole
+ * call took at most 721 ms and the call inside the client at most 447 ms
+ * (tech notes, #384).
+ */
 const CLIENT_WAIT_MS = 2000;
 const CLIENT_KILL_MS = 3000;
 
