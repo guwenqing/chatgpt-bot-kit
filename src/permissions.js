@@ -19,7 +19,7 @@
 // `Bash(<words>:*)` becomes a `prefix_rule` of those words in
 // `.codex/rules/obk.rules`, a file the kit owns whole and rewrites from `allow`.
 
-import { accessSync, constants, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { leadsOutside } from './bot.js';
@@ -398,15 +398,18 @@ export function takeBack(bots, home, bot, rules) {
 
 /**
  * A refusal, before anything is written, of a file the kit could not write: one
- * not there yet is made in the nearest folder that is.
+ * not there yet is made in the nearest folder that is, which the kit must be
+ * able to enter and write in, and which must be a folder.
  */
 function refuseUnwritable(file) {
   let where = file;
   while (!existsSync(where) && path.dirname(where) !== where) where = path.dirname(where);
   try {
-    accessSync(where, constants.W_OK);
+    if (where !== file && !statSync(where).isDirectory()) throw Object.assign(new Error('not a folder'), { code: 'ENOTDIR' });
+    accessSync(where, where === file ? constants.W_OK : constants.W_OK | constants.X_OK);
   } catch (error) {
-    throw new Error(`${file} cannot be written (${error.code ?? error.message}), so nothing was changed. Let the kit write it, then run the command again.`);
+    const at = where === file ? '' : ` at ${where}`;
+    throw new Error(`${file} cannot be written (${error.code ?? error.message}${at}), so nothing was changed. Let the kit write it, then run the command again.`);
   }
 }
 

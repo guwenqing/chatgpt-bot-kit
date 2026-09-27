@@ -14,10 +14,12 @@
 //   write:
 //   - the Claude settings file: not JSON, `permissions` not a mapping,
 //     `permissions.allow` not a list, a file the kit cannot write, a folder it
-//     cannot make the file in, a link outside the bot folder;
+//     cannot make the file in (one it cannot write, one it cannot enter, or a
+//     file where the folder should be), a link outside the bot folder;
 //   - the Codex obk.rules: a file the kit cannot write, a folder it cannot
-//     make the file in, a link outside the bot folder (`.codex`,
-//     `.codex/rules`, or the file itself), where nothing is written either;
+//     make the file in (the same three), a link outside the bot folder
+//     (`.codex`, `.codex/rules`, or the file itself), where nothing is written
+//     either;
 //   - bot.yaml: a file the kit cannot write, or an `allow` edit that cannot be
 //     made (an anchor another key uses);
 // - it can be run again: once the user has fixed the file, the same command
@@ -32,7 +34,7 @@
 // they live in permissions-allow, -broad and -codex.
 
 import assert from 'node:assert/strict';
-import { chmod, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { parse, parseDocument } from 'yaml';
@@ -113,11 +115,24 @@ async function linkInstead(box, at, target) {
   };
 }
 
-/** Make `at` unwritable; what comes back gives it back. */
-async function lock(at, mode) {
-  const back = (mode & 0o100) === 0 ? 0o644 : 0o755;
+/** What sets `at` to `mode` when called, and answers what gives it back the mode it had. */
+const locking = (at, mode) => async () => {
+  const back = (await stat(at)).mode & 0o7777;
   await chmod(at, mode);
   return () => chmod(at, back);
+};
+
+/** Move the folder `at` aside and put a file of the user's, of `mode`, in its place; what comes back puts it back. */
+async function fileInstead(box, at, mode = 0o644) {
+  const kept = path.join(box.root, 'kept', path.basename(at));
+  await mkdir(path.dirname(kept), { recursive: true });
+  await rename(at, kept);
+  await writeFile(at, 'a note of my own\n');
+  await chmod(at, mode);
+  return async () => {
+    await rm(at);
+    await rename(kept, at);
+  };
 }
 
 /** A settings file the user wrote, of a shape the kit cannot put a rule in. */
@@ -132,10 +147,12 @@ const BROKEN_SETTINGS = [
 /**
  * Each way `--allow` can fail at a file it would write: which bots it is tried
  * on, and `spoil(box, bots)`, which spoils the file and answers `{ named,
- * fix, unlock, outside }`: what the refusal names, how the user puts it right
- * by hand (`unlock` for a mode, given back as soon as the run is over, since a
- * snapshot reads bytes and not modes and a locked folder would outlive the
- * sandbox), and a folder outside the bots folder that must be left as it was.
+ * fix, lock, outside }`: what the refusal names, how the user puts it right
+ * by hand, a mode to set once the bots folder is snapshotted (a folder that
+ * cannot be entered cannot be read) and to give back as soon as the run is
+ * over (a snapshot reads bytes and not modes, and a locked folder would outlive
+ * the sandbox), and a folder outside the bots folder that must be left as it
+ * was.
  */
 const FAILURES = [
   ...BROKEN_SETTINGS.map(([label, text]) => ({
@@ -154,7 +171,7 @@ const FAILURES = [
     skip: NEEDS_A_USER,
     async spoil(box, bots) {
       const file = settingsOf(bots, BOT);
-      return { named: file, unlock: await lock(file, 0o444) };
+      return { named: file, lock: locking(file, 0o444) };
     },
   },
   {
@@ -164,7 +181,25 @@ const FAILURES = [
     async spoil(box, bots) {
       const file = settingsOf(bots, BOT);
       await rm(file);
-      return { named: path.dirname(file), unlock: await lock(path.dirname(file), 0o555) };
+      return { named: path.dirname(file), lock: locking(path.dirname(file), 0o555) };
+    },
+  },
+  {
+    label: 'no Claude settings file, in a .claude folder the kit cannot enter',
+    on: ['a Claude bot', 'a bot on both harnesses'],
+    skip: NEEDS_A_USER,
+    async spoil(box, bots) {
+      const file = settingsOf(bots, BOT);
+      await rm(file);
+      return { named: path.dirname(file), lock: locking(path.dirname(file), 0o666) };
+    },
+  },
+  {
+    label: 'a .claude that is a file of the user\'s, not a folder',
+    on: ['a Claude bot', 'a bot on both harnesses'],
+    async spoil(box, bots) {
+      const folder = path.dirname(settingsOf(bots, BOT));
+      return { named: folder, fix: await fileInstead(box, folder) };
     },
   },
   {
@@ -185,7 +220,7 @@ const FAILURES = [
     skip: NEEDS_A_USER,
     async spoil(box, bots) {
       const file = codexRulesOf(bots, BOT);
-      return { named: file, unlock: await lock(file, 0o444) };
+      return { named: file, lock: locking(file, 0o444) };
     },
   },
   {
@@ -195,7 +230,35 @@ const FAILURES = [
     async spoil(box, bots) {
       const file = codexRulesOf(bots, BOT);
       await rm(file);
-      return { named: path.dirname(file), unlock: await lock(path.dirname(file), 0o555) };
+      return { named: path.dirname(file), lock: locking(path.dirname(file), 0o555) };
+    },
+  },
+  {
+    label: 'no obk.rules, in a .codex/rules folder the kit cannot enter',
+    on: ['a Codex bot', 'a bot on both harnesses'],
+    skip: NEEDS_A_USER,
+    async spoil(box, bots) {
+      const file = codexRulesOf(bots, BOT);
+      await rm(file);
+      return { named: path.dirname(file), lock: locking(path.dirname(file), 0o666) };
+    },
+  },
+  {
+    label: 'a .codex/rules that is a file of the user\'s, not a folder',
+    on: ['a Codex bot', 'a bot on both harnesses'],
+    async spoil(box, bots) {
+      const folder = path.dirname(codexRulesOf(bots, BOT));
+      return { named: folder, fix: await fileInstead(box, folder) };
+    },
+  },
+  {
+    // A file the kit may write and whose execute bit reads like a folder's
+    // search bit: only a check that it is a folder stops it.
+    label: 'a .codex/rules that is an executable file of the user\'s, not a folder',
+    on: ['a bot on both harnesses', 'a Codex bot'],
+    async spoil(box, bots) {
+      const folder = path.dirname(codexRulesOf(bots, BOT));
+      return { named: folder, fix: await fileInstead(box, folder, 0o755) };
     },
   },
   ...['.codex', path.join('.codex', 'rules'), path.join('.codex', 'rules', 'obk.rules')].map((linked) => ({
@@ -218,7 +281,7 @@ const FAILURES = [
     skip: NEEDS_A_USER,
     async spoil(box, bots) {
       const file = botYamlOf(bots, BOT);
-      return { named: file, unlock: await lock(file, 0o444) };
+      return { named: file, lock: locking(file, 0o444) };
     },
   },
   {
@@ -253,9 +316,10 @@ for (const { label, on: where, skip, spoil } of FAILURES) {
         const on = ON[name];
         const box = await createSandbox(t);
         const bots = await withBot(box, on);
-        const { named, fix, unlock, outside } = await spoil(box, bots);
+        const { named, fix, lock, outside } = await spoil(box, bots);
         const before = await snapshot(bots, skipGit);
         const theirs = outside === undefined ? undefined : await snapshot(outside);
+        const unlock = await lock?.();
 
         const result = await change(box, ...extra, '--allow', OWN_RULE).finally(() => unlock?.());
 
