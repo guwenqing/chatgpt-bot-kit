@@ -3,7 +3,10 @@
 // in CI is set up the way it must be.
 
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { readFile, readdir } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { parse } from 'yaml';
@@ -16,6 +19,9 @@ const IGNORED = new Set(['node_modules', '.git', '.stryker-tmp', 'reports']);
 const workflowsDir = path.join(repoRoot, '.github', 'workflows');
 
 const readPackage = async () => JSON.parse(await readFile(path.join(repoRoot, 'package.json'), 'utf8'));
+
+/** The files package.json's test script hands `node --test`: what the suite is. */
+const testGlobsOf = (pkg) => pkg.scripts.test.split(/\s+/).slice(1).filter((word) => !word.startsWith('-'));
 
 /** Every file under the repo, as paths relative to it. */
 async function repoFiles() {
@@ -58,12 +64,74 @@ async function workflows() {
 const jobsOf = (doc) => Object.values(doc?.jobs ?? {});
 const stepsOfJob = (job) => job?.steps ?? [];
 const stepsOf = (doc) => jobsOf(doc).flatMap(stepsOfJob);
-const runsOf = (doc) => stepsOf(doc).map((step) => step?.run).filter((run) => typeof run === 'string');
 /** Everything a workflow reuses: the actions its steps use, and any reusable workflow. */
 const usesOf = (doc) => [
   ...jobsOf(doc).map((job) => job?.uses),
   ...stepsOf(doc).map((step) => step?.uses),
 ].filter((uses) => uses !== undefined);
+/** The events a workflow runs on, however `on` is written: one name, a list, or a map. */
+function triggersOf(doc) {
+  const on = doc?.on;
+  if (typeof on === 'string') return [on];
+  if (Array.isArray(on)) return on;
+  return Object.keys(on ?? {});
+}
+/** The jobs a job needs, however `needs` is written. */
+const needsOf = (job) => [job?.needs ?? []].flat();
+/** Every job a job waits for, directly or through a job it needs. */
+function ancestorsOf(doc, id) {
+  const seen = new Set();
+  const visit = (at) => {
+    for (const need of needsOf(doc?.jobs?.[at])) {
+      if (!seen.has(need)) {
+        seen.add(need);
+        visit(need);
+      }
+    }
+  };
+  visit(id);
+  return seen;
+}
+const setupNodeOf = (job) => stepsOfJob(job).find((step) => String(step?.uses ?? '').startsWith('actions/setup-node@'));
+
+// How CI runs the suite (#364): a pull request runs it split into shards on the
+// Node the kit targets, a release runs every shard on that Node and on the floor
+// before anything is published, and a push runs nothing. Node shards a run
+// itself with `--test-shard=<index>/<total>`, but only when the flag comes before
+// the files: `npm test -- --test-shard=1/3` runs the whole suite. So package.json
+// keeps a second script, `test:shard`, that takes the shard from SHARD, and a
+// workflow sets SHARD and runs that. The workflows hold no list of files of
+// their own that could drift from package.json's.
+
+/**
+ * The ways a step runs the suite package.json defines, one entry each: `npm
+ * test` is the whole suite, `npm run test:shard` the one shard SHARD names.
+ * `shard` is what SHARD is set to, in front of the command or in the step's,
+ * job's or workflow's `env`, and undefined where nothing sets it. A command
+ * counts only where it starts a line: `echo npm test` runs nothing.
+ */
+function suiteCommandsIn(step, job = {}, doc = {}) {
+  if (typeof step?.run !== 'string') return [];
+  // An expression can hold spaces; it is held aside while the line is split.
+  const held = [];
+  const text = step.run.replace(/\\\n/g, ' ').replace(/\$\{\{[\s\S]*?\}\}/g, (expression) => `\0${held.push(expression) - 1}\0`);
+  const back = (word) => word.replace(/\0(\d+)\0/g, (_, at) => held[Number(at)]);
+  const found = [];
+  for (const command of text.split(/\n|&&|\|\||;|\|/)) {
+    const words = command.replace(/(^|\s)#.*$/, '').trim().split(/\s+/).map(back);
+    const at = words.indexOf('npm');
+    if (at < 0 || !words.slice(0, at).every((word) => /^[A-Za-z_]\w*=/.test(word))) continue;
+    if (words[at + 1] === 'test') found.push({ whole: true });
+    if (words[at + 1] === 'run' && words[at + 2] === 'test:shard') {
+      const inline = words.slice(0, at).map((word) => /^SHARD=(.*)$/.exec(word)?.[1]).find((value) => value !== undefined);
+      found.push({ whole: false, shard: inline ?? step.env?.SHARD ?? job?.env?.SHARD ?? doc?.env?.SHARD });
+    }
+  }
+  return found;
+}
+
+/** Whether a job runs the suite, whole or a shard of it. */
+const runsTheSuite = (job) => stepsOfJob(job).some((step) => suiteCommandsIn(step, job).length > 0);
 
 /**
  * The workflow that runs the suite on pull requests: the one CI stands or falls
@@ -71,12 +139,13 @@ const usesOf = (doc) => [
  * publishes), and the order a directory lists its files in is not a rule.
  */
 async function ciWorkflow() {
-  const found = (await workflows()).filter((workflow) => workflow.doc?.on?.pull_request !== undefined
-    && runsOf(workflow.doc).some((run) => /\bnpm test\b/.test(run)));
+  const found = (await workflows()).filter((workflow) => triggersOf(workflow.doc).includes('pull_request')
+    && jobsOf(workflow.doc).some(runsTheSuite));
   assert.equal(
     found.length,
     1,
-    `exactly one workflow should run \`npm test\` on pull requests, got: ${found.map((workflow) => workflow.name).join(', ') || 'none'}`,
+    'exactly one workflow should run the suite (`npm test`, or `npm run test:shard`) on pull requests,'
+    + ` got: ${found.map((workflow) => workflow.name).join(', ') || 'none'}`,
   );
   return found[0].doc;
 }
@@ -94,21 +163,238 @@ function compareVersions(left, right) {
   return 0;
 }
 
-/** Whether a job runs the suite. */
-const runsTheSuite = (job) => stepsOfJob(job).some((step) => /\bnpm test\b/.test(String(step?.run ?? '')));
+/** The floor package.json's engines promises users, as x.y.z. */
+async function engineFloor() {
+  const declared = (await readPackage()).engines.node;
+  assert.match(declared, /^>=\d/, `engines.node should stay the floor users are promised, got: ${declared}`);
+  return versionOf(declared);
+}
+
+// A GitHub Actions expression, `${{ ... }}`, evaluated here: as much of the
+// language as the parts of a workflow the guards read use (a matrix value, a
+// job's result, the status functions), and an error naming the expression for
+// anything past that, so a guard fails saying what it could not read rather
+// than guessing.
+
+/** A list made by `.*`, whose properties are read off each item. */
+class Filtered extends Array {}
+
+const cannotRead = (expression) => new Error(`the guard cannot read the expression \`${expression}\``);
+
+/** What an expression's value reads as when it is written into text. */
+function shown(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object') return JSON.stringify(value, null, 2);
+  return String(value);
+}
+
+const truthy = (value) => !(value === false || value === null || value === undefined || value === '' || value === 0 || Number.isNaN(value));
+
+function toNumber(value) {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === 'boolean') return value ? 1 : 0;
+  if (typeof value === 'string') return value.trim() === '' ? 0 : Number(value);
+  return typeof value === 'number' ? value : Number.NaN;
+}
+
+/** `==` as GitHub has it: strings ignore case, and mixed types compare as numbers. */
+function looseEqual(left, right) {
+  if (typeof left === 'string' && typeof right === 'string') return left.toLowerCase() === right.toLowerCase();
+  if (typeof left !== typeof right || left === null || right === null) return toNumber(left) === toNumber(right);
+  return left === right;
+}
+
+function property(value, name) {
+  if (value instanceof Filtered) return Filtered.from(value, (item) => item?.[name] ?? null);
+  if (value !== null && typeof value === 'object') return value[name] ?? null;
+  return null;
+}
+
+function callFunction(name, args, context, expression) {
+  const fn = name.toLowerCase();
+  if (['success', 'failure', 'cancelled', 'always'].includes(fn)) {
+    if (context.status === undefined) throw cannotRead(expression);
+    return context.status[fn]();
+  }
+  const [first, second] = args;
+  const text = (value) => shown(value).toLowerCase();
+  if (fn === 'contains') return Array.isArray(first) ? first.some((item) => looseEqual(item, second)) : text(first).includes(text(second));
+  if (fn === 'startswith') return text(first).startsWith(text(second));
+  if (fn === 'endswith') return text(first).endsWith(text(second));
+  if (fn === 'join') return Array.isArray(first) ? first.map(shown).join(second === undefined ? ',' : shown(second)) : shown(first);
+  if (fn === 'tojson') return JSON.stringify(first ?? null, null, 2);
+  if (fn === 'format') return shown(first).replace(/\{(\d+)\}/g, (_, at) => shown(args[Number(at) + 1]));
+  throw cannotRead(expression);
+}
+
+/** The value of one expression, the part inside `${{ }}`, over `context`. */
+function evaluate(expression, context) {
+  const TOKEN = /\s*(?:'((?:[^']|'')*)'|(\d+(?:\.\d+)?)|(==|!=|<=|>=|&&|\|\||[!<>().,*[\]])|([A-Za-z_][\w-]*))\s*/y;
+  const tokens = [];
+  const source = expression.trim();
+  for (let at = 0; at < source.length;) {
+    TOKEN.lastIndex = at;
+    const match = TOKEN.exec(source);
+    if (match === null) throw cannotRead(expression);
+    at = TOKEN.lastIndex;
+    if (match[1] !== undefined) tokens.push({ value: match[1].replace(/''/g, "'") });
+    else if (match[2] !== undefined) tokens.push({ value: Number(match[2]) });
+    else if (match[3] !== undefined) tokens.push({ op: match[3] });
+    else tokens.push({ name: match[4] });
+  }
+
+  let next = 0;
+  const isOp = (op) => tokens[next]?.op === op;
+  const expect = (op) => {
+    if (!isOp(op)) throw cannotRead(expression);
+    next += 1;
+  };
+  const primary = () => {
+    const token = tokens[next];
+    next += 1;
+    if (token === undefined) throw cannotRead(expression);
+    if ('value' in token) return token.value;
+    if (token.op === '(') {
+      const value = or();
+      expect(')');
+      return value;
+    }
+    if (token.name === undefined) throw cannotRead(expression);
+    const literal = { true: true, false: false, null: null }[token.name];
+    if (literal !== undefined) return literal;
+    if (isOp('(')) {
+      next += 1;
+      const args = [];
+      while (!isOp(')')) {
+        args.push(or());
+        if (!isOp(')')) expect(',');
+      }
+      next += 1;
+      return callFunction(token.name, args, context, expression);
+    }
+    if (!Object.hasOwn(context, token.name) || token.name === 'status') throw cannotRead(expression);
+    return context[token.name];
+  };
+  const postfix = () => {
+    let value = primary();
+    for (;;) {
+      if (isOp('.')) {
+        next += 1;
+        const token = tokens[next];
+        next += 1;
+        if (token?.op === '*') value = value instanceof Filtered ? Filtered.from(value.flatMap((item) => Object.values(item ?? {}))) : Filtered.from(Object.values(value ?? {}));
+        else if (token?.name !== undefined) value = property(value, token.name);
+        else throw cannotRead(expression);
+      } else if (isOp('[')) {
+        next += 1;
+        const key = or();
+        expect(']');
+        value = property(value, String(key));
+      } else {
+        return value;
+      }
+    }
+  };
+  const unary = () => {
+    if (!isOp('!')) return postfix();
+    next += 1;
+    return !truthy(unary());
+  };
+  const compare = () => {
+    const left = unary();
+    const op = tokens[next]?.op;
+    if (!['==', '!=', '<', '>', '<=', '>='].includes(op)) return left;
+    next += 1;
+    const right = unary();
+    if (op === '==') return looseEqual(left, right);
+    if (op === '!=') return !looseEqual(left, right);
+    const [a, b] = [toNumber(left), toNumber(right)];
+    return { '<': a < b, '>': a > b, '<=': a <= b, '>=': a >= b }[op];
+  };
+  const and = () => {
+    let left = compare();
+    while (isOp('&&')) {
+      next += 1;
+      const right = compare();
+      left = truthy(left) ? right : left;
+    }
+    return left;
+  };
+  function or() {
+    let left = and();
+    while (isOp('||')) {
+      next += 1;
+      const right = and();
+      left = truthy(left) ? left : right;
+    }
+    return left;
+  }
+
+  const value = or();
+  if (next !== tokens.length) throw cannotRead(expression);
+  return value;
+}
+
+/** A value from a workflow with every `${{ }}` in it filled in. */
+const interpolate = (text, context) => String(text).replace(/\$\{\{([\s\S]*?)\}\}/g, (_, expression) => shown(evaluate(expression, context)));
+
+/** A value from a workflow, filled in; undefined where it is missing or cannot be read. */
+function readValue(value, context) {
+  if (value === undefined || value === null) return undefined;
+  try {
+    return interpolate(value, context);
+  } catch {
+    return undefined;
+  }
+}
 
 /**
- * The Node versions one job runs on: the one it hands `actions/setup-node`, or
- * the list a matrix hands it. A job that sets Node up in neither way reports
+ * The legs of a job's matrix, as GitHub expands it: every combination of its
+ * lists, less `exclude`, with `include` added to the legs it fits or as legs of
+ * its own. One empty leg for a job with no matrix; null for a matrix the YAML
+ * does not spell out (an expression, say), which the guards cannot read.
+ */
+function legsOf(job) {
+  const matrix = job?.strategy?.matrix;
+  if (matrix === undefined) return [{}];
+  if (matrix === null || typeof matrix !== 'object' || Array.isArray(matrix)) return null;
+  const { include = [], exclude = [], ...lists } = matrix;
+  if (!Array.isArray(include) || !Array.isArray(exclude) || !Object.values(lists).every(Array.isArray)) return null;
+  const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+
+  let legs = Object.keys(lists).length === 0
+    ? []
+    : Object.entries(lists).reduce((sofar, [key, values]) => sofar.flatMap((leg) => values.map((value) => ({ ...leg, [key]: value }))), [{}]);
+  legs = legs.filter((leg) => !exclude.some((out) => Object.entries(out).every(([key, value]) => same(leg[key], value))));
+  const original = legs.map((leg) => ({ ...leg }));
+  for (const extra of include) {
+    let fitted = false;
+    legs.forEach((leg, at) => {
+      if (Object.entries(extra).every(([key, value]) => !(key in original[at]) || same(original[at][key], value))) {
+        Object.assign(leg, extra);
+        fitted = true;
+      }
+    });
+    if (!fitted) {
+      legs.push({ ...extra });
+      original.push({ ...extra });
+    }
+  }
+  return legs;
+}
+
+/** What a job reads its matrix and strategy from, on one leg. */
+const legContext = (matrix, legs) => ({ matrix, strategy: { 'job-total': legs.length } });
+
+/**
+ * The Node versions one job runs on: the one it hands `actions/setup-node`, on
+ * every leg of its matrix. A job whose Node the YAML does not say reports
  * `undefined`, which is an answer the guards can fail on and name.
  */
 function nodeVersionsOf(job) {
-  const step = stepsOfJob(job).find((entry) => String(entry?.uses ?? '').startsWith('actions/setup-node@'));
-  const asked = step?.with?.['node-version'];
-  const fromMatrix = /^\$\{\{\s*matrix\.([\w-]+)\s*\}\}$/.exec(String(asked));
-  if (fromMatrix === null) return [asked];
-  const values = job?.strategy?.matrix?.[fromMatrix[1]];
-  return Array.isArray(values) ? values : [undefined];
+  const legs = legsOf(job);
+  if (legs === null) return [undefined];
+  return [...new Set(legs.map((matrix) => readValue(setupNodeOf(job)?.with?.['node-version'], legContext(matrix, legs))))];
 }
 
 /** Every Node version CI runs the suite on, however the workflow is arranged. */
@@ -118,11 +404,184 @@ async function ciNodeVersions() {
   return jobs.flatMap(nodeVersionsOf).map((version) => String(version));
 }
 
+/**
+ * Every run of the suite a workflow makes: one for each leg of a job's matrix
+ * and each step on it that runs the suite, with the job, the leg, the Node and
+ * the shard, `index` of `total`, the whole suite being shard 1 of 1. A run the
+ * YAML does not say enough about has a `problem` instead of a shard.
+ */
+function suiteRunsIn(doc) {
+  return Object.entries(doc?.jobs ?? {}).flatMap(([id, job]) => {
+    const commands = stepsOfJob(job).flatMap((step) => suiteCommandsIn(step, job, doc));
+    if (commands.length === 0) return [];
+    const legs = legsOf(job);
+    if (legs === null) return [{ id, problem: `${id} has a matrix that is not written out as lists` }];
+    return legs.flatMap((matrix, leg) => {
+      const context = legContext(matrix, legs);
+      const node = readValue(setupNodeOf(job)?.with?.['node-version'], context);
+      return commands.map((command) => {
+        if (command.whole) return { id, leg, node, index: 1, total: 1 };
+        const shard = /^(\d+)\/(\d+)$/.exec(readValue(command.shard, context) ?? '');
+        if (shard === null) {
+          return {
+            id,
+            leg,
+            node,
+            problem: `${id} ${JSON.stringify(matrix)} runs \`npm run test:shard\` with SHARD`
+              + ` ${command.shard === undefined ? 'unset' : `\`${command.shard}\``}, not <index>/<total>`,
+          };
+        }
+        return { id, leg, node, index: Number(shard[1]), total: Number(shard[2]) };
+      });
+    });
+  });
+}
+
+/** The runs of the suite in a workflow, failing the guard on any it cannot read. */
+function readRuns(doc, name) {
+  const runs = suiteRunsIn(doc);
+  const unread = runs.filter((run) => run.problem !== undefined).map((run) => run.problem);
+  assert.deepEqual(unread, [], `${name}: the guards cannot tell which shard these run:\n  ${unread.join('\n  ')}`);
+  return runs;
+}
+
+/** Runs grouped by the Node they run on. */
+function byNode(runs) {
+  const groups = new Map();
+  for (const run of runs) groups.set(String(run.node), [...(groups.get(String(run.node)) ?? []), run]);
+  return groups;
+}
+
+/**
+ * Why the runs of one Node do not, between them, run every file once: empty
+ * when they do. Node sorts the files and deals them out, so shards 1 to n of
+ * one total n run each file exactly once, and any gap drops the files it held.
+ */
+function shardGaps(runs) {
+  const totals = [...new Set(runs.map((run) => run.total))];
+  if (totals.length !== 1) return [`the shards name different totals: ${totals.join(', ')}`];
+  const [total] = totals;
+  const indexes = runs.map((run) => run.index).sort((a, b) => a - b);
+  const want = Array.from({ length: total }, (_, at) => at + 1);
+  if (indexes.join() !== want.join()) return [`shards ${indexes.join(', ')} of ${total} run, where 1 to ${total} should each run once`];
+  return [];
+}
+
+// Whether a job starts, and how it ends, when the jobs it waits for end one
+// way or another. GitHub skips a job whose needs did not all succeed unless its
+// `if` asks for it with a status function, and a skipped check reads as passing,
+// so what a summary or the publishing job does on a failed shard is not
+// something the YAML's shape shows: the guards play it out. A job's steps are
+// run for real, in bash, as a runner would run them, in an empty folder.
+
+/** Whether an `if` holds. With no status function in it, success() is implied, as GitHub has it. */
+function condition(value, context) {
+  if (value === undefined) return context.status.success();
+  const expression = String(value).replace(/^\s*\$\{\{([\s\S]*)\}\}\s*$/, '$1');
+  const holds = truthy(evaluate(expression, context));
+  return /\b(?:success|failure|cancelled|always)\s*\(/.test(expression) ? holds : context.status.success() && holds;
+}
+
+/** How a job that started ends: its steps run one by one, as a runner would. */
+function runJob(doc, id, job, needs, cancelled) {
+  let failed = false;
+  for (const step of stepsOfJob(job)) {
+    const status = {
+      always: () => true,
+      cancelled: () => cancelled,
+      success: () => !failed,
+      failure: () => failed,
+    };
+    const context = { needs, status };
+    if (!condition(step?.if, context)) continue;
+    if (typeof step?.run !== 'string' || ![undefined, 'bash'].includes(step.shell ?? job.defaults?.run?.shell)) {
+      throw new Error(`the guard can only play out \`run\` steps in bash, and ${id} has: ${JSON.stringify(step)}`);
+    }
+    const env = Object.fromEntries(Object.entries({ ...doc?.env, ...job.env, ...step.env })
+      .map(([name, value]) => [name, interpolate(value, context)]));
+    const folder = mkdtempSync(path.join(os.tmpdir(), 'obk-guard-'));
+    try {
+      const done = spawnSync('bash', ['--noprofile', '--norc', '-eo', 'pipefail', '-c', interpolate(step.run, context)], {
+        cwd: folder,
+        env: { PATH: process.env.PATH, ...env },
+        encoding: 'utf8',
+        timeout: 10_000,
+      });
+      if (done.status !== 0 && step['continue-on-error'] !== true) failed = true;
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
+  }
+  return failed ? 'failure' : 'success';
+}
+
+/**
+ * How job `target` of a workflow ends when the jobs in `results` end as it says
+ * ('success', 'failure', 'cancelled' or 'skipped'), in a run that was
+ * `cancelled` or not. The job `held` is not run: for it the answer is only
+ * whether it would start, 'started' or 'skipped'.
+ */
+function outcome(doc, target, results, { cancelled = false, held } = {}) {
+  const ended = new Map(Object.entries(results));
+  const resultOf = (id) => {
+    if (ended.has(id)) return ended.get(id);
+    const job = doc?.jobs?.[id];
+    assert.ok(job !== undefined, `${id} is needed, and there is no such job`);
+    const needs = Object.fromEntries(needsOf(job).map((need) => [need, { result: resultOf(need), outputs: {} }]));
+    const all = Object.values(needs).map((need) => need.result);
+    const status = {
+      always: () => true,
+      cancelled: () => cancelled,
+      success: () => !cancelled && all.every((result) => result === 'success'),
+      failure: () => all.includes('failure'),
+    };
+    let result;
+    if (!condition(job.if, { needs, status })) result = 'skipped';
+    else if (id === held) result = 'started';
+    else result = runJob(doc, id, job, needs, cancelled);
+    ended.set(id, result);
+    return result;
+  };
+  return resultOf(target);
+}
+
+/** The ways a run of the suite can end short of passing, one job at a time. */
+const NOT_PASSED = [
+  { result: 'failure', cancelled: false, says: 'fails' },
+  { result: 'cancelled', cancelled: false, says: 'is cancelled' },
+  { result: 'cancelled', cancelled: true, says: 'is cancelled with the whole run' },
+  { result: 'skipped', cancelled: false, says: 'is skipped' },
+];
+
+/**
+ * Why `summary` is not a check to read CI by: empty when it passes as the jobs
+ * it reads all passed, and fails whenever one of them did not. When the whole
+ * run is cancelled, what is asked is only that it still starts: which of its
+ * steps a runner runs then is not something the guards claim to know.
+ */
+function summaryHolds(doc, summary, suite) {
+  const passing = Object.fromEntries(suite.map((id) => [id, 'success']));
+  const found = [];
+  const onPass = outcome(doc, summary, passing);
+  if (onPass !== 'success') found.push(`it ends ${onPass} when every job that runs the suite passed`);
+  for (const id of suite) {
+    for (const { result, cancelled, says } of NOT_PASSED) {
+      const got = cancelled
+        ? outcome(doc, summary, { ...passing, [id]: result }, { cancelled, held: summary })
+        : outcome(doc, summary, { ...passing, [id]: result });
+      if (got !== (cancelled ? 'started' : 'failure')) {
+        found.push(`it ends ${got} when ${id} ${says}${got === 'skipped' ? ', and a skipped check reads as passing' : ''}`);
+      }
+    }
+  }
+  return found;
+}
+
 test('every test file in the repo is run by something', async () => {
   // The point is a test file dropped in a folder nobody runs, so what counts as
   // covered comes from package.json rather than from a list kept here.
   const pkg = await readPackage();
-  const globs = pkg.scripts.test.split(/\s+/).slice(1).filter((word) => !word.startsWith('-'));
+  const globs = testGlobsOf(pkg);
   const covered = globs.map(globToRegExp);
   const hasSystemCommand = typeof pkg.scripts['test:system'] === 'string';
 
@@ -136,22 +595,104 @@ test('every test file in the repo is run by something', async () => {
   }
 });
 
-test('CI runs the suite on pull requests and on pushes to main', async () => {
-  const on = (await ciWorkflow()).on;
+/**
+ * Why a `test:shard` script does not run the shard SHARD names of exactly what
+ * the `test` script runs: undefined when it does. The two stay one flag apart,
+ * so they cannot drift, and the flag comes before the files, where Node takes it.
+ */
+function shardScriptProblem(testScript, shardScript) {
+  if (typeof shardScript !== 'string') return 'there is no test:shard script';
+  const words = shardScript.trim().split(/\s+/);
+  if (words[0] !== 'node' || words[1] !== '--test') return 'it should run `node --test`';
+  const flags = words.map((word, at) => ({ word: word.replace(/["']/g, ''), at }))
+    .filter(({ word }) => /^--test-shard=(?:\$SHARD|\$\{SHARD\})$/.test(word));
+  if (flags.length !== 1) return 'it should take its shard from SHARD, once, as --test-shard=$SHARD';
+  const firstFile = words.findIndex((word, at) => at >= 2 && !word.startsWith('-'));
+  if (firstFile >= 0 && flags[0].at > firstFile) return 'its shard flag comes after the files, where Node takes no flag';
+  const rest = words.filter((_, at) => at !== flags[0].at).join(' ');
+  if (rest !== testScript.trim().split(/\s+/).join(' ')) return `less its shard flag, it should be the test script, \`${testScript}\`, and it is \`${rest}\``;
+  return undefined;
+}
 
-  assert.ok(on?.pull_request !== undefined, 'the workflow should trigger on pull requests');
-  assert.ok(on?.push !== undefined, 'the workflow should trigger on pushes');
-  // `push:` with no filter takes main with everything else; a filter must name it.
-  const branches = on.push?.branches;
-  assert.ok(branches === undefined || branches.includes('main'), `pushes to main should be covered, got: ${branches}`);
+test('the check for the suite sees npm test and npm run test:shard with its SHARD, and nothing else', () => {
+  const commands = (run, env) => suiteCommandsIn({ run, env });
+
+  assert.deepEqual(commands('npm test'), [{ whole: true }]);
+  assert.deepEqual(commands('npm ci\nnpm test'), [{ whole: true }], 'on a later line');
+  // Node takes no flag after the files, so this is the whole suite.
+  assert.deepEqual(commands('npm test -- --test-shard=1/3'), [{ whole: true }], 'a shard npm test hands on after the files');
+  assert.deepEqual(commands('npm run test:shard', { SHARD: '${{ matrix.shard }}/4' }), [{ whole: false, shard: '${{ matrix.shard }}/4' }], 'SHARD from env');
+  assert.deepEqual(commands('SHARD=${{ matrix.shard }}/${{ strategy.job-total }} npm run test:shard'),
+    [{ whole: false, shard: '${{ matrix.shard }}/${{ strategy.job-total }}' }], 'SHARD in front of the command');
+  assert.deepEqual(suiteCommandsIn({ run: 'npm run test:shard' }, { env: { SHARD: '2/3' } }), [{ whole: false, shard: '2/3' }], 'SHARD from the job');
+  assert.deepEqual(commands('npm run test:shard'), [{ whole: false, shard: undefined }], 'SHARD set nowhere');
+
+  for (const run of [
+    'node --test test/*.test.js',
+    'node --test --test-shard=1/3 test/*.test.js',
+    'npm run test:system -- --yes',
+    'npm ci',
+    'echo npm test',
+    'npm run test:shards',
+  ]) {
+    assert.deepEqual(commands(run), [], `should not be seen: ${run}`);
+  }
 });
 
-test('CI installs with npm ci and runs npm test', async () => {
-  // `npm install` would quietly build against something other than the lock file.
-  const runs = runsOf(await ciWorkflow());
+test('the check for test:shard sees it drift from the test script, or take its shard where Node ignores it', () => {
+  const script = 'node --test test/*.test.js';
 
-  assert.ok(runs.some((run) => /\bnpm ci\b/.test(run)), `no step runs \`npm ci\`, got: ${runs.join(' | ')}`);
-  assert.ok(runs.some((run) => /\bnpm test\b/.test(run)), `no step runs \`npm test\`, got: ${runs.join(' | ')}`);
+  assert.equal(shardScriptProblem(script, 'node --test --test-shard=$SHARD test/*.test.js'), undefined);
+  assert.equal(shardScriptProblem(script, 'node --test --test-shard="${SHARD}" test/*.test.js'), undefined, 'quoted and braced');
+
+  for (const shard of [
+    undefined,
+    'node --test test/*.test.js --test-shard=$SHARD',
+    'node --test --test-shard=$SHARD test/unit/*.test.js',
+    'node --test --test-shard=$SHARD test/*.test.js test/system/*.test.js',
+    'node --test --test-shard=$SHARD --test-name-pattern=cli test/*.test.js',
+    'node --test --test-shard=1/3 test/*.test.js',
+    'node --test --test-shard=$SHARD --test-shard=$SHARD test/*.test.js',
+    'npm test -- --test-shard=$SHARD',
+  ]) {
+    assert.notEqual(shardScriptProblem(script, shard), undefined, `should be seen: ${shard}`);
+  }
+});
+
+test('package.json\'s test:shard runs the files its test script runs, as the shard SHARD names', async () => {
+  // A shard job runs `npm run test:shard`, so this script is what CI and every
+  // release test. Kept to the test script plus the one flag, it cannot come to
+  // run other files than `npm test` does, and no test file drops out of CI.
+  const { scripts } = await readPackage();
+
+  assert.equal(shardScriptProblem(scripts.test, scripts['test:shard']), undefined,
+    `test:shard should be \`node --test --test-shard=$SHARD\` over the test script's files: ${shardScriptProblem(scripts.test, scripts['test:shard'])}`);
+});
+
+test('pull requests run the suite, and no workflow runs it on a push', async () => {
+  // The owner (#364): a pull request is where the suite runs, and a merge to
+  // main runs it no more. The risk he took with that: a pull request tested
+  // against an older main can merge into a combination no run checked. The
+  // release runs the suite again, on both Nodes, before anything is published.
+  const ci = await ciWorkflow();
+  assert.ok(triggersOf(ci).includes('pull_request'), 'the workflow should trigger on pull requests');
+
+  const onPush = (await workflows())
+    .filter((workflow) => triggersOf(workflow.doc).includes('push') && jobsOf(workflow.doc).some(runsTheSuite))
+    .map((workflow) => workflow.name);
+  assert.deepEqual(onPush, [], `these run the suite on a push: ${onPush.join(', ')}`);
+});
+
+test('CI installs with npm ci before it runs the suite, in every job that runs it', async () => {
+  // `npm install` would quietly build against something other than the lock file.
+  const ci = await ciWorkflow();
+
+  for (const [id, job] of Object.entries(ci.jobs).filter(([, entry]) => runsTheSuite(entry))) {
+    const steps = stepsOfJob(job);
+    const installAt = steps.findIndex((step) => /\bnpm ci\b/.test(String(step?.run ?? '')));
+    const suiteAt = steps.findIndex((step) => suiteCommandsIn(step, job, ci).length > 0);
+    assert.ok(installAt >= 0 && installAt < suiteAt, `${id} should run \`npm ci\` before it runs the suite`);
+  }
 });
 
 test('every Node version CI runs the suite on is an exact one', async () => {
@@ -172,23 +713,57 @@ test('every Node version CI runs the suite on is an exact one', async () => {
   }
 });
 
-test('CI runs the suite on a current Node, and also on the floor package.json promises', async () => {
-  // The floor is what users are promised, so one job stays on it. But the kit
-  // is run on the Node people actually have, and a kit only ever tested on its
-  // oldest supported version breaks there first. Stated as a rule rather than a
-  // number, so bumping the pinned version later needs no change here.
-  const declared = (await readPackage()).engines.node;
-  assert.match(declared, /^>=\d/, `engines.node should stay the floor users are promised, got: ${declared}`);
-  const floor = versionOf(declared);
+test('pull requests run the suite on one Node only, and it is newer than the floor package.json promises', async () => {
+  // The owner (#364): a pull request is checked on the Node the kit targets, the
+  // one people actually have; the floor waits for the release. Stated as a rule
+  // rather than a number, so bumping the pinned version later needs no change here.
+  const floor = await engineFloor();
+  const versions = [...new Set(await ciNodeVersions())];
 
-  const versions = await ciNodeVersions();
-  const shown = versions.join(', ');
+  assert.equal(versions.length, 1, `pull requests should run the suite on one Node, got: ${versions.join(', ')}`);
+  assert.ok(compareVersions(versions[0], floor) > 0, `pull requests should run the suite on a Node newer than the floor ${floor}, got: ${versions[0]}`);
+});
 
-  assert.ok(versions.includes(floor), `CI should keep a job on the floor ${floor}, got: ${shown}`);
-  assert.ok(
-    versions.some((version) => compareVersions(version, floor) > 0),
-    `CI should run the suite on a Node newer than the floor ${floor}, got: ${shown}`,
-  );
+test('wherever the suite runs in shards, the shards on each Node are 1 to n of one n, so together they run every file', async () => {
+  // Node sorts the files and deals them out by shard, so a shard left out, or
+  // two totals that do not agree, drop files from the run with nothing red to say so.
+  const all = await workflows();
+  const found = [];
+  for (const workflow of all) {
+    for (const [node, runs] of byNode(readRuns(workflow.doc, workflow.name))) {
+      for (const gap of shardGaps(runs)) found.push(`${workflow.name}, Node ${node}: ${gap}`);
+    }
+  }
+  assert.deepEqual(found, [], `these do not run every file:\n  ${found.join('\n  ')}`);
+});
+
+test('pull requests have one summary check that needs every job running the suite, and it fails unless they all passed', async () => {
+  // "CI green" stays one thing to read (#364). A job whose needs did not all
+  // pass is skipped unless its `if` asks otherwise, and a skipped check reads as
+  // passing; so the summary has to start whatever the shards did, and fail
+  // itself when any of them failed, was cancelled or never ran.
+  const ci = await ciWorkflow();
+  const suite = Object.keys(ci.jobs).filter((id) => runsTheSuite(ci.jobs[id]));
+  const summaries = Object.entries(ci.jobs)
+    .filter(([id, job]) => !suite.includes(id) && suite.every((need) => needsOf(job).includes(need)))
+    .map(([id]) => id);
+  assert.equal(summaries.length, 1, `exactly one job should need every job that runs the suite (${suite.join(', ')}), got: ${summaries.join(', ') || 'none'}`);
+
+  const found = summaryHolds(ci, summaries[0], suite);
+  assert.deepEqual(found, [], `${summaries[0]} is not a check to read CI by:\n  ${found.join('\n  ')}`);
+});
+
+test('the check for a summary sees one a failed shard skips, one a cancelled run skips, and one that only reports', () => {
+  const holds = (summary) => summaryHolds({ jobs: { shards: { steps: [] }, summary: { needs: ['shards'], ...summary } } }, 'summary', ['shards']).length === 0;
+  const allPassed = "contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')";
+
+  assert.equal(holds({ if: 'always()', steps: [{ run: 'test "${{ needs.shards.result }}" = success' }] }), true, 'a test of the result');
+  assert.equal(holds({ if: '${{ always() }}', steps: [{ if: allPassed, run: 'exit 1' }] }), true, 'a step that fails on a bad result');
+
+  assert.equal(holds({ steps: [{ run: 'test "${{ needs.shards.result }}" = success' }] }), false, 'no `if`: skipped when a shard fails');
+  assert.equal(holds({ if: '!cancelled()', steps: [{ run: 'test "${{ needs.shards.result }}" = success' }] }), false, 'skipped when the run is cancelled');
+  assert.equal(holds({ if: 'always()', steps: [{ run: 'echo "${{ needs.shards.result }}"' }] }), false, 'only reports');
+  assert.equal(holds({ if: 'always()', steps: [{ if: "contains(needs.*.result, 'failure')", run: 'exit 1' }] }), false, 'passes a cancelled shard');
 });
 
 test('the README says the same about Node as the package and the workflow do', async () => {
@@ -330,18 +905,72 @@ test('the job that holds the token installs nothing and runs npm publish', async
   assert.ok(steps.some(npmPublishes), `${id} holds the token and should be the job that runs \`npm publish\``);
 });
 
-test('nothing is published before the suite has passed on a clean install', async () => {
-  const { doc, id, job } = await publishJob();
-  const needs = [job.needs ?? []].flat();
-  const runsCiAndTest = (other) => {
-    const runs = stepsOfJob(other).map(runOf);
-    return runs.some((run) => /\bnpm ci\b/.test(run)) && runs.some((run) => /\bnpm test\b/.test(run));
-  };
+test('nothing is published unless every job that runs the suite in publish.yml has passed, each on a clean install', async () => {
+  // The publishing job waits for them directly or through a job that needs
+  // them; either way, played out, it must not start when one of them failed,
+  // was cancelled or never ran, and must start when all of them passed.
+  const { doc, id } = await publishJob();
+  const suite = Object.keys(doc.jobs).filter((name) => runsTheSuite(doc.jobs[name]));
+  assert.ok(suite.length > 0, 'publish.yml should run the suite before it publishes');
 
-  assert.ok(
-    needs.some((name) => runsCiAndTest(doc.jobs?.[name])),
-    `${id} should need a job that runs \`npm ci\` and \`npm test\`, got needs: ${JSON.stringify(job.needs)}`,
-  );
+  for (const name of suite) {
+    const steps = stepsOfJob(doc.jobs[name]);
+    const installAt = steps.findIndex((step) => /\bnpm ci\b/.test(runOf(step)));
+    const suiteAt = steps.findIndex((step) => suiteCommandsIn(step, doc.jobs[name], doc).length > 0);
+    assert.ok(installAt >= 0 && installAt < suiteAt, `${name} should run \`npm ci\` before it runs the suite`);
+  }
+
+  const passing = Object.fromEntries(suite.map((name) => [name, 'success']));
+  assert.equal(outcome(doc, id, passing, { held: id }), 'started', `${id} should publish once every job that runs the suite passed`);
+  for (const name of suite) {
+    for (const { result, cancelled, says } of NOT_PASSED) {
+      assert.equal(outcome(doc, id, { ...passing, [name]: result }, { cancelled, held: id }), 'skipped', `${id} publishes although ${name} ${says}`);
+    }
+  }
+});
+
+/** That publish.yml runs every shard of the suite on `node`, and that its publishing job waits for each of them. */
+async function releaseRunsEveryShardOn(node, which) {
+  const { doc, id } = await publishJob();
+  const runs = readRuns(doc, 'publish.yml');
+  const onNode = runs.filter((run) => String(run.node) === node);
+  assert.ok(onNode.length > 0, `publish.yml should run the suite on ${which} ${node}, got Nodes: ${[...byNode(runs).keys()].join(', ') || 'none'}`);
+  assert.deepEqual(shardGaps(onNode), [], `publish.yml does not run every shard on ${which} ${node}`);
+
+  const before = ancestorsOf(doc, id);
+  const missing = [...new Set(onNode.map((run) => run.id))].filter((name) => !before.has(name));
+  assert.deepEqual(missing, [], `${id} should need ${missing.join(', ')}, which run the suite on ${which} ${node}`);
+}
+
+test('the floor engines.node promises is still checked before every release: publish.yml runs every shard of the suite on it, and the publish job needs them all', async () => {
+  // The owner (#364): pull requests no longer run the floor, so the release is
+  // where the promise to users on the oldest supported Node is kept.
+  await releaseRunsEveryShardOn(await engineFloor(), 'the floor');
+});
+
+test('a release also runs every shard of the suite on the Node pull requests run on, and the publish job needs them all', async () => {
+  // The same Node a pull request was checked on, against the commit the release
+  // points at: a merge into a main no pull request ran against is caught here.
+  for (const node of new Set(await ciNodeVersions())) await releaseRunsEveryShardOn(node, 'the pull requests\' Node');
+});
+
+test('pull requests and releases split the suite across parallel jobs', async () => {
+  // The owner (#364): "i need more parallel". One job running the whole suite
+  // took three quarters of an hour; each shard is a job of its own, or a leg of
+  // a matrix, so they run side by side.
+  const named = [['the pull request workflow', await ciWorkflow()], ['publish.yml', await publishWorkflow()]];
+  for (const [name, doc] of named) {
+    const groups = byNode(readRuns(doc, name));
+    assert.ok(groups.size > 0, `${name} should run the suite`);
+    for (const [node, runs] of groups) {
+      assert.ok(
+        runs.every((run) => run.total > 1),
+        `${name} runs the suite on Node ${node} in one piece; split it with \`npm run test:shard\` and SHARD=<index>/<total>`,
+      );
+      const jobs = new Set(runs.map((run) => `${run.id} ${run.leg}`));
+      assert.equal(jobs.size, runs.length, `${name} runs shards on Node ${node} one after another in the same job`);
+    }
+  }
 });
 
 test('the release tag is checked against the package version before publishing', async () => {
