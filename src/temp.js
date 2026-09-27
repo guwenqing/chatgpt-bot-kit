@@ -24,7 +24,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { readBook, updateBook } from './book.js';
-import { addSession, readBot } from './bot.js';
+import { addSession, dropSession, NAME, readBot } from './bot.js';
 import { isShortPrompt, ownCli, shellWord, startPrompt, workDirOf } from './launch.js';
 import { sessionInTab } from './message.js';
 import { retireSession } from './retire.js';
@@ -44,8 +44,16 @@ export async function makeTemp(bots, { tab, ...given }) {
   if (caller.temporary !== undefined) {
     throw new Error(`${caller.bot}/${caller.session} is a temporary session, and only a long-lived session makes one. Nothing was made.`);
   }
+  // The name is a folder under work/ and a file beside the bots folder, so it
+  // is held to the rule a bot's name is: one plain name, never a path.
+  if (!NAME.test(given.name)) {
+    throw new Error(`${given.name} cannot be a session's name: a name is lower-case letters, digits and single hyphens, such as review-250. Nothing was made.`);
+  }
   if (given.prompt === undefined && given.prompt_file === undefined) {
     throw new Error(`temp make needs the task: --prompt <text> or --prompt-file <path>. Nothing was made.`);
+  }
+  if (given.prompt !== undefined && given.prompt_file !== undefined) {
+    throw new Error(`temp make was given the task twice, as --prompt and as --prompt-file, and a session is told its duty once. Give it one way. Nothing was made.`);
   }
 
   const bot = readBot(caller.home, caller.bot);
@@ -72,9 +80,22 @@ export async function makeTemp(bots, { tab, ...given }) {
     throw error;
   }
   const made = new Date().toISOString();
-  await updateBook(caller.home, (book) => {
-    book.sessions[given.name] = { ...book.sessions[given.name], temporary: { maker: caller.session, made } };
-  });
+  try {
+    await updateBook(caller.home, (book) => {
+      book.sessions[given.name] = { ...book.sessions[given.name], temporary: { maker: caller.session, made } };
+    });
+  } catch (error) {
+    // A session in bot.yaml that the book does not call temporary would be a
+    // long-lived one to everything that reads it, its maker's retire included,
+    // so it is taken back off rather than left that way.
+    try {
+      dropSession(bots, caller.bot, given.name);
+      if (written !== undefined) rmSync(written, { force: true });
+    } catch (undo) {
+      throw new Error(`${caller.bot}/${given.name} could not be recorded in the book as temporary (${error.message}), and taking it back off bot.yaml failed too (${undo.message}). It is in bot.yaml as a session the book does not call temporary. Take it off with  ${shellWord(ownCli())} retire --bots ${shellWord(bots)} --bot ${caller.bot} --session ${given.name}`);
+    }
+    throw new Error(`${caller.bot}/${given.name} could not be recorded in the book as temporary (${error.message}), so it was taken back off bot.yaml and nothing was made. Run this again once the book can be written.`);
+  }
 
   let up;
   try {

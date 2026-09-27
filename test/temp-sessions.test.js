@@ -35,6 +35,7 @@
 
 import assert from 'node:assert/strict';
 import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import test from 'node:test';
 import { parse } from 'yaml';
@@ -651,8 +652,114 @@ for (const [label, args] of REFUSED_SETTINGS) {
     await assertMakeRefused(box, bots, { terminal: planner, args });
 
     assert.equal(await exists(promptFileOf(bots, BOT, 'scout')), false, `no prompt file is left at ${promptFileOf(bots, BOT, 'scout')}`);
+    await made(box, planner, SCOUT);
+    assert.ok(await entryIn(bots, BOT, 'scout'), 'the same make with nothing wrong in it works');
   });
 }
+
+// ------------------------------------------------ making, from the review of PR 404
+
+/**
+ * Everything in the sandbox's working directory: the bots folder and every
+ * folder of the kit's beside it, so a make that wrote anywhere at all shows.
+ * The bots repo's own .git is left out.
+ */
+const everything = (box) => snapshot(box.cwd, (rel) => rel === 'bots/.git' || rel.startsWith('bots/.git/'));
+
+/**
+ * Hold a bot's book lock, the way another writer of the book does, until
+ * `release` is called: the file SQLite locks, beside the bots folder in
+ * `<bots>.locks/<bot home's name>.lock`, taken with `BEGIN IMMEDIATE`.
+ */
+async function holdBookLock(bots, bot) {
+  const file = path.join(`${bots}.locks`, `${encodeURIComponent(bot)}.lock`);
+  await mkdir(path.dirname(file), { recursive: true });
+  const db = new DatabaseSync(file);
+  db.exec('BEGIN IMMEDIATE');
+  return {
+    release() {
+      try {
+        db.exec('COMMIT');
+      } finally {
+        db.close();
+      }
+    },
+  };
+}
+
+test('TQ1 a make that cannot write the book leaves nothing of the session, says so and why, and works once the book can be written', async (t) => {
+  // Seen in the review: bot.yaml had the session and the book did not, so it
+  // was neither temporary nor its maker's, and nothing could retire it but
+  // Bot Father.
+  const box = await createSandbox(t);
+  const { bots, planner } = await fleet(box);
+  const before = await world(box, bots);
+  const from = await callCount(box);
+
+  const lock = await holdBookLock(bots, BOT);
+  let result;
+  try {
+    result = await make(box, planner, SCOUT);
+  } finally {
+    lock.release();
+  }
+
+  const said = `${result.stdout}${result.stderr}`;
+  assert.notEqual(result.code, 0, `the make failed, and says so in its exit code, got:\n${said}`);
+  assert.ok(!/^\s+at /m.test(said), `expected a message, got a crash:\n${said}`);
+  assert.match(said, /nothing/i, `it says nothing was made, got:\n${said}`);
+  assert.match(said, /book|sessions\.yaml/i, `and that the book could not be written, got:\n${said}`);
+  assert.equal(await entryIn(bots, BOT, 'scout'), undefined, 'scout is not left in bot.yaml');
+  assert.equal(await sessionIn(bots, BOT, 'scout'), undefined, 'nor in the book');
+  assert.equal(await exists(promptFileOf(bots, BOT, 'scout')), false, 'nor is its prompt file');
+  assert.deepEqual(orcaCallsOf(await since(box, from), 'terminal create'), [], 'and no tab was opened');
+  assert.deepEqual(await world(box, bots), before, 'bot.yaml, the book and Orca are as they were');
+
+  await made(box, planner, SCOUT);
+  assert.equal((await sessionIn(bots, BOT, 'scout'))?.temporary?.maker, 'planner', 'with the lock let go, the same make works');
+});
+
+/** Names that are not one plain name: not a single folder under work/, or not a name the kit gives anything. */
+const NOT_A_NAME = ['../../escaped-work', 'a/b', 'Upper', '..'];
+
+for (const name of NOT_A_NAME) {
+  test(`TQ2 a make named ${name} is refused with the naming rule, and nothing is written anywhere`, async (t) => {
+    const box = await createSandbox(t);
+    const { bots, planner } = await fleet(box);
+    const before = await everything(box);
+
+    await assertMakeRefused(box, bots, { terminal: planner, args: ['--name', name, '--prompt', LONG_TASK] });
+
+    const result = await make(box, planner, ['--name', name, '--prompt', LONG_TASK]);
+    const said = `${result.stdout}${result.stderr}`;
+    for (const rule of [/lower-?case/i, /digit/i, /hyphen/i]) {
+      assert.match(said, rule, `the refusal says what a name is, got:\n${said}`);
+    }
+    assert.deepEqual(await everything(box), before, 'nothing was written anywhere, inside the bots folder or beside it');
+
+    await made(box, planner, ['--name', 'scout-2', '--prompt', LONG_TASK]);
+    assert.ok(await isDirectory(path.join(botHomeOf(bots, BOT), 'work', 'scout-2')), 'a plain name such as scout-2 works');
+  });
+}
+
+test('TQ3 a make given both --prompt and --prompt-file is refused, says to give the task one way, and nothing is written', async (t) => {
+  const box = await createSandbox(t);
+  const { bots, planner } = await fleet(box);
+  const file = path.join(botHomeOf(bots, BOT), 'tasks', 'scout.md');
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, 'Check the release notes against the changelog.');
+  const before = await everything(box);
+  const args = ['--name', 'scout', '--prompt', TASK, '--prompt-file', file];
+
+  await assertMakeRefused(box, bots, { terminal: planner, args });
+
+  const said = await make(box, planner, args).then((result) => `${result.stdout}${result.stderr}`);
+  assert.ok(said.includes('--prompt-file'), `the refusal names the two ways the task was given, got:\n${said}`);
+  assert.deepEqual(await everything(box), before, 'nothing was written anywhere');
+
+  await made(box, planner, ['--name', 'scout', '--prompt', TASK]);
+  assert.ok(await entryIn(bots, BOT, 'scout'), 'one of them alone works');
+});
 
 // ------------------------------------------------------------------ retiring
 
