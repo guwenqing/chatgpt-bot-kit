@@ -13,20 +13,25 @@
 // sandbox's CLI leads to until `orcaApp` lays one out) is refused here with
 // exit 70, as the fake ps refuses a call it was never meant to get. Every
 // call, refused or not, is written to osascript.log in the fake Orca's
-// directory as `{ args }` for a test to read.
+// directory for a test to read as `{ args }`.
 //
-// What it answers is what a test told it, in osascript.json beside the log:
-// `{ stdout, stderr, code, delayMs }`. `delayMs` holds the answer back that
-// long, which with a long enough wait is an osascript that never answers; each
-// answer it gets as far as giving is written to osascript-answered.log, so a
-// test can tell a call that was killed from one that ran to its end. With
-// nothing told it refuses, the way a Mac that has not given the kit
-// Accessibility or Automation does: so an ordinary run hears the reload line
-// it has always heard. The words of a refusal are illustrative; the kit is
-// meant to read only the exit status and the answer on stdout.
-
-import { appendFileSync, existsSync, readFileSync, statSync } from 'node:fs';
-import path from 'node:path';
+// It is a shell script, not Node, and writing the call down is the first thing
+// it does. The kit gives osascript 5 s, and on a loaded machine a Node process
+// can take longer than that to start (#381): a fake in Node was killed before
+// it had written anything, and a test read no call where there was one. The
+// shell is up in milliseconds, so the log says whether the kit ran osascript,
+// and the answer a test told it is given, however busy the machine.
+//
+// What it answers is what a test told it, in osascript.answer beside the log,
+// written by `answerScript`: `{ stdout, stderr, code, delayMs }`. `delayMs`
+// holds the answer back that long, which with a long enough wait is an
+// osascript that never answers; each answer it gets as far as giving is
+// written to osascript-answered.log, so a test can tell a call that was killed
+// from one that ran to its end. With nothing told it refuses, the way a Mac
+// that has not given the kit Accessibility or Automation does: so an ordinary
+// run hears the reload line it has always heard. The words of a refusal are
+// illustrative; the kit is meant to read only the exit status and the answer
+// on stdout.
 
 /** The answers a test can give the fake, by name. */
 export const OSASCRIPT = {
@@ -40,40 +45,69 @@ export const OSASCRIPT = {
   silent: { stdout: '', code: 0 },
 };
 
-/** Long enough that a kit that waits for it has stopped waiting first. */
-export const OSASCRIPT_HANG_MS = 30_000;
+/** `text` as one word of the shell, quoted. */
+const quoted = (text) => `'${String(text).replaceAll("'", "'\\''")}'`;
 
-/** Run as `osascript`: write the call down and answer as told. */
-export function runOsascript() {
-  const dir = process.env.OBK_FAKE_ORCA_DIR;
-  if (dir === undefined) {
-    process.stderr.write('fake osascript: OBK_FAKE_ORCA_DIR is not set\n');
-    process.exit(70);
+/** What a test told the fake, as the shell assignments it reads. */
+export function answerScript(told) {
+  return [
+    `stdout=${quoted(told.stdout ?? '')}`,
+    `stderr=${quoted(told.stderr ?? '')}`,
+    `code=${Number(told.code ?? 0)}`,
+    `delay=${told.delayMs > 0 ? told.delayMs / 1000 : 0}`,
+    '',
+  ].join('\n');
+}
+
+/**
+ * The fake osascript, keeping its logs and reading its answer in `dir`.
+ *
+ * Each log holds one entry per call: the number of arguments on a line, then
+ * each argument on a line of its own, which `osascriptCalls` reads back. An
+ * argument with a line break in it would be misread; the kit's two are paths.
+ */
+export function osascriptScript(dir) {
+  return [
+    '#!/bin/sh',
+    `dir=${quoted(dir)}`,
+    'note() { log=$1; shift; { printf \'%s\\n\' "$#"; for arg in "$@"; do printf \'%s\\n\' "$arg"; done; } >> "$dir/$log"; }',
+    'note osascript.log "$@"',
+    '',
+    'refuse() {',
+    '  printf \'fake osascript: %s is not <script file> <Orca.app path>; the kit asks osascript nothing else\\n\' "$*" >&2',
+    '  exit 70',
+    '}',
+    '[ "$#" -eq 2 ] && [ -f "$1" ] || refuse "$@"',
+    'case $1 in -*) refuse "$@" ;; esac',
+    'case $2 in *.app) ;; *) refuse "$@" ;; esac',
+    '',
+    answerScript(OSASCRIPT.refused).trimEnd(),
+    'if [ -f "$dir/osascript.answer" ]; then . "$dir/osascript.answer"; fi',
+    '',
+    '# Killed while it holds the answer back, it ends as a killed one does, and',
+    '# takes its sleep with it.',
+    'if [ "$delay" != 0 ]; then',
+    '  trap \'kill "$!" 2>/dev/null; exit 143\' TERM',
+    '  sleep "$delay" > /dev/null 2>&1 &',
+    '  wait "$!"',
+    '  trap - TERM',
+    'fi',
+    'note osascript-answered.log "$@"',
+    'printf \'%s\' "$stdout"',
+    'printf \'%s\' "$stderr" >&2',
+    'exit "$code"',
+    '',
+  ].join('\n');
+}
+
+/** The entries of one of the fake's logs, `{ args }` each, oldest first. */
+export function osascriptCalls(text) {
+  const lines = text.split('\n');
+  const calls = [];
+  for (let at = 0; at < lines.length - 1;) {
+    const count = Number(lines[at]);
+    calls.push({ args: lines.slice(at + 1, at + 1 + count) });
+    at += 1 + count;
   }
-
-  const args = process.argv.slice(2);
-  appendFileSync(path.join(dir, 'osascript.log'), `${JSON.stringify({ args })}\n`);
-
-  const [script, app] = args;
-  const isFile = (file) => existsSync(file) && statSync(file).isFile();
-  if (args.length !== 2 || script.startsWith('-') || !isFile(script) || !app.endsWith('.app')) {
-    process.stderr.write(`fake osascript: ${args.join(' ')} is not <script file> <Orca.app path>; the kit asks osascript nothing else\n`);
-    process.exit(70);
-  }
-
-  let told = OSASCRIPT.refused;
-  try {
-    told = JSON.parse(readFileSync(path.join(dir, 'osascript.json'), 'utf8'));
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-  }
-
-  const answer = () => {
-    appendFileSync(path.join(dir, 'osascript-answered.log'), `${JSON.stringify({ args })}\n`);
-    process.stdout.write(told.stdout ?? '');
-    process.stderr.write(told.stderr ?? '');
-    process.exitCode = told.code ?? 0;
-  };
-  if (told.delayMs > 0) setTimeout(answer, told.delayMs);
-  else answer();
+  return calls;
 }
