@@ -28,6 +28,7 @@ import { readRoster } from './roster.js';
 import { buildAgents, buildRules, CODEX_CAP } from './rules.js';
 import { addSkill, buildSkills, linkSkills, removeSkill } from './skills.js';
 import { addSource, fetchSources } from './sources.js';
+import { makeTemp, retireTemp } from './temp.js';
 import { readUsage } from './usage.js';
 import { BOT_FATHER, bringUp, ownMailbox } from './up.js';
 
@@ -95,6 +96,21 @@ Usage:
                             bot whose Orca project holds a tab your book does
                             not name, and moves the folder only once Orca no
                             longer lists the project.
+  obk temp make --bots <path> --name <session>
+                (--prompt <text> | --prompt-file <path>) [--harness claude|codex]
+                [--model <m>] [--effort <e>] [--context <c>]
+                [--approval ${APPROVALS.join('|')}]
+                            Run in a long-lived session's own tab: make a
+                            temporary session of that session's bot for a piece
+                            of work, and bring it up. It takes your harness,
+                            model, effort, context and approval unless you say
+                            otherwise, works in work/<session>, and has the task
+                            as its start prompt. The book records it as
+                            temporary, made by you.
+  obk temp retire --bots <path> --name <session>
+                            Run in the maker's own tab: retire a temporary
+                            session it made, as obk retire does. It refuses a
+                            long-lived session, or one another session made.
   obk rules build --bots <path> [--bot <bot>]
                             Build every bot's AGENTS.md from its charter and
                             the rule units it carries, or just the one you
@@ -242,6 +258,8 @@ const COMMANDS = {
   'message check': ['bots'],
   'session record': ['bots', 'bot'],
   'session mailbox': ['bots', 'bot', 'session'],
+  'temp make': ['bots', 'name'],
+  'temp retire': ['bots', 'name'],
 };
 
 /** What each flag is for, in the sentence a caller reads when it is missing. */
@@ -335,9 +353,9 @@ async function run(argv) {
     return 1;
   }
 
-  // `bot`, `rules`, `skills`, `session`, `source` and `message` are commands of
-  // two words; the rest are one.
-  const words = ['bot', 'rules', 'skills', 'session', 'source', 'message'].includes(positionals[0]) ? 2 : 1;
+  // `bot`, `rules`, `skills`, `session`, `source`, `message` and `temp` are
+  // commands of two words; the rest are one.
+  const words = ['bot', 'rules', 'skills', 'session', 'source', 'message', 'temp'].includes(positionals[0]) ? 2 : 1;
   const command = positionals.slice(0, words).join(' ');
   const extra = positionals.slice(words);
 
@@ -534,13 +552,6 @@ const commands = {
 
   async retire(bots, values) {
     refuseWhenOrcaIsDown();
-    const closedLines = (closed) => closed.map((tab) => `closed     ${tab.bot} ${tab.name}  tab ${tab.tabId}  terminal ${tab.terminal}`);
-    // What it could not remove, and how to: nothing reads these files now (#393).
-    const leftLines = (left = []) => left.flatMap(({ file, reason }) => [
-      `left       ${file}: it could not be removed (${reason}). Nothing reads it now.`,
-      `           Remove it with:  rm ${shellWord(file)}`,
-    ]);
-
     if (values.session !== undefined) {
       const retired = await retireSession(bots, { bot: values.bot, session: values.session });
       return {
@@ -577,6 +588,36 @@ const commands = {
           retired.windowReloaded ? "reloaded   Orca's window, so its sidebar no longer shows the project" : RELOAD_LINE,
         ]),
         `retired    ${retired.bot}: moved to ${path.relative(bots, retired.moved)}, with its book, charter and memory`,
+        ...leftLines(retired.promptsLeft),
+      ],
+    };
+  },
+
+  async 'temp make'(bots, values) {
+    refuseWhenOrcaIsDown();
+    const given = { name: values.name };
+    for (const [flag, key] of [['harness', 'harness'], ['model', 'model'], ['effort', 'effort'], ['approval', 'approval'], ['prompt', 'prompt'], ['prompt-file', 'prompt_file']]) {
+      if (values[flag] !== undefined) given[key] = values[flag];
+    }
+    if (values.context !== undefined) given.context = asNumberOrText(values.context);
+    const made = await makeTemp(bots, { tab: process.env[TAB_ENV], ...given });
+    const { tabs, rules, skills, permissions, paused, projects } = made.up;
+    const answer = { bots, bot: made.bot, session: made.session, maker: made.maker, settings: made.settings, created: [], completed: [], rules, skills, permissions, tabs, paused, projects };
+    const retire = `${shellWord(ownCli())} temp retire --bots ${shellWord(bots)} --name ${made.session}`;
+    return {
+      answer,
+      lines: tabLines(answer, `Made ${made.bot}/${made.session}, a temporary session of ${made.maker}'s, working in work/${made.session}. Retire it when its work is done:  ${retire}`),
+    };
+  },
+
+  async 'temp retire'(bots, values) {
+    refuseWhenOrcaIsDown();
+    const retired = await retireTemp(bots, { tab: process.env[TAB_ENV], name: values.name });
+    return {
+      answer: { bots, ...retired },
+      lines: [
+        ...closedLines(retired.closed),
+        `retired    ${retired.bot} ${retired.session}, a temporary session of ${retired.maker}'s: off ${path.join('bots', retired.bot, 'bot.yaml')}, and its conversations kept in the book under retired`,
         ...leftLines(retired.promptsLeft),
       ],
     };
@@ -1017,6 +1058,15 @@ function settingsOf(values) {
   return settings;
 }
 
+/** The tabs a command closed, one line each. */
+const closedLines = (closed) => closed.map((tab) => `closed     ${tab.bot} ${tab.name}  tab ${tab.tabId}  terminal ${tab.terminal}`);
+
+/** What a retire could not remove, and how to: nothing reads these files now (#393). */
+const leftLines = (left = []) => left.flatMap(({ file, reason }) => [
+  `left       ${file}: it could not be removed (${reason}). Nothing reads it now.`,
+  `           Remove it with:  rm ${shellWord(file)}`,
+]);
+
 /** A context window written as a plain number stays one in the file. */
 const asNumberOrText = (value) => (/^\d+$/.test(value) ? Number(value) : value);
 
@@ -1271,6 +1321,7 @@ function sessionLines(session) {
     ...(book.tab === undefined
       ? []
       : [`             tab ${book.tab}${book.launched === undefined ? '' : `  launched ${book.launched}`}`]),
+    ...(book.temporary === undefined ? [] : [`             temporary, made by ${book.temporary.maker}${book.temporary.made === undefined ? '' : ` at ${book.temporary.made}`}`]),
     ...(book.session === undefined ? [] : [`             conversation ${book.session}`]),
     ...(book.history ?? [])
       .filter((was) => was?.session !== undefined)
