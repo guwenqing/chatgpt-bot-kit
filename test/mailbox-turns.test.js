@@ -59,6 +59,7 @@ import {
   createSandbox,
   fakeProgram,
   orcaCallsOf,
+  orcaCommand,
   orcaFlag,
   recordSession,
   sessionIn,
@@ -721,6 +722,122 @@ test('#321: waits are bounded, so the harness always starts', { concurrency: tru
       assert.equal(step.code, 0, `the step after it works: ${step.stdout}${step.stderr}`);
       assert.ok(stepTook < PROMPTLY_MS, `without waiting on the check's turn, took ${stepTook} ms`);
       await assertBoundToTheBooksTab(box, bots);
+    }),
+  ]);
+});
+
+// ---------------------------------------------------------------------------
+// A slow Orca never keeps a check past up's wait (review of PR #368)
+//
+// A check gives each Orca call twenty seconds, and makes one more call for each
+// batch of mail it acks. With calls that are slow but each under that limit, a
+// check with several batches waiting held the turn past the minute `up` waits
+// for it: `up` then wrote B into the book, and A's next ack landed after it,
+// mail acked from the stale tab. So a check holds the turn for forty seconds
+// at most in all, each call given twenty or what is left of the forty,
+// whichever is less, and lets go of the turn before `up` stops waiting,
+// however slow Orca is. What it has acked it shows; what it has not stays.
+// ---------------------------------------------------------------------------
+
+/** How long each read and ack takes to answer here: slow, and under the twenty seconds a call is given. */
+const SLOW_MS = 16_000;
+
+/** Enough mail for four batches of fifty, Orca's most for one: a read and four acks at SLOW_MS is eighty seconds. */
+const PILE = 200;
+
+/** One message's subject, each one found in what a check prints only if that message was shown. */
+const subjectOf = (n) => `pile mail ${String(n).padStart(3, '0')}`;
+
+/** Queue `count` messages for a Run, in the words the fake keeps them in, oldest first. */
+async function pileMail(box, mailbox, count) {
+  const state = await box.orca.state();
+  const pile = Array.from({ length: count }, (_, i) => ({
+    id: `msg_pile_${i + 1}`,
+    to: `run:${mailbox}`,
+    from: null,
+    subject: subjectOf(i + 1),
+    body: 'Please look at the staging host.',
+    type: 'status',
+    priority: 'normal',
+    threadId: null,
+    at: '2026-09-21T12:00:00.000Z',
+    acked: false,
+  }));
+  await box.orca.set({ messages: [...(state.messages ?? []), ...pile] });
+}
+
+/** A check that holds the turn this long or more has held it past what `up` can count on. */
+const CHECK_LET_GO_BY_MS = 46_000;
+
+test('#321 review: slow Orca calls do not keep a message check past up\'s wait', { concurrency: true }, async (t) => {
+  await Promise.all([
+    t.test('a check whose every read and ack is slow lets go within about forty seconds, shows what it acked, and leaves the rest waiting', { timeout: STUCK_MS }, async (t) => {
+      const box = await createSandbox(t);
+      const { coder, mailbox } = await coderWithMailbox(box);
+      await pileMail(box, mailbox, PILE);
+      await box.orca.set({ hang: { command: 'orchestration check', ms: SLOW_MS } });
+
+      const started = Date.now();
+      const ran = await obkFrom(box, coder, CHECK);
+      const took = Date.now() - started;
+
+      const said = ran.stdout + ran.stderr;
+      assert.ok(took < CHECK_LET_GO_BY_MS, `it stops within about forty seconds, took ${took} ms`);
+      assert.ok(!/^\s+at /m.test(said), `a message, not a crash:\n${said}`);
+      const messages = await box.orca.messages();
+      const waiting = messages.filter((message) => !message.acked);
+      assert.ok(waiting.length > 0, 'some of the pile is left for the next check');
+      const shownButWaiting = waiting.filter((message) => ran.stdout.includes(message.subject)).map((message) => message.subject);
+      assert.deepEqual(shownButWaiting, [], 'a batch it did not ack is not shown: Orca hands it over again');
+      const ackedNotShown = messages.filter((message) => message.acked && !ran.stdout.includes(message.subject)).map((message) => message.subject);
+      assert.deepEqual(ackedNotShown, [], 'mail it acked is shown: Orca will not hand it over again');
+    }),
+
+    t.test('the review\'s case: while A\'s slow check has several batches to ack, a second up waits for it, A acks nothing once the book names B, and the rest of the mail is B\'s to read', { timeout: STUCK_MS }, async (t) => {
+      // coder's tab was closed with a pile of mail waiting, and two runs of `up`
+      // bring it back at the same moment. The first opens A and is done; the
+      // second is on its way. A's harness runs `message check`, whose reads and
+      // acks each take sixteen seconds. The second `up` comes to write B while
+      // that check is going, and waits for it. A lets go of the turn in time,
+      // so the book names B only once A has finished acking, and the mail A
+      // did not get to is read in B.
+      const box = await createSandbox(t);
+      const { bots, mailbox } = await coderClosedWithMailbox(box);
+      await pileMail(box, mailbox, PILE);
+      const second = await secondUpHeld(box);
+      await obkIn(box, null, ['up', '--bots', 'bots', '--bot', 'coder']);
+      const a = await tabOf(box, bots, 'coder');
+      await box.orca.set({ hang: { command: 'orchestration check', ms: SLOW_MS } });
+      const from = (await box.orca.calls()).length;
+
+      const checking = obkFrom(box, a, CHECK);
+      // Let the second up go once A's check is reading, so it holds the turn.
+      await until('A\'s check never asked Orca for its mail', async () => orcaCallsOf((await box.orca.calls()).slice(from), 'orchestration check')
+        .some((call) => call.caller === a.handle));
+      await second.letGo();
+      await checking;
+      const later = await second.finished;
+
+      assert.equal(later.code, 0, `the second up works: ${later.stdout}${later.stderr}`);
+      const b = await tabOf(box, bots, 'coder');
+      assert.notEqual(b.handle, a.handle, 'the book names the second up\'s tab, B');
+      // `up` types B's launch line once it has written B into the book, so the
+      // line going into B is a moment by which the book named B.
+      const since = (await box.orca.calls()).slice(from);
+      const typedIntoB = since.findIndex((call) => orcaCommand(call) === 'terminal send' && orcaFlag(call, '--terminal') === b.handle);
+      assert.ok(typedIntoB >= 0, `the second up should have typed B's launch line, got: ${shown(since)}`);
+      const lateAcks = orcaCallsOf(since.slice(typedIntoB), 'orchestration check')
+        .filter((call) => call.caller === a.handle && orcaFlag(call, '--ack') !== undefined);
+      assert.deepEqual(lateAcks, [], `A acks nothing once the book names B, got: ${shown(since)}`);
+      const left = (await box.orca.messages()).filter((message) => !message.acked).map((message) => message.subject);
+      assert.ok(left.length > 0, 'the mail A did not ack is still waiting');
+      await assertBoundToTheBooksTab(box, bots);
+
+      await box.orca.set({ hang: null });
+      const readInB = await obkIn(box, b, CHECK);
+      const missed = left.filter((subject) => !readInB.stdout.includes(subject));
+      assert.deepEqual(missed, [], 'and B reads every message of it');
+      assert.deepEqual((await box.orca.messages()).filter((message) => !message.acked), [], 'so none is left waiting');
     }),
   ]);
 });
