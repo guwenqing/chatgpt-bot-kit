@@ -824,3 +824,59 @@ test('F13 from Codex\'s sandbox, a new tab whose shell the runtime finds in fron
 
   assert.equal(entry.harnessStarted, false, `got: ${JSON.stringify(entry)}`);
 });
+
+// ---------------------------------------------------------------------------
+// F14 — an Orca slow to start, as on a busy machine, answers all the same (#384).
+// ---------------------------------------------------------------------------
+
+// The kit gives Orca's runtime client a few seconds, 3. Timed live beside the
+// full unit suite, the real client took at most 721 ms to answer. Here the
+// fake app's binary sleeps 1 s before its Node starts, which leaves the fake's
+// own Node start the rest: the runtime's answer still decides, as on a quiet
+// machine, and the kit does not fall back to "cannot tell". Each test also
+// reads from the fake that every client the kit started ended by itself with
+// the answer printed, at least 1 s after its binary started: a slow-down that
+// did nothing does not pass.
+
+/** One second: past the slowest real client measured (#384). */
+const SLOW_START_MS = 1000;
+
+/** Each client started since `from` exits printed the runtime's answer, no sooner than SLOW_START_MS after its binary started. */
+async function assertAnsweredSlowly(app, from) {
+  const exits = (await app.exits()).slice(from);
+  assert.notEqual(exits.length, 0, 'the runtime client ran and ended by itself');
+  for (const exit of exits) {
+    assert.equal(exit.code, 0, `each client printed the runtime's answer and was not killed, got: ${JSON.stringify(exits)}`);
+    assert.ok(
+      exit.sinceStartMs >= SLOW_START_MS,
+      `each answered at least ${SLOW_START_MS} ms after its binary started: the start was slowed, got: ${JSON.stringify(exits)}`,
+    );
+  }
+}
+
+test('F14 with Orca 1 s slow to start, from Codex\'s sandbox a Codex receiver the runtime finds in front is still told its mail is there', async (t) => {
+  const { box, bots, app } = await sandboxedFleet(t, { startDelayMs: SLOW_START_MS });
+  const from = (await app.exits()).length;
+
+  const answer = await send(box);
+
+  await assertNudgedOnly(box, (await tabOf(box, bots, 'coder')).tabId, answer);
+  await assertAnsweredSlowly(app, from);
+});
+
+test('F14 with Orca 1 s slow to start, a receiver whose shell the runtime finds in front is still reported not up, and nothing is typed', async (t) => {
+  const { box, bots, app } = await sandboxedFleet(t, { startDelayMs: SLOW_START_MS });
+  await runtimeSaysForReader(box, bots, { process: SHELL });
+  const from = (await app.exits()).length;
+
+  const result = await box.run([
+    'message', 'send', '--bots', 'bots', '--to', 'coder', '--from', 'writer/daily',
+    '--subject', 'the staging host', '--text', 'It is down again.',
+  ]);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /not up/, `got: ${result.stdout}`);
+  assert.doesNotMatch(result.stdout, COULD_NOT_TELL, `got: ${result.stdout}`);
+  await assertUntyped(box, 'the shell in front');
+  await assertAnsweredSlowly(app, from);
+});

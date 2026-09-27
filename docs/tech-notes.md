@@ -289,6 +289,21 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
   and a direct call); read in Orca's source at `agent-foreground-process-remote-evidence.ts:74-78` and
   `process-table-snapshot.ts:156`, whose own pty code does treat `??` as no terminal. An Orca bug; the
   kit's answer to it is #350. **verified** (live)
+- **Orca's runtime client answers in well under a second, even on a loaded machine.** The kit runs it
+  as Orca's binary with `ELECTRON_RUN_AS_NODE=1` and `src/orca-runtime.cjs`, gives the client 2 s
+  (`CLIENT_WAIT_MS`) and ends it at 3 s (`CLIENT_KILL_MS`) (ADR 0025). On 2026-09-27 (#384; Orca
+  1.4.214, macOS, 10 cores) a throwaway probe run through `scripts/test-system.js` made its own folder
+  project and one plain shell tab. It ran the client exactly as the kit does, with its own bounds
+  raised to 30 s so that slow calls showed rather than being cut off, and timed each call to the end
+  of the process. `terminal.inspectProcess` on its tab, p50 / p95 / max: idle (30 calls) 72–85 /
+  156–199 / 200 ms; beside the full unit suite (1914 calls, 2502 tests passing, 29.5 min) 209 / 304 /
+  721 ms; beside 20 CPU spinners for 60 s (94 calls) 136 / 333 / 425 ms. `project.update` on its
+  project: idle max 90 ms, suite 124 / 178 / 446 ms. Under the suite, the call itself, after the client
+  had loaded, took 6 / 132 / 447 ms. A bare Electron-as-node start (`-e 0`) cost about what a bare node
+  start does: idle 43 against 40 ms, suite p95 102 against 87 ms. None of the 3918 calls under load
+  took 2 s. So both bounds stay: the worst whole call was under a quarter of the kill, and the worst
+  call inside the client under a quarter of its wait. The probe was not kept; its method is this
+  paragraph. **verified** (live, once, on this machine)
 - **A harness Orca resumed by itself sits where the kit's own does, and carries none of the kit's
   variables.** Read with `ps` on 2026-09-25, after that morning's machine restart and Orca's cold
   restore (below). Every kit-dev harness Orca had resumed, four Claude Code and two Codex, was the
