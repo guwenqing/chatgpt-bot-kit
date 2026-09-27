@@ -19,7 +19,7 @@ import { initBots } from './init.js';
 import { APPROVALS, HARNESSES, ownCli, shellWord, workDirOf } from './launch.js';
 import { checkMail, lookUp, noMailboxYet, sendMessage } from './message.js';
 import { orcaCli, orcaTrouble, RELOAD_LINE } from './orca.js';
-import { allowCommand, beyondDefaults, refuseBroad, refuseNoCodexForm, runsOnClaude, runsOnCodex, takeBack, writePermissions } from './permissions.js';
+import { allowCommand, allowIn, beyondDefaults, refuseBroad, refuseNoCodexForm, runsOnClaude, runsOnCodex, takeBack, writePermissions } from './permissions.js';
 import { pauseSessions, unpauseSessions } from './pause.js';
 import { recordSession, SHELL_ENV, TAB_ENV } from './record.js';
 import { restartSessions } from './restart.js';
@@ -618,10 +618,14 @@ const commands = {
     }
     // Refused before anything is written, so a bad rule, or a bad list already
     // there, leaves the charter as it was too.
+    let allowInto;
     if (values.allow !== undefined) {
       const { home } = allowedNow(bots, values.bot, values.allow);
       refuseBroad(home, values.allow);
-      refuseNoCodexForm(readBot(home, values.bot), values.allow);
+      const bot = readBot(home, values.bot);
+      refuseNoCodexForm(bot, values.allow);
+      const { allow } = allowRules(bots, values.bot, values.allow, { write: false });
+      allowInto = allowIn(bots, home, { ...bot, allow });
     }
     let takeBackFrom;
     if (values.disallow !== undefined) {
@@ -662,9 +666,11 @@ const commands = {
       }
     }
     if (values.allow !== undefined) {
+      // Written at once, as the charter's rules are built at once (#344): the
+      // harness's files first, bot.yaml last, so a write that fails leaves
+      // `allow` as it was, and the same command can run again (#383).
+      const permissions = allowInto();
       const allowed = allowRules(bots, values.bot, values.allow);
-      // Written at once, as the charter's rules are built at once (#344).
-      const permissions = writePermissions(bots, allowed.home, readBot(allowed.home));
       Object.assign(answer, { allow: allowed.allow, permissions });
       const codex = permissions.find((entry) => entry.unwritten !== undefined);
       lines.push(

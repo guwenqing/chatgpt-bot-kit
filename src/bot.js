@@ -277,14 +277,15 @@ export function allowedNow(bots, bot, rules, flag = '--allow') {
  * added }: the whole list now, and what this call put in it.
  *
  * Only the list: the rules are written into the harness's settings by the
- * caller, as the rules build is run by the caller of `changeBot`.
+ * caller, as the rules build is run by the caller of `changeBot`. With `write`
+ * false it only refuses what the edit would refuse, and writes nothing.
  */
-export function allowRules(bots, bot, rules) {
+export function allowRules(bots, bot, rules, { write = true } = {}) {
   const { home, was } = allowedNow(bots, bot, rules);
   const added = [...new Set(rules)].filter((rule) => !was.includes(rule));
   const allow = [...was, ...added];
   if (added.length > 0) {
-    editBot(bots, bot, `allow ${added.join(', ')} for ${bot}`, (doc) => doc.set('allow', allow), (before) => ({ ...before, allow }));
+    editBot(bots, bot, `allow ${added.join(', ')} for ${bot}`, (doc) => doc.set('allow', allow), (before) => ({ ...before, allow }), write);
   }
   return { bot, home, allow, added };
 }
@@ -410,10 +411,15 @@ function editBot(bots, bot, what, edit, expected, write = true) {
   const source = readFileSync(file, 'utf8');
   const doc = parseDocument(source);
   edit(doc);
-  const text = doc.toString(YAML_OUT);
-  if (!changesExactly(source, text, expected)) {
-    throw new Error(`${file} cannot be changed to ${what} without changing something else in it, so nothing was written. Make the change by hand.`);
+  const refusal = new Error(`${file} cannot be changed to ${what} without changing something else in it, so nothing was written. Make the change by hand.`);
+  let text;
+  try {
+    // An edit that leaves an alias with no anchor cannot be written at all.
+    text = doc.toString(YAML_OUT);
+  } catch {
+    throw refusal;
   }
+  if (!changesExactly(source, text, expected)) throw refusal;
   if (write && text !== source) writeFileSync(file, text);
 }
 
