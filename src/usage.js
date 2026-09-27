@@ -29,13 +29,16 @@
 //      uncached input on both. Taken as written, one is many times the other for
 //      the same work, and the cached tokens get priced at full rate.
 //   3. Claude Code writes the same call down more than once, so a call counts
-//      once per `requestId` and `message.id`.
+//      once per `requestId` and `message.id`. A subagent's calls are in a file
+//      of their own beside the conversation that started it, and belong to it;
+//      the same call can be in more than one of those files, so a call counts
+//      once across all of a conversation's files together (#371).
 
 import { readFileSync, realpathSync } from 'node:fs';
 
 import { botDir, botNames, readBot } from './bot.js';
 import { readBook, sessionIdsIn } from './book.js';
-import { transcriptsIn } from './conversations.js';
+import { claudeSubagentTranscripts, transcriptsIn } from './conversations.js';
 import { harnessOf } from './launch.js';
 
 /** The kinds a call's tokens are reported in, the same on either harness. */
@@ -151,9 +154,9 @@ const idsIn = (entry) => [
  * shorter page. What it could not count is still said.
  */
 function counted(one, window) {
-  const read = one.harness === 'claude' ? fromClaude : fromCodex;
   const tally = {
     calls: 0,
+    subagentCalls: 0,
     compactions: 0,
     tokens: Object.fromEntries(KINDS.map((kind) => [kind, 0])),
     models: new Set(),
@@ -166,15 +169,25 @@ function counted(one, window) {
     gaps: noGaps(),
   };
 
-  const { entries, unreadable, broken } = transcript(one.file);
-  tally.gaps.unreadable_transcripts = unreadable;
-  tally.gaps.broken_lines = broken;
-  read(entries, window, tally);
+  // A Claude Code conversation's subagents wrote their calls to files of their
+  // own, and what they spent is the conversation's.
+  const subagents = one.harness === 'claude' ? claudeSubagentTranscripts(one.file) : { files: [], unreadable: 0 };
+  tally.gaps.unreadable_transcripts += subagents.unreadable;
+  const sources = [one.file, ...subagents.files]
+    .map((file, index) => {
+      const { entries, unreadable, broken } = transcript(file);
+      tally.gaps.unreadable_transcripts += unreadable;
+      tally.gaps.broken_lines += broken;
+      return { entries, subagent: index > 0 };
+    });
+  if (one.harness === 'claude') fromClaude(sources, window, tally);
+  else fromCodex(sources[0].entries, window, tally);
   if (tally.calls === 0 && KINDS.every((kind) => tally.tokens[kind] === 0)) return { gaps: tally.gaps };
 
   return { gaps: tally.gaps, row: {
     id: one.id,
     calls: tally.calls,
+    subagent_calls: tally.subagentCalls,
     tokens: tally.tokens,
     by_model: [...tally.byModel].map(([model, its]) => ({ model, calls: its.calls, tokens: its.tokens })),
     models: [...tally.models],
@@ -204,6 +217,15 @@ function counted(one, window) {
  * the runs add up to the whole, with a call still being written at a boundary
  * charged once, part to each side (#169).
  *
+ * A call is one `requestId` and `message.id` across the main transcript and its
+ * subagents' files together, since the same call can be in more than one of
+ * them, and its records are taken in the order of their times. Copies written
+ * at the very same moment are taken smallest first, since a call's figures only
+ * grow: the largest is the latest. One with a figure missing may be the latest
+ * of them, so it is taken as that, and what it hides is said rather than
+ * measured past it. It is a subagent's when the main transcript has no record
+ * of it.
+ *
  * A record with no time, or with a figure missing, is left out whole and said to
  * be; the call it belongs to is counted from its other records, if it has any.
  * But when the record last written before the window's start is one of those,
@@ -211,10 +233,10 @@ function counted(one, window) {
  * the window cannot be told apart from what it grew by before. So the call is
  * not counted in that window, and is said to be.
  */
-function fromClaude(entries, window, tally) {
+function fromClaude(sources, window, tally) {
   const byCall = new Map();
 
-  for (const entry of entries) {
+  for (const { entries, subagent } of sources) for (const entry of entries) {
     const when = Date.parse(entry.timestamp ?? '');
     if (entry.type === 'system' && entry.subtype === 'compact_boundary') {
       if (Number.isNaN(when)) tally.gaps.records_without_time += 1;
@@ -233,10 +255,11 @@ function fromClaude(entries, window, tally) {
     if (broken && inside(when, window)) tally.gaps.records_without_numbers += 1;
     const call = `${entry.requestId}\u0000${entry.message?.id}`;
     if (!byCall.has(call)) byCall.set(call, []);
-    byCall.get(call).push({ entry, when, broken });
+    byCall.get(call).push({ entry, when, broken, subagent });
   }
 
   for (const records of byCall.values()) {
+    records.sort((one, other) => one.when - other.when || one.broken - other.broken || size(one.entry) - size(other.entry));
     const made = records[0].when;
     const atEnd = records.findLast(({ when, broken }) => !broken && when < window.to);
     if (atEnd === undefined) continue;
@@ -252,9 +275,16 @@ function fromClaude(entries, window, tally) {
     const isNew = inside(made, window);
     if (!isNew && KINDS.every((kind) => grew[kind] === 0)) continue;
 
-    count(tally, grew, atEnd.entry.message?.model, atEnd.entry.effort, isNew ? made : atEnd.when, isNew ? 1 : 0);
+    const subagent = records.every((record) => record.subagent);
+    count(tally, grew, atEnd.entry.message?.model, atEnd.entry.effort, isNew ? made : atEnd.when, isNew ? 1 : 0, subagent);
   }
 }
+
+/** How much one Claude Code record says its call has used so far, all kinds together. */
+const size = (entry) => {
+  const now = figures(entry);
+  return KINDS.reduce((sum, kind) => sum + now[kind], 0);
+};
 
 /** The figures Claude Code writes on every call, all of which a record needs to be counted. */
 const CLAUDE_FIELDS = ['input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'];
@@ -300,15 +330,15 @@ const CODEX_FIELDS = [
  * The running total is followed through events outside the window as well, since
  * what a call added can only be measured against the event before it.
  *
- * An event whose running total has a figure missing is left out and said to be,
- * and after it the running total is not known, so neither is what the next
- * complete event added. Measured against the event before the broken one, it
- * would take in what the broken one used, at its own time and perhaps in
- * another window; taken by its own per-call figure, it may be the broken one
- * written down again. Telling those apart is guessing, so it is not counted
- * either, and is said to be; the running total follows on from it. A call whose
- * figure is needed and has something missing is not counted, and is said to
- * be; nothing missing is taken as zero.
+ * An event whose running total has a figure missing, or has none at all, is left
+ * out and said to be, and after it the running total is not known, so neither
+ * is what the next complete event added. Measured against the event before the
+ * broken one, it would take in what the broken one used, at its own time and
+ * perhaps in another window; taken by its own per-call figure, it may be the
+ * broken one written down again. Telling those apart is guessing, so it is not
+ * counted either, and is said to be; the running total follows on from it. A
+ * call whose figure is needed and has something missing is not counted, and is
+ * said to be; nothing missing is taken as zero.
  */
 function fromCodex(entries, window, tally) {
   let model;
@@ -338,14 +368,11 @@ function fromCodex(entries, window, tally) {
     const info = entry.payload?.info;
     if (info === undefined || info === null) continue;
 
-    const total = info.total_token_usage ?? undefined;
+    const total = info.total_token_usage;
     let used;
-    if (total === undefined) {
-      // Nothing to measure against: the per-call figure is all there is. After a
-      // broken running total it may be the broken one written again, so it is
-      // not counted either until a complete running total says where things are.
-      used = broken ? null : perCall(info);
-    } else if (!complete(total, CODEX_READ)) {
+    // No running total at all is a running total with every figure missing:
+    // the next one's rise would take this call in again (#302).
+    if (!complete(total, CODEX_READ)) {
       used = null;
       broken = true;
     } else {
@@ -418,8 +445,9 @@ function kindsOf(raw) {
  * the total that has to be complete, and a row headed by nothing would be worse
  * than no row.
  */
-function count(tally, used, model, effort, when, calls = 1) {
+function count(tally, used, model, effort, when, calls = 1, subagent = false) {
   tally.calls += calls;
+  if (subagent) tally.subagentCalls += calls;
   for (const kind of KINDS) tally.tokens[kind] += used[kind];
   add(tally.models, model);
   add(tally.efforts, effort);
