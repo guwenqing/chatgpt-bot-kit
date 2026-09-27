@@ -313,7 +313,7 @@ function writeClaude(bots, home, bot) {
  * hold is refused, since the kit did not write it (ADR 0029).
  *
  * Everything is checked before anything is written, a file the kit could not
- * write included. What comes back writes the files: one entry per file,
+ * write included, bot.yaml too. What comes back writes the files: one entry per file,
  * Claude's first, with `removed` the rules taken out of it. The caller takes
  * them out of `allow` after, so a write that fails leaves them there to take
  * back again.
@@ -324,6 +324,9 @@ export function takeBack(bots, home, bot, rules) {
   if (foreign !== undefined) throw new Error(notAllowed(home, bot, foreign));
   const after = { ...bot, allow: allowed.filter((rule) => !rules.includes(rule)) };
   const taken = [...new Set(rules)];
+  // bot.yaml is written last, and a harness file taken out of step with it
+  // would leave nothing to say a running Codex session still has the rule.
+  refuseUnwritable(path.join(home, 'bot.yaml'));
 
   const file = path.join(home, FILE);
   let claude;

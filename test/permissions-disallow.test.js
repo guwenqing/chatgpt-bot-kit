@@ -21,9 +21,9 @@
 //   and `--disallow` together; a settings file `--allow` would refuse (a link
 //   outside the bot folder, not JSON, `permissions` not a mapping,
 //   `permissions.allow` not a list); an `allow` in bot.yaml that is not a list
-//   of rules; an unknown bot; a harness file the kit cannot write; with
-//   --charter, a bot.yaml whose `allow` edit cannot be made (an anchor another
-//   key uses);
+//   of rules; an unknown bot; a harness file or a bot.yaml the kit cannot
+//   write; with --charter, a bot.yaml whose `allow` edit cannot be made (an
+//   anchor another key uses);
 // - when a line leaves obk.rules, the last one included, the plain report
 //   says `obk restart`; when none does, it does not;
 // - the same rule given twice is taken out once; a kit default taken back
@@ -555,6 +555,38 @@ for (const [label, harness, fileOf, holds] of [
     await ok(change(box, ...disallowing(OWN_RULE)));
     assert.deepEqual(await allowOf(bots, BOT), ['Bash(git add:*)']);
     assert.ok(!(await holds(bots)), `the rule should have left ${file}`);
+  });
+}
+
+// A bot.yaml the kit cannot write is refused the same way, before a harness
+// file is touched.
+for (const [label, harness, fileOf, holds, restart] of [
+  ['a Claude bot', 'claude', settingsOf, async (bots) => (await allowedIn(bots, BOT)).includes(OWN_RULE), false],
+  ['a Codex bot', 'codex', codexRulesOf, async (bots) => (await codexAllowedIn(bots, BOT)).includes(OWN_LINE), true],
+]) {
+  test(`D18 ${label} with a read-only bot.yaml: --disallow is refused and nothing changes; with write access back, it goes through`, async (t) => {
+    const box = await createSandbox(t);
+    const bots = await withBot(box, { harness, allowed: ['Bash(git add:*)', OWN_RULE] });
+    const yamlFile = botYamlOf(bots, BOT);
+    const file = fileOf(bots, BOT);
+    assert.ok(await holds(bots), `the premise: ${file} holds the rule`);
+    await chmod(yamlFile, 0o444);
+    t.after(() => chmod(yamlFile, 0o644).catch(() => {}));
+    const before = await snapshot(bots, skipGit);
+
+    const result = await change(box, ...disallowing(OWN_RULE));
+
+    assert.notEqual(result.code, 0, `a bot.yaml the kit cannot write should be refused, got:\n${result.stdout}${result.stderr}`);
+    assert.ok(!/^\s+at /m.test(`${result.stdout}${result.stderr}`), `expected a message, got a crash:\n${result.stderr}`);
+    await assertNothingChanged(bots, before);
+    assert.deepEqual(await allowOf(bots, BOT), ['Bash(git add:*)', OWN_RULE], 'allow still holds the rule');
+    assert.ok(await holds(bots), `${file} still holds the rule`);
+
+    await chmod(yamlFile, 0o644);
+    const retry = await ok(change(box, ...disallowing(OWN_RULE)));
+    assert.deepEqual(await allowOf(bots, BOT), ['Bash(git add:*)']);
+    assert.ok(!(await holds(bots)), `the rule should have left ${file}`);
+    if (restart) assert.ok(retry.stdout.includes('obk restart'), `a Codex line left, so say obk restart, got:\n${retry.stdout}`);
   });
 }
 
