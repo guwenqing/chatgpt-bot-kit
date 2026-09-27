@@ -281,11 +281,18 @@ function mailOf(bots, who, peek, until) {
     try {
       found = ackMailbox(who.mailbox, found.deliveryId, handle, wait);
     } catch (error) {
+      // An ack Orca did not answer about may have been taken all the same, and
+      // then this batch is never handed over again: it is shown, said to be
+      // uncertain, rather than lost (review of PR #368). One Orca refused was
+      // not taken, and waits for the next check.
+      if (error.code === TIMED_OUT) {
+        messages.push(...batch);
+        return { ...read, trouble: `${error.message} Orca did not answer whether it took the last ${batch.length === 1 ? 'message' : `${batch.length} messages`} shown above as read, so the next check may show ${batch.length === 1 ? 'it' : 'them'} again. The rest waits for the next check.` };
+      }
       // What was acknowledged before this is gone from Orca, and would be lost
       // to everyone if the failure took it down with it.
       if (messages.length === 0) throw error;
-      const unsure = error.code === TIMED_OUT ? ', unless Orca took the batch it did not answer about as read' : '';
-      return { ...read, trouble: `${error.message} The mail shown above is read, and the rest waits for the next check${unsure}.` };
+      return { ...read, trouble: `${error.message} The mail shown above is read, and the rest waits for the next check.` };
     }
     messages.push(...batch);
   }
