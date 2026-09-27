@@ -25,6 +25,9 @@
 //      `last_token_usage` counts a call written down twice twice. So a call is
 //      the difference in the running total from the event before: none is a
 //      repeat, and a fall is a new window, whose own `last_token_usage` counts.
+//      A rollout's first record counts its own figure too: a child's running
+//      total can start with its parent's inside it, and a fork can begin with
+//      its origin's records copied in, which are the origin's calls (#376).
 //   2. The two harnesses do not mean the same thing by `input_tokens`. Claude
 //      Code leaves the cache reads out of it; Codex counts them inside it. So
 //      the Codex figure has its cached tokens taken back out, and `input` means
@@ -40,7 +43,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 
 import { botDir, botNames, readBot } from './bot.js';
 import { readBook, sessionIdsIn } from './book.js';
-import { claudeSubagentTranscripts, transcriptsIn } from './conversations.js';
+import { claudeSubagentTranscripts, codexRollout, transcriptsIn } from './conversations.js';
 import { HARNESSES, harnessOf } from './launch.js';
 
 /** The kinds a call's tokens are reported in, the same on either harness. */
@@ -193,7 +196,10 @@ function counted(one, window) {
       return { entries, subagent: index > 0 };
     });
   if (one.harness === 'claude') fromClaude(sources, window, tally);
-  else fromCodex(sources[0].entries, window, tally);
+  else {
+    const copied = originOf(sources[0].entries, tally);
+    if (copied !== null) fromCodex(sources[0].entries, window, tally, copied);
+  }
   if (tally.calls === 0 && KINDS.every((kind) => tally.tokens[kind] === 0)) return { gaps: tally.gaps };
 
   return { gaps: tally.gaps, row: {
@@ -351,13 +357,20 @@ const CODEX_FIELDS = [
  * counted either, and is said to be; the running total follows on from it. A
  * call whose figure is needed and has something missing is not counted, and is
  * said to be; nothing missing is taken as zero.
+ *
+ * A fork begins with the records of the conversation it was forked from, copied
+ * in and stamped at the fork's start, or all at one time in a file Codex rebuilt.
+ * Those are the origin's calls, counted with the origin: the leading records
+ * whose running total is in `copied` are followed and not counted (#376).
  */
-function fromCodex(entries, window, tally) {
+function fromCodex(entries, window, tally, copied) {
   let model;
   let effort;
   let running;
   // Whether a running total with something missing came since the last complete one.
   let broken = false;
+  // Whether the records so far are all the origin's, copied into a fork.
+  let copying = copied !== undefined;
 
   for (const entry of entries) {
     const when = Date.parse(entry.timestamp ?? '');
@@ -381,6 +394,12 @@ function fromCodex(entries, window, tally) {
     if (info === undefined || info === null) continue;
 
     const total = info.total_token_usage;
+    if (copying && complete(total, CODEX_READ) && copied.has(key(total))) {
+      running = total;
+      continue;
+    }
+    copying = false;
+
     let used;
     // No running total at all is a running total with every figure missing:
     // the next one's rise would take this call in again (#302).
@@ -412,13 +431,47 @@ function fromCodex(entries, window, tally) {
 /** The fields Codex itself writes; it has no cache writes to report. */
 const CODEX_READ = CODEX_FIELDS.filter((field) => field !== 'cache_write_input_tokens').concat('total_tokens');
 
+/** A running total as one value, for telling a copy of one from another. */
+const key = (total) => CODEX_READ.map((field) => total[field]).join('/');
+
+/**
+ * The running totals of the conversation a Codex rollout was forked from, which
+ * it may begin with copies of (tech notes, section 3). `undefined` when it names
+ * no origin. When the origin cannot be read, where the copies end cannot be told,
+ * so none of the fork is counted: `null`, and said to be.
+ */
+function originOf(entries, tally) {
+  const id = entries.find((entry) => entry.type === 'session_meta')?.payload?.forked_from_id;
+  if (typeof id !== 'string' || id === '') return undefined;
+
+  const file = codexRollout(id);
+  const origin = file === undefined ? { unreadable: 1 } : transcript(file);
+  if (origin.unreadable > 0) {
+    tally.gaps.unreadable_transcripts += 1;
+    return null;
+  }
+  return new Set(origin.entries
+    .filter((entry) => entry.type === 'event_msg' && entry.payload?.type === 'token_count')
+    .map((entry) => entry.payload.info?.total_token_usage)
+    .filter((total) => complete(total, CODEX_READ))
+    .map(key));
+}
+
 /**
  * What one Codex event says its call used, measured against the running total
  * before it: `undefined` where the event is the one before written down again,
- * and `null` where what it used cannot be known.
+ * and `null` where what it used cannot be known. The first has nothing before
+ * it, and its running total can hold what a parent spent before this rollout
+ * began, so its own figure is what it used. An own figure of nothing in every
+ * field is a note of where the running total stands, not a call: wherever else
+ * Codex writes one, the running total does not move (tech notes, section 3).
  */
 function spent(running, total, info) {
-  if (running === undefined) return kindsOf(total);
+  if (running === undefined) {
+    const own = info.last_token_usage;
+    if (complete(own, CODEX_READ) && CODEX_FIELDS.every((field) => number(own[field]) === 0)) return undefined;
+    return perCall(info);
+  }
 
   const moved = total.total_tokens - running.total_tokens;
   if (moved === 0) return undefined;
