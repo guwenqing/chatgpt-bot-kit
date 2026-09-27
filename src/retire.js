@@ -9,7 +9,10 @@
 // What goes is what the kit made for it: its tabs, closed one at a time by
 // their own handles; its Orca project, after the tabs and never before; its
 // start-prompt files beside the bots folder; and, for a bot, the skill links
-// the kit made in its folder. A tab the book does not name is the user's, so a
+// the kit made in its folder. A prompt file that cannot be removed, as under a
+// harness's sandbox that may not write beside the bots folder, does not stop a
+// retire halfway: nothing reads it once its session is gone, so the retire
+// finishes and names it, with how to remove it (#393). A tab the book does not name is the user's, so a
 // bot whose project holds one is not retired until they have dealt with it.
 //
 // Closing a tab here ends the conversation in it on purpose, so unlike a
@@ -31,7 +34,8 @@ import { promptPath, sessionsOf } from './up.js';
 export const retiredDir = (bots) => path.join(bots, 'retired');
 
 /**
- * Retire the session `session` of the bot `bot`. Returns `{ bot, session, closed }`.
+ * Retire the session `session` of the bot `bot`. Returns `{ bot, session,
+ * closed }`, and `promptsLeft` when its prompt file could not be removed.
  */
 export async function retireSession(bots, { bot, session }) {
   const home = fleetMember(bots, bot, 'retire', session);
@@ -47,15 +51,16 @@ export async function retireSession(bots, { bot, session }) {
     delete book.sessions[session];
     book.retired = [...(Array.isArray(book.retired) ? book.retired : []), { name: session, ...entry, retired: at }];
   });
-  rmSync(promptPath(bots, bot, session), { force: true });
+  const left = removePrompts([promptPath(bots, bot, session)]);
 
-  return { bot, session, closed };
+  return { bot, session, closed, ...left };
 }
 
 /**
  * Retire the bot `bot`. Returns `{ bot, closed, project, windowReloaded, moved }`:
  * the tabs it closed, the Orca project it took away (if it had one), whether
- * Orca's window was reloaded after that, and where the bot is now.
+ * Orca's window was reloaded after that, and where the bot is now; and
+ * `promptsLeft` when a prompt file could not be removed.
  * When Orca does not confirm the project gone, it returns `{ bot, closed,
  * project, trouble }` instead, and the bot is left where it was.
  */
@@ -103,12 +108,28 @@ export async function retireBot(bots, { bot }) {
     windowReloaded = reloadWindow();
   }
 
-  for (const name of new Set([...known.sessions, ...booked].map((session) => session.name))) {
-    rmSync(promptPath(bots, bot, name), { force: true });
-  }
+  const names = new Set([...known.sessions, ...booked].map((session) => session.name));
+  const left = removePrompts([...names].map((name) => promptPath(bots, bot, name)));
   unlinkSkills(home);
   mkdirSync(retiredDir(bots), { recursive: true });
   renameSync(botDir(bots, bot), moved);
 
-  return { bot, closed, ...(project === undefined ? {} : { project: project.id, windowReloaded }), moved };
+  return { bot, closed, ...(project === undefined ? {} : { project: project.id, windowReloaded }), moved, ...left };
+}
+
+/**
+ * Remove start-prompt files, and say which could not be: `{ promptsLeft: [{
+ * file, reason }] }`, or nothing when every one went. One that is not there is
+ * nothing to remove.
+ */
+function removePrompts(files) {
+  const promptsLeft = files.flatMap((file) => {
+    try {
+      rmSync(file, { force: true });
+      return [];
+    } catch (error) {
+      return [{ file, reason: error.message }];
+    }
+  });
+  return promptsLeft.length === 0 ? {} : { promptsLeft };
 }

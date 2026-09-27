@@ -535,6 +535,11 @@ const commands = {
   async retire(bots, values) {
     refuseWhenOrcaIsDown();
     const closedLines = (closed) => closed.map((tab) => `closed     ${tab.bot} ${tab.name}  tab ${tab.tabId}  terminal ${tab.terminal}`);
+    // What it could not remove, and how to: nothing reads these files now (#393).
+    const leftLines = (left = []) => left.flatMap(({ file, reason }) => [
+      `left       ${file}: it could not be removed (${reason}). Nothing reads it now.`,
+      `           Remove it with:  rm ${shellWord(file)}`,
+    ]);
 
     if (values.session !== undefined) {
       const retired = await retireSession(bots, { bot: values.bot, session: values.session });
@@ -543,6 +548,7 @@ const commands = {
         lines: [
           ...closedLines(retired.closed),
           `retired    ${retired.bot} ${retired.session}: off ${path.join('bots', retired.bot, 'bot.yaml')}, and its conversations kept in the book under retired`,
+          ...leftLines(retired.promptsLeft),
         ],
       };
     }
@@ -571,6 +577,7 @@ const commands = {
           retired.windowReloaded ? "reloaded   Orca's window, so its sidebar no longer shows the project" : RELOAD_LINE,
         ]),
         `retired    ${retired.bot}: moved to ${path.relative(bots, retired.moved)}, with its book, charter and memory`,
+        ...leftLines(retired.promptsLeft),
       ],
     };
   },
