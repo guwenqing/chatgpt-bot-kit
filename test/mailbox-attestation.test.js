@@ -29,9 +29,10 @@
 // attestation, which the kit must not try.
 
 import assert from 'node:assert/strict';
-import { chmod, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import test from 'node:test';
-import { parse, stringify } from 'yaml';
+import { stringify } from 'yaml';
 
 import {
   assertOrcaCallsAllowed,
@@ -506,45 +507,87 @@ test('#317: session mailbox in the session\'s own tab, with one in the book, bin
   assert.deepEqual(orcaCallsOf(since, 'orchestration run-create'), [], `nothing asked for one, got: ${shown(since)}`);
 });
 
-test('#317: two session mailbox runs at the same moment leave the session with the mailbox written first, bound to its tab', async (t) => {
-  // The step reads the book, asks Orca for a Run and writes it down, and the
-  // Orca call is made outside the book's lock, where nothing slow happens.
-  // What must not happen is the later writer putting its Run over the one
-  // already in the book: a session whose mailbox is replaced no longer reads
-  // the mailbox the fleet has been writing to, and a Run cannot be deleted.
-  // Both run in the session's own tab, and one terminal holds one Run, so the
-  // one the book keeps still has to end up bound there. (This race was `up`'s
-  // before #317; session-address.test.js says where it went.)
-  //
-  // The overlap is arranged rather than hoped for: the fake runs the second
-  // to completion in the middle of the first one's `run-create`.
-  const box = await createSandbox(t);
-  const { bots, coder } = await coderWithNoMailbox(box);
-  const runsBefore = (await box.orca.runs()).length;
+/**
+ * Start a second `obk session mailbox` for coder/daily, as the tab `in`, in the
+ * middle of the next `command` call the step under test makes: after the book
+ * is moved, when `move` gives a shell command for that.
+ *
+ * Steps for one session take turns (#321), so a second step run to the end
+ * inside the first one's Orca call would wait for the very step it is stuck
+ * in. The fake's child starts it without waiting for it, as another tab's shell
+ * does, and lets the first step's call be answered when the second has
+ * finished or two seconds have passed, whichever is first: long enough for a
+ * step nothing holds back to do all its work in the middle of the first.
+ *
+ * `finished()` waits for the second step to end and gives its exit code and
+ * what it printed.
+ */
+async function stepStartedDuring(box, bots, command, { in: terminal, move }) {
+  const dir = path.join(box.root, 'other-step');
+  await mkdir(dir, { recursive: true });
+  const out = path.join(dir, 'out');
+  const status = path.join(dir, 'status');
+  const step = [box.cli, 'session', 'mailbox', '--bots', bots, '--bot', 'coder', '--session', 'daily'].map(shellWord).join(' ');
+  const detached = `( ${step} > ${shellWord(out)} 2>&1; echo $? > ${shellWord(`${status}.part`)}; mv ${shellWord(`${status}.part`)} ${shellWord(status)} ) > /dev/null 2>&1 < /dev/null &`;
+  const wait = `i=0; while [ ! -f ${shellWord(status)} ] && [ $i -lt 20 ]; do sleep 0.1; i=$((i+1)); done`;
   await box.orca.set({
     runDuring: {
-      command: 'orchestration run-create',
-      on: orcaCallsOf(await box.orca.calls(), 'orchestration run-create').length + 1,
-      // The second one, and then the book as it left it: what the first must not undo.
-      argv: [
-        '/bin/sh', '-c',
-        `${shellWord(box.cli)} session mailbox --bots ${shellWord(bots)} --bot coder --session daily > /dev/null && cat ${shellWord(bookOf(bots, 'coder'))}`,
-      ],
-      env: { ORCA_TERMINAL_HANDLE: coder.handle, ORCA_TAB_ID: coder.tabId },
+      command,
+      on: orcaCallsOf(await box.orca.calls(), command).length + 1,
+      // The move on its own first: `a && b &` would put the whole list in the
+      // background, and the shell running it would hold the fake's output open
+      // until the second step ended.
+      argv: ['/bin/sh', '-c', `${move ?? ':'} || exit 3; ${detached} ${wait}`],
+      env: { ORCA_TERMINAL_HANDLE: terminal.handle, ORCA_TAB_ID: terminal.tabId },
     },
   });
 
-  const first = await obkFrom(box, coder, MAILBOX);
+  return {
+    async finished() {
+      const ran = await box.orca.ranDuring();
+      assert.equal(ran.length, 1, `the second step should have been started in the middle of the first, got: ${JSON.stringify(ran)}`);
+      assert.equal(ran[0].status, 0, `and what started it should have worked: ${ran[0].stdout}${ran[0].stderr}`);
+      const until = Date.now() + 90_000;
+      for (;;) {
+        try {
+          const code = Number((await readFile(status, 'utf8')).trim());
+          return { code, output: await readFile(out, 'utf8') };
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+        }
+        if (Date.now() > until) assert.fail('the second step never finished');
+        await new Promise((resolve) => { setTimeout(resolve, 100); });
+      }
+    },
+  };
+}
 
-  assert.equal(first.code, 0, first.stderr);
-  const ran = await box.orca.ranDuring();
-  assert.equal(ran.length, 1, `the second should have gone through the middle of the first, got: ${JSON.stringify(ran)}`);
-  assert.equal(ran[0].status, 0, `and it should not have failed: ${ran[0].stderr}`);
-  const wonIt = (parse(ran[0].stdout) ?? {}).sessions?.daily?.mailbox;
-  assert.ok(typeof wonIt === 'string', `the second should have written a mailbox, got: ${ran[0].stdout}`);
-  assert.equal((await sessionIn(bots, 'coder', 'daily')).mailbox, wonIt, 'the book keeps the mailbox written first');
-  assert.equal((await box.orca.runs()).length, runsBefore + 2, 'both did ask Orca for one, which is what makes this worth guarding');
+test('#317, #321: two session mailbox runs at the same moment in the session\'s tab leave it one Run, the one the first wrote, bound to its tab', async (t) => {
+  // The step reads the book, asks Orca for a Run and writes it down. Two steps
+  // of one session take turns (#321): the second, started while the first is
+  // asking Orca, waits for it, then reads the book afresh, finds the Run the
+  // first wrote and binds it, rather than making one of its own. A Run cannot
+  // be deleted, and the book's mailbox is never replaced. Both run in the
+  // session's own tab, and neither acts as any other. (This race was `up`'s
+  // before #317; session-address.test.js says where it went.)
+  const box = await createSandbox(t);
+  const { bots, coder } = await coderWithNoMailbox(box);
+  const before = new Set((await box.orca.runs()).map((run) => run.id));
+  const from = (await box.orca.calls()).length;
+  const other = await stepStartedDuring(box, bots, 'orchestration run-create', { in: coder });
+
+  const first = await obkFrom(box, coder, MAILBOX);
+  const second = await other.finished();
+
+  assert.equal(first.code, 0, `the first step works: ${first.stdout}${first.stderr}`);
+  assert.equal(second.code, 0, `and so does the second, once it has its turn: ${second.output}`);
+  const made = (await box.orca.runs()).filter((run) => !before.has(run.id));
+  assert.equal(made.length, 1, `one Run between them, got: ${JSON.stringify(made)}`);
+  assert.equal((await sessionIn(bots, 'coder', 'daily')).mailbox, made[0].id, 'and the book keeps it');
   await assertBoundToItsOwnTab(box, bots, 'coder');
+  const since = await runCallsSince(box, from);
+  const asOthers = since.filter((call) => orcaFlag(call, '--from') !== undefined && orcaFlag(call, '--from') !== call.caller);
+  assert.deepEqual(asOthers, [], `neither step names a terminal but its own, got: ${shown(since)}`);
 });
 
 test('#317: when Orca will not make the mailbox, session mailbox fails in Orca\'s words, says none was made, and writes none down', async (t) => {
@@ -788,43 +831,33 @@ const moveTab = (bots, from, to) => [process.execPath, '-e', [
   'fs.writeFileSync(file, now);',
 ].join(' ')].map(shellWord).join(' ');
 
-test('#317 review: a session mailbox that made a Run while the book moved to another tab writes nothing, names that Run, and leaves the book\'s Run bound where it is', async (t) => {
+test('#317 review, #321: a session mailbox that made a Run while the book moved to another tab writes nothing and names that Run, and the book\'s Run ends up bound to the tab it names', async (t) => {
   // The review's reproduced race. Tab A's step finds the book naming A and no
-  // mailbox, and asks Orca for a Run. Meanwhile another run of `up` writes its
-  // own tab B into the book, and B's step makes its Run and writes it first.
-  // When A comes to write, the book no longer names A. A writes nothing and
-  // binds nothing more, rather than take B's Run for itself: the book's Run
-  // stays bound to the tab the book names, and A says which Run of its own it
-  // left unused.
+  // mailbox, and asks Orca for a Run. Meanwhile the book moves to B, and B's
+  // step starts. It waits for A's (#321), so when A comes to write, the book
+  // no longer names A: A writes nothing and binds nothing more, and says which
+  // Run of its own it left unused. Then B's step, on the book as it is, gives
+  // the session a Run bound to B, the tab the book names.
   //
-  // The overlap is arranged: the fake moves the book to B and runs B's step,
-  // as B, in the middle of A's `run-create`.
+  // The overlap is arranged: the fake moves the book to B and starts B's step,
+  // as B, in the middle of A's `run-create`, without waiting for it.
   const box = await createSandbox(t);
   const { bots, coder: a } = await coderWithNoMailbox(box);
   const b = await anotherTab(box, bots, 'coder');
   const before = new Set((await box.orca.runs()).map((run) => run.id));
-  const stepOfB = [box.cli, 'session', 'mailbox', '--bots', bots, '--bot', 'coder', '--session', 'daily'].map(shellWord).join(' ');
-  await box.orca.set({
-    runDuring: {
-      command: 'orchestration run-create',
-      on: orcaCallsOf(await box.orca.calls(), 'orchestration run-create').length + 1,
-      argv: ['/bin/sh', '-c', `${moveTab(bots, a.tabId, b.tabId)} && ${stepOfB}`],
-      env: { ORCA_TERMINAL_HANDLE: b.handle, ORCA_TAB_ID: b.tabId },
-    },
-  });
+  const other = await stepStartedDuring(box, bots, 'orchestration run-create', { in: b, move: moveTab(bots, a.tabId, b.tabId) });
   const from = (await box.orca.calls()).length;
 
   const result = await obkFrom(box, a, MAILBOX);
+  const second = await other.finished();
 
-  const ran = await box.orca.ranDuring();
-  assert.equal(ran.length, 1, `the book should have moved in the middle of A's step, got: ${JSON.stringify(ran)}`);
-  assert.equal(ran[0].status, 0, `and B's step should have worked: ${ran[0].stdout}${ran[0].stderr}`);
+  assert.equal(second.code, 0, `B's step, in the tab the book names, works: ${second.output}`);
   const daily = await sessionIn(bots, 'coder', 'daily');
   assert.equal(daily.tab, b.tabId, 'the book names B, as the other run left it');
   const runs = await box.orca.runs();
   const kept = runs.find((run) => run.id === daily.mailbox);
   assert.ok(kept !== undefined && !before.has(kept.id), `the book holds the Run B's step made: ${JSON.stringify(daily)}`);
-  assert.equal(kept.coordinator_handle, b.handle, 'and it is still bound to B, the tab the book names');
+  assert.equal(kept.coordinator_handle, b.handle, 'and it is bound to B, the tab the book names');
   const unused = runs.filter((run) => !before.has(run.id) && run.id !== kept.id);
   assert.equal(unused.length, 1, `A made one Run of its own, got: ${JSON.stringify(unused)}`);
   assertFailedPlainly(result, 'coder/daily', unused[0].id);
