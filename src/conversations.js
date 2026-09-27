@@ -50,8 +50,15 @@ export function conversationsIn(harness, home, since) {
  */
 export function hasConversation(harness, home, id) {
   if (harness === 'claude') return existsSync(claudeTranscript(home, id));
-  return rollouts(codexDir()).some((file) => path.basename(file).endsWith(`-${id}.jsonl`));
+  return codexRollout(id) !== undefined;
 }
+
+/**
+ * Where Codex keeps the conversation `id`, whatever folder it ran in, found by
+ * the file name Codex makes from the id; `undefined` when it has none.
+ */
+export const codexRollout = (id) =>
+  rollouts(codexDir()).find((file) => path.basename(file).endsWith(`-${id}.jsonl`));
 
 /**
  * Where Claude Code keeps the conversation `id` of this bot home, whether or
