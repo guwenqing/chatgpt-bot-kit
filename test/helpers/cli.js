@@ -46,12 +46,13 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parse } from 'yaml';
 
+import { answerScript, osascriptCalls, osascriptScript } from './fake-osascript.js';
+
 export const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 /** This checkout's own CLI, by its full path: what the tests run, whatever `obk` is on PATH. */
 export const cliEntry = path.join(repoRoot, 'src', 'cli.js');
 const fakeOrcaEntry = fileURLToPath(new URL('./fake-orca.js', import.meta.url));
 const fakePsEntry = fileURLToPath(new URL('./fake-ps.js', import.meta.url));
-const fakeOsascriptEntry = fileURLToPath(new URL('./fake-osascript.js', import.meta.url));
 const asPlatformEntry = fileURLToPath(new URL('./as-platform.js', import.meta.url));
 
 /** Where the fake Orca keeps its world, inside a sandbox. */
@@ -201,16 +202,10 @@ export async function createSandbox(t) {
   // The fake osascript (#343): the kit reloads Orca's window through it, and
   // the real one would reach System Events and the real Orca's menu. Not called
   // `osascript`, for the same reason as the fake ps; only OBK_OSASCRIPT names it.
+  // A shell script, unlike the other fakes, so that it has written the call
+  // down before the kit's 5 s are up however busy the machine (#381).
   const fakeOsascript = path.join(bin, 'fake-osascript');
-  await writeFile(fakeOsascript, [
-    '#!/usr/bin/env node',
-    `process.env.OBK_FAKE_ORCA_DIR = ${JSON.stringify(fakeDir)};`,
-    `import(${JSON.stringify(pathToFileURL(fakeOsascriptEntry).href)}).then((osascript) => osascript.runOsascript()).catch((error) => {`,
-    "  process.stderr.write(`fake osascript: ${error && error.stack || error}\\n`);",
-    '  process.exit(70);',
-    '});',
-    '',
-  ].join('\n'));
+  await writeFile(fakeOsascript, osascriptScript(fakeDir));
   await chmod(fakeOsascript, 0o755);
 
   // The suite is often run from an Orca tab of its own, and Orca puts that
@@ -235,13 +230,10 @@ export async function createSandbox(t) {
 
   const readState = async () => JSON.parse(await readFile(stateFile, 'utf8'));
 
-  /** One of the fake osascript's logs, `{ args }` per line, oldest first. */
+  /** One of the fake osascript's logs, `{ args }` per call, oldest first. */
   const osascriptLog = async (name) => {
     try {
-      return (await readFile(path.join(fakeDir, name), 'utf8'))
-        .split('\n')
-        .filter((line) => line !== '')
-        .map((line) => JSON.parse(line));
+      return osascriptCalls(await readFile(path.join(fakeDir, name), 'utf8'));
     } catch (error) {
       if (error.code === 'ENOENT') return [];
       throw error;
@@ -324,7 +316,7 @@ export async function createSandbox(t) {
       cli: fakeOsascript,
       calls: () => osascriptLog('osascript.log'),
       answered: () => osascriptLog('osascript-answered.log'),
-      answer: (told) => writeFile(path.join(fakeDir, 'osascript.json'), `${JSON.stringify(told)}\n`),
+      answer: (told) => writeFile(path.join(fakeDir, 'osascript.answer'), answerScript(told)),
     },
     /** The fake Orca: what it is, what it knows, and what it was asked. */
     orca: {
@@ -460,7 +452,7 @@ export function asPlatform(box, platform) {
 }
 
 /** How long a fake runtime client told to hang keeps its process alive: far past any wait the kit should make. */
-export const CLIENT_HANG_MS = 30_000;
+const CLIENT_HANG_MS = 30_000;
 
 /**
  * Lay out a fake Orca app in `box`, the way the installed one is laid out, and
@@ -501,14 +493,16 @@ export const CLIENT_HANG_MS = 30_000;
  *   'project-not-found'  `call` rejects with `Project not found`, whatever it was given
  *   'never-settles'      `call` never settles, and nothing else holds the process
  *   'hangs'              `call` never settles, and the process stays up for
- *                        CLIENT_HANG_MS before it ends by itself
+ *                        `hangMs` (CLIENT_HANG_MS unless told) before it ends
+ *                        by itself, and writes down that it did, which
+ *                        `ended()` reads back: one the kit killed never does
  *
  * The client writes one line per load and per call to a log in the fake's
  * world, which `loads()` and `calls()` read back. A load carries the variables
  * of its environment the kit is meant to set or leave out; a call, what its
  * client was made with, which `clients()` reads back.
  */
-export async function orcaApp(box, { client = 'answers', executable = true } = {}) {
+export async function orcaApp(box, { client = 'answers', executable = true, hangMs = CLIENT_HANG_MS } = {}) {
   const contents = path.join(box.root, 'Orca.app', 'Contents');
   const cli = path.join(contents, 'Resources', 'bin', 'orca');
   const binary = path.join(contents, 'MacOS', 'Orca');
@@ -573,7 +567,7 @@ export async function orcaApp(box, { client = 'answers', executable = true } = {
       "    if (MODE === 'method-not-found') return Promise.reject(refusal(`Unknown method: ${method}`, 'method_not_found'));",
       "    if (MODE === 'project-not-found') return Promise.reject(refusal('Project not found'));",
       "    if (MODE === 'never-settles') return new Promise(() => {});",
-      `    if (MODE === 'hangs') { setTimeout(() => {}, ${CLIENT_HANG_MS}); return new Promise(() => {}); }`,
+      `    if (MODE === 'hangs') { setTimeout(() => note({ event: 'ended' }), ${hangMs}); return new Promise(() => {}); }`,
       "    if (method === 'terminal.inspectProcess') return inspect(params);",
       "    if (method !== 'project.update') return Promise.reject(refusal(`Unknown method: ${method}`, 'method_not_found'));",
       "    const setups = JSON.parse(readFileSync(STATE, 'utf8')).setups || [];",
@@ -610,6 +604,8 @@ export async function orcaApp(box, { client = 'answers', executable = true } = {
     loads: () => entries('load'),
     /** What the client of each call was made with, in order: { profileIsUndefined, timeoutMs }. */
     clients: async () => (await entries('call')).map(({ profileIsUndefined, timeoutMs }) => ({ profileIsUndefined, timeoutMs })),
+    /** Every time a client told to hang ran its hang out and ended by itself. */
+    ended: () => entries('ended'),
   };
 }
 

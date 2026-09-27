@@ -35,7 +35,6 @@ import {
   asPlatform,
   bookIn,
   botHomeOf,
-  CLIENT_HANG_MS,
   createSandbox,
   orcaApp,
   orcaCallsOf,
@@ -454,18 +453,17 @@ async function upOfANewBot(t, app, json) {
   await newBot(box);
   const loaded = fake === null ? 0 : (await fake.loads()).length;
   const called = fake === null ? 0 : (await fake.calls()).length;
+  const ended = fake === null ? 0 : (await fake.ended()).length;
 
-  const started = Date.now();
   const result = await box.run(['up', '--bots', 'bots', ...json]);
-  const took = Date.now() - started;
 
   return {
     box,
     result,
-    took,
     output: { code: result.code, stdout: withoutTheSandbox(box, result.stdout), stderr: withoutTheSandbox(box, result.stderr) },
     calls: fake === null ? null : (await fake.calls()).slice(called),
     loads: fake === null ? null : (await fake.loads()).slice(loaded),
+    ended: fake === null ? null : (await fake.ended()).slice(ended),
   };
 }
 
@@ -497,18 +495,19 @@ for (const fallback of FALLBACKS) {
 }
 
 test('W7 a client that hangs holds up no more than about 5 seconds, and up still says what it says when the call works', async (t) => {
+  // The fake hangs for 8 s, then ends by itself and writes down that it did:
+  // an up that waited on it that long finds the note there when it is done.
+  // Not a timing of up, which a loaded machine stretches (#381): load can only
+  // start the client later, and so end its hang later still.
   const works = await upOfANewBot(t, {}, []);
 
-  const hung = await upOfANewBot(t, { client: 'hangs' }, []);
+  const hung = await upOfANewBot(t, { client: 'hangs', hangMs: 8000 }, []);
 
   assert.equal(hung.result.code, 0, hung.result.stderr);
   assert.deepEqual(hung.calls, [touch((await setupOf(hung.box, 'api-bot')).projectId)], 'the call was made, once');
   assert.equal(reloadLines(hung.result), 1, `got:\n${hung.result.stdout}${hung.result.stderr}`);
   assert.deepEqual(hung.output, works.output);
-  assert.ok(
-    hung.took - works.took < 8000,
-    `a client that hangs for ${CLIENT_HANG_MS} ms held the run ${hung.took} ms against ${works.took} ms for a working one`,
-  );
+  assert.deepEqual(hung.ended, [], 'up stopped waiting on the client before its 8 s were up');
 });
 
 const exists = (file) => stat(file).then(() => true, () => false);

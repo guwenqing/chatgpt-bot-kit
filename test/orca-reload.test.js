@@ -36,7 +36,7 @@ import {
   repoRoot,
   sessionIn,
 } from './helpers/cli.js';
-import { OSASCRIPT, OSASCRIPT_HANG_MS } from './helpers/fake-osascript.js';
+import { OSASCRIPT } from './helpers/fake-osascript.js';
 
 /** The line the kit prints after a removal when it could not reload the window itself. */
 const RELOAD = 'If Orca\'s sidebar does not show it, reload the window with Cmd+Shift+R.';
@@ -142,6 +142,7 @@ test('R4 anything but exactly reloaded on a clean exit is false, tried once and 
     const box = await aMac(t, told);
     assert.equal((await reloadIn(box)).answer, false, name);
     assert.equal((await box.osascript.calls()).length, 1, `${name}: tried once`);
+    assert.equal((await box.osascript.answered()).length, 1, `${name}: and answered as told, not killed first`);
   }
 });
 
@@ -314,6 +315,7 @@ for (const { name, arrange, tries } of CANNOT) {
     assert.ok(result.stdout.split('\n').includes(`removed    Orca project ${id}`), `got:\n${said(result)}`);
     assert.ok(await exists(path.join(retired, 'bot.yaml')), 'the bot moved to retired/ all the same');
     assert.equal((await box.osascript.calls()).length, tries, 'tried at most once');
+    assert.equal((await box.osascript.answered()).length, tries, 'and answered as told, not killed first');
   });
 
   test(`X5 when ${name}, retire --json answers windowReloaded: false beside project`, async (t) => {
@@ -328,21 +330,23 @@ for (const { name, arrange, tries } of CANNOT) {
     assert.equal(answer.project, id);
     assert.equal(answer.windowReloaded, false);
     assert.equal((await box.osascript.calls()).length, tries, 'tried at most once');
+    assert.equal((await box.osascript.answered()).length, tries, 'and answered as told, not killed first');
   });
 }
 
 test('X6 an osascript that never answers holds retire up no more than the 5 s wait, and the reload line is printed', async (t) => {
-  const { box } = await aBotToRetire(t, { ...OSASCRIPT.reloaded, delayMs: OSASCRIPT_HANG_MS });
-  const started = Date.now();
+  // It would answer reloaded, but only after 10 s: a retire that waited that
+  // long would hear it. Not a timing of retire, which a loaded machine
+  // stretches (#381).
+  const { box } = await aBotToRetire(t, { ...OSASCRIPT.reloaded, delayMs: 10_000 });
 
   const result = await retire(box, '--bot', 'api-bot');
-  const took = Date.now() - started;
 
   assert.equal(result.code, 0, said(result));
   assert.equal(reloadLines(result), 1, `got:\n${said(result)}`);
   assert.equal(reloadedLines(result), 0, `got:\n${said(result)}`);
   assert.equal((await box.osascript.calls()).length, 1, 'tried once');
-  assert.ok(took < 15_000, `an osascript that hangs for ${OSASCRIPT_HANG_MS} ms held retire ${took} ms`);
+  assert.deepEqual(await box.osascript.answered(), [], 'retire stopped waiting before the answer came at 10 s');
 });
 
 test('X7 retire of a bot that had no Orca project tries no reload, and answers no windowReloaded', async (t) => {

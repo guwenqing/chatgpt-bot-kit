@@ -104,13 +104,13 @@ const sandboxPs = (box) => box.orca.set({ ps: 'not-permitted' });
 
 /**
  * The fleet up, then run from Codex's sandbox: `ps` does not start, and Orca's
- * app with its runtime client (`client`, see `orcaApp`) is the Orca the kit
+ * app with its runtime client (`options`, see `orcaApp`) is the Orca the kit
  * runs.
  */
-async function sandboxedFleet(t, { client } = {}) {
+async function sandboxedFleet(t, options = {}) {
   const box = await createSandbox(t);
   const bots = await fleetIn(box);
-  const app = await orcaApp(box, client === undefined ? {} : { client });
+  const app = await orcaApp(box, options);
   await sandboxPs(box);
   return { box, bots, app };
 }
@@ -456,23 +456,19 @@ test('F6 with the Orca executable missing from the app, the kit cannot tell: not
 
 test('F6 a client that hangs holds the send up a few seconds at most, and the kit cannot tell', async (t) => {
   // The window call's client is given 3 s; this one likewise. The fake hangs
-  // for CLIENT_HANG_MS, far past any wait the kit should make.
-  const timed = async (client) => {
-    const { box } = await sandboxedFleet(t, { client });
-    const started = Date.now();
-    const answer = await send(box);
-    return { box, answer, took: Date.now() - started };
-  };
-  const works = await timed('answers');
-  assert.equal(works.answer.nudged, true, `the premise: a working client gets the nudge through, got: ${JSON.stringify(works.answer)}`);
+  // for a few seconds, 8, then ends by itself and writes down that it did: a
+  // kit that waited on it that long finds the note there when the send is
+  // done. Not a timing of the send, which a loaded machine stretches (#381):
+  // load can only start the client later, and so end its hang later still.
+  const works = await sandboxedFleet(t);
+  const worked = await send(works.box);
+  assert.equal(worked.nudged, true, `the premise: a working client gets the nudge through, got: ${JSON.stringify(worked)}`);
 
-  const hung = await timed('hangs');
+  const hung = await sandboxedFleet(t, { client: 'hangs', hangMs: 8000 });
+  const answer = await send(hung.box);
 
-  await assertCouldNotTell(hung.box, hung.answer, 'a hung client');
-  assert.ok(
-    hung.took - works.took < 8000,
-    `a client that hangs held the send ${hung.took} ms against ${works.took} ms for a working one`,
-  );
+  await assertCouldNotTell(hung.box, answer, 'a hung client');
+  assert.deepEqual(await hung.app.ended(), [], 'the kit stopped waiting on the client before its 8 s were up');
 });
 
 // ---------------------------------------------------------------------------
