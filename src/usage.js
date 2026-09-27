@@ -220,9 +220,11 @@ function counted(one, window) {
  * A call is one `requestId` and `message.id` across the main transcript and its
  * subagents' files together, since the same call can be in more than one of
  * them, and its records are taken in the order of their times. Copies written
- * at the very same moment, in different files, are taken smallest first, since
- * a call's figures only grow: the largest is the latest. It is a subagent's
- * when the main transcript has no record of it.
+ * at the very same moment are taken smallest first, since a call's figures only
+ * grow: the largest is the latest. One with a figure missing may be the latest
+ * of them, so it is taken as that, and what it hides is said rather than
+ * measured past it. It is a subagent's when the main transcript has no record
+ * of it.
  *
  * A record with no time, or with a figure missing, is left out whole and said to
  * be; the call it belongs to is counted from its other records, if it has any.
@@ -257,7 +259,7 @@ function fromClaude(sources, window, tally) {
   }
 
   for (const records of byCall.values()) {
-    records.sort((one, other) => one.when - other.when || size(one.entry) - size(other.entry));
+    records.sort((one, other) => one.when - other.when || one.broken - other.broken || size(one.entry) - size(other.entry));
     const made = records[0].when;
     const atEnd = records.findLast(({ when, broken }) => !broken && when < window.to);
     if (atEnd === undefined) continue;

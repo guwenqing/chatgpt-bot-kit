@@ -687,6 +687,59 @@ test('S4 copies of one call in the main transcript and a subagent file at the ve
   }
 });
 
+test('S4 a broken copy at the very same moment as a whole one may be the last written, so a window that opens after them counts none of the call and names it', async (t) => {
+  // One call: a whole copy at 09:30 with 10 output, a copy at the same 09:30
+  // with its output missing, and a whole copy at 11:00 with 30. Which of the
+  // two 09:30 copies was written last cannot be told from the time, so the
+  // broken one is taken as the last written before 10:00 (U14's rule): from
+  // 10:00 the 20 the call grew cannot be measured, is not counted, and is
+  // named once. Four placements, one session each:
+  //   one:   main transcript, whole copy first, broken second
+  //   two:   main transcript, broken copy first, whole second
+  //   three: whole copy in the main transcript, broken in a subagent file
+  //   four:  broken copy in the main transcript, whole in a subagent file
+  const sessions = ['one', 'two', 'three', 'four'];
+  const box = await createSandbox(t);
+  const { bots, home } = await fleet(box, { harness: 'claude', sessions });
+  const copies = (id) => ({
+    whole: claudeCall({ when: at(9, 30), request: `req-${id}`, message: `msg-${id}`, input: 2, cacheRead: 500, output: 10 }),
+    broken: claudeCallAnd(
+      { when: at(9, 30), request: `req-${id}`, message: `msg-${id}`, input: 2, cacheRead: 500 },
+      { output_tokens: undefined },
+    ),
+    last: claudeCall({ when: at(11, 0), request: `req-${id}`, message: `msg-${id}`, input: 2, cacheRead: 500, output: 30 }),
+  });
+  const placed = {
+    one: ({ whole, broken, last }) => ({ main: [whole, broken, last], subagent: [] }),
+    two: ({ whole, broken, last }) => ({ main: [broken, whole, last], subagent: [] }),
+    three: ({ whole, broken, last }) => ({ main: [whole, last], subagent: [broken] }),
+    four: ({ whole, broken, last }) => ({ main: [broken, last], subagent: [whole] }),
+  };
+  for (const name of sessions) {
+    const id = `conv-${name}`;
+    const { main, subagent } = placed[name](copies(id));
+    await plant(box, 'claude', home, { id, started: at(9), lines: main });
+    if (subagent.length > 0) await plantSubagent(box, home, { parent: id, agent: 'a1', started: at(9, 29), lines: subagent });
+  }
+  await bookSays(bots, 'api-bot', Object.fromEntries(sessions.map((name) => [name, ran(`conv-${name}`)])));
+
+  const after = entryOf(await usage(box, '--since', at(10)), 'api-bot');
+  const whole = entryOf(await usage(box), 'api-bot');
+
+  for (const name of sessions) {
+    const late = sessionOf(after, name);
+    assert.deepEqual(conversationsOf(late), [], `${name}: from 10:00 no row, not the 20 grown since the whole 09:30 copy`);
+    assert.deepEqual(leftOutOf(late), leftOut({ records_without_numbers: 1 }), `${name}: and the call is named once`);
+
+    const all = sessionOf(whole, name);
+    assert.deepEqual(leftOutOf(all), leftOut({ records_without_numbers: 1 }), `${name}: with no window, the broken copy is named`);
+    const conversation = conversationOf(conversationsOf(all), `conv-${name}`);
+    assert.equal(conversation.calls, 1, `${name}: and the call counted once`);
+    assert.equal(tokensOf(conversation).output, 30, `${name}: by its last copy`);
+  }
+  assert.deepEqual(leftOutOf(after, 'unclaimed_not_counted'), NOTHING_LEFT_OUT);
+});
+
 test('S5 --since and --until count a subagent\'s calls by their own time, as the main transcript\'s', async (t) => {
   // Subagent calls at 09:59, 10:00, 10:30 and 11:00, a parent call at 10:15.
   // The window 10:00 to 11:00 is half open: 10:00 and 10:30 are in it.
