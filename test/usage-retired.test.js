@@ -565,3 +565,75 @@ test('R9 the plain report opens a retired block with its name and when it was re
   assert.ok(lines[live + 1].includes('conv-d'), `daily's conversation is under daily, got:\n${lines.join('\n')}`);
   assert.ok(lines[old + 1].includes('conv-o'), `old's conversation is under old, got:\n${lines.join('\n')}`);
 });
+
+// ------------------------------------------------ one conversation, two entries
+//
+// The book can name one conversation in more than one entry: a retired
+// session's conversation resumed under a live one, or two retired entries. Each
+// call is still counted once, in the first block of the answer that names its
+// conversation: the live blocks in bot.yaml order, then the retired ones in the
+// book's order. A later block that names it too does not list it, and is still
+// there with its other conversations.
+
+/** How many calls the answer counted for a bot, over every block and the unclaimed. */
+const callsIn = (entry) => everyCallIn(entry).reduce((sum, one) => sum + one.calls, 0);
+
+test('R10 a conversation both a live session and a retired entry name is counted once, under the live session', async (t) => {
+  // shared made one call. old retired it and daily took it up again; old also
+  // had conv-o, one call of its own.
+  const box = await createSandbox(t);
+  const { bots, home } = await fleet(box);
+  await plantOneCall(box, home, 'shared', at(9, 1), { input: 50, output: 5 });
+  await plantOneCall(box, home, 'conv-o', at(8, 30));
+  await bookSays(bots, 'api-bot', { daily: ran('shared') }, [gone('old', at(9), 'shared', 'conv-o')]);
+
+  const entry = entryOf(await usage(box), 'api-bot');
+
+  const shared = conversationOf(conversationsOf(sessionOf(entry, 'daily')), 'shared');
+  assert.equal(shared.calls, 1);
+  assert.equal(tokensOf(shared).input, 50);
+  assert.deepEqual(idsOf(conversationsOf(sessionOf(entry, 'old'))), ['conv-o'], 'old keeps its block and its other conversation, and not shared');
+  assert.equal(callsIn(entry), 2, `shared's call once and conv-o's, got: ${JSON.stringify(entry.sessions)}`);
+});
+
+test('R10 a conversation two retired entries name is counted once, under the first in the book, whether it is in its history or its session', async (t) => {
+  // zeta has shared in its history and comes first in the book; alpha has it as
+  // its session. Each also has a conversation of its own.
+  const box = await createSandbox(t);
+  const { bots, home } = await fleet(box);
+  for (const id of ['shared', 'conv-z', 'conv-a']) await plantOneCall(box, home, id, at(9, 1));
+  await bookSays(
+    bots,
+    'api-bot',
+    { daily: ran('conv-d') },
+    [gone('zeta', at(10), 'conv-z', 'shared'), gone('alpha', at(11), 'shared', 'conv-a')],
+  );
+
+  const entry = entryOf(await usage(box), 'api-bot');
+
+  assert.deepEqual(idsOf(conversationsOf(sessionOf(entry, 'zeta'))), ['conv-z', 'shared'], 'the first in the book counts it');
+  assert.deepEqual(idsOf(conversationsOf(sessionOf(entry, 'alpha'))), ['conv-a'], 'the second does not');
+  assert.equal(callsIn(entry), 3);
+});
+
+test('R10 with --session, a shared conversation is counted under the first block picked, even when a block not picked names it first', async (t) => {
+  // daily (live) and old (retired) both name shared. Asked for old alone, the
+  // answer counts shared under old rather than drop its call.
+  const box = await createSandbox(t);
+  const { bots, home } = await fleet(box);
+  await plantOneCall(box, home, 'shared', at(9, 1));
+  await plantOneCall(box, home, 'conv-o', at(8, 30));
+  await bookSays(bots, 'api-bot', { daily: ran('shared') }, [gone('old', at(9), 'shared', 'conv-o')]);
+
+  const old = entryOf(await usage(box, '--bot', 'api-bot', '--session', 'old'), 'api-bot');
+  const daily = entryOf(await usage(box, '--bot', 'api-bot', '--session', 'daily'), 'api-bot');
+
+  assert.deepEqual(
+    (old.sessions ?? []).map((block) => ({ name: block.name, ids: idsOf(conversationsOf(block)) })),
+    [{ name: 'old', ids: ['conv-o', 'shared'] }],
+  );
+  assert.deepEqual(
+    (daily.sessions ?? []).map((block) => ({ name: block.name, ids: idsOf(conversationsOf(block)) })),
+    [{ name: 'daily', ids: ['shared'] }],
+  );
+});

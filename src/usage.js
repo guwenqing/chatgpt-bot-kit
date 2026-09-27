@@ -120,11 +120,13 @@ function forBot(bots, name, onlySession, window) {
 
   const claimed = sessionIdsIn(book);
 
+  // Two entries can name the same conversation, one resumed after its session
+  // was retired: it is counted once, in the first block asked for that names it.
+  const taken = new Set();
   const block = (entry) => {
-    const { conversations, gaps } = all(
-      idsIn(entry).filter((id) => onRecord.has(id)).map((id) => onRecord.get(id)),
-      window,
-    );
+    const ids = idsIn(entry).filter((id) => onRecord.has(id) && !taken.has(id));
+    for (const id of ids) taken.add(id);
+    const { conversations, gaps } = all(ids.map((id) => onRecord.get(id)), window);
     return { conversations, not_counted: gaps };
   };
   const sessions = [
