@@ -361,7 +361,7 @@ const CODEX_FIELDS = [
  * A fork begins with the records of the conversation it was forked from, copied
  * in and stamped at the fork's start, or all at one time in a file Codex rebuilt.
  * Those are the origin's calls, counted with the origin: the leading records
- * whose running total is in `copied` are followed and not counted (#376).
+ * that are in `copied`, both figures, are followed and not counted (#376).
  */
 function fromCodex(entries, window, tally, copied) {
   let model;
@@ -394,7 +394,8 @@ function fromCodex(entries, window, tally, copied) {
     if (info === undefined || info === null) continue;
 
     const total = info.total_token_usage;
-    if (copying && complete(total, CODEX_READ) && copied.has(key(total))) {
+    if (copying && complete(total, CODEX_READ) && complete(info.last_token_usage, CODEX_READ)
+      && copied.has(key(info))) {
       running = total;
       continue;
     }
@@ -431,14 +432,20 @@ function fromCodex(entries, window, tally, copied) {
 /** The fields Codex itself writes; it has no cache writes to report. */
 const CODEX_READ = CODEX_FIELDS.filter((field) => field !== 'cache_write_input_tokens').concat('total_tokens');
 
-/** A running total as one value, for telling a copy of one from another. */
-const key = (total) => CODEX_READ.map((field) => total[field]).join('/');
+/**
+ * A usage record as one value, both its figures: a call of the child's own can
+ * bring the running total back to one the origin once had, but not with the same
+ * figure of its own.
+ */
+const key = (info) => [info.total_token_usage, info.last_token_usage]
+  .map((figure) => CODEX_READ.map((field) => figure[field]).join('/')).join('|');
 
 /**
- * The running totals of the conversation a Codex rollout was forked from, which
+ * The usage records of the conversation a Codex rollout was forked from, which
  * it may begin with copies of (tech notes, section 3). `undefined` when it names
- * no origin. When the origin cannot be read, where the copies end cannot be told,
- * so none of the fork is counted: `null`, and said to be.
+ * no origin. When the origin cannot be read whole, a line of it broken or a
+ * figure missing from a record, where the copies end cannot be told, so none of
+ * the fork is counted: `null`, and said to be.
  */
 function originOf(entries, tally) {
   const id = entries.find((entry) => entry.type === 'session_meta')?.payload?.forked_from_id;
@@ -446,15 +453,18 @@ function originOf(entries, tally) {
 
   const file = codexRollout(id);
   const origin = file === undefined ? { unreadable: 1 } : transcript(file);
-  if (origin.unreadable > 0) {
+  // No `info` is a note about rate limits, not a record of usage.
+  const records = origin.unreadable > 0 ? [] : origin.entries
+    .filter((entry) => entry.type === 'event_msg' && entry.payload?.type === 'token_count')
+    .map((entry) => entry.payload.info)
+    .filter((info) => info !== undefined && info !== null);
+  const whole = origin.unreadable === 0 && origin.broken === 0 && records.every((info) =>
+    complete(info.total_token_usage, CODEX_READ) && complete(info.last_token_usage, CODEX_READ));
+  if (!whole) {
     tally.gaps.unreadable_transcripts += 1;
     return null;
   }
-  return new Set(origin.entries
-    .filter((entry) => entry.type === 'event_msg' && entry.payload?.type === 'token_count')
-    .map((entry) => entry.payload.info?.total_token_usage)
-    .filter((total) => complete(total, CODEX_READ))
-    .map(key));
+  return new Set(records.map(key));
 }
 
 /**

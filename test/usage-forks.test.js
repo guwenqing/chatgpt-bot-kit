@@ -134,7 +134,8 @@ const codexTurn = ({ when, model = CODEX_MODEL, effort = 'high' }) => ({
  * Plant a rollout where Codex keeps it, inside the sandbox's home: filed by the
  * day it started, named `rollout-<stamp>-<id>.jsonl`, its first line the
  * `session_meta` with the id, the folder it ran in, its time and whatever else
- * `meta` adds (`source`, `forked_from_id`, `parent_thread_id`).
+ * `meta` adds (`source`, `forked_from_id`, `parent_thread_id`). A line given
+ * as a string is written as the text it is.
  */
 async function plantRollout(box, { id, cwd, started, meta = {}, lines }) {
   const file = path.join(
@@ -143,8 +144,12 @@ async function plantRollout(box, { id, cwd, started, meta = {}, lines }) {
   );
   const first = { timestamp: started, type: 'session_meta', payload: { id, cwd, timestamp: started, ...meta } };
   await mkdir(path.dirname(file), { recursive: true });
-  await writeFile(file, [first, ...lines].map((line) => JSON.stringify(line)).join('\n') + '\n');
-  const last = new Date(Math.max(...[started, ...lines.map((line) => line.timestamp)].map((stamp) => Date.parse(stamp))));
+  await writeFile(
+    file,
+    [first, ...lines].map((line) => (typeof line === 'string' ? line : JSON.stringify(line))).join('\n') + '\n',
+  );
+  const stamps = [started, ...lines.map((line) => line.timestamp)].filter((stamp) => typeof stamp === 'string');
+  const last = new Date(Math.max(...stamps.map((stamp) => Date.parse(stamp))));
   await utimes(file, last, last);
   return file;
 }
@@ -719,6 +724,133 @@ test('F16 a child whose origin is on disk but cannot be read counts nothing and 
 
   assert.deepEqual(idsOf(entry.unclaimed), [], 'not the 95,000 of copies and own calls together');
   assert.deepEqual(leftOutOf(entry, 'unclaimed_not_counted'), leftOut({ unreadable_transcripts: 1 }));
+});
+
+// The review's small origin, in another folder than the bot's: two records,
+// input (own, running total) of (20, 120) and (30, 150). Its child copies both
+// in at 10:00 and then makes one call of its own, (40, 190): 40 in, one call.
+const SMALL_ORIGIN = [
+  { when: at(9), last: { input: 20 }, total: { input: 120 } },
+  { when: at(9, 10), last: { input: 30 }, total: { input: 150 } },
+];
+
+/** Plant the small origin outside the bot's home, its lines as given. */
+async function plantSmallOrigin(box, lines) {
+  const elsewhere = box.path('elsewhere');
+  await mkdir(elsewhere, { recursive: true });
+  return plantRollout(box, { id: PARENT, cwd: elsewhere, started: at(8, 55), meta: OWN_CONVERSATION, lines });
+}
+
+/** Plant the small origin's child in the bot's home, unclaimed: the two copies, then `calls`. */
+const plantSmallChild = (box, home, calls = [{ when: at(10, 10), last: { input: 40 }, total: { input: 190 } }]) =>
+  plantChild(box, home, { meta: forkedFrom(PARENT), copies: SMALL_ORIGIN, calls });
+
+/** A Codex usage record with one figure taken out of `which` of its two usages, or `which` taken out whole. */
+function withoutFigure(record, which, field) {
+  const line = codexCall(record);
+  if (field === undefined) delete line.payload.info[which];
+  else delete line.payload.info[which][field];
+  return line;
+}
+
+/** The small origin's (20, 120) record torn off mid line: not JSON. */
+const TORN_ORIGIN_LINE = '{"timestamp":"2026-09-20T09:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":20';
+
+test('F20 a child whose origin has a line that is not JSON counts nothing and is reported as unreadable', async (t) => {
+  // Where the copies end cannot be told from a damaged origin.
+  const box = await createSandbox(t);
+  const { bots, home } = await fleet(box);
+  await plantSmallOrigin(box, [codexTurn({ when: at(8, 55) }), TORN_ORIGIN_LINE, codexCall(SMALL_ORIGIN[1])]);
+  await plantSmallChild(box, home);
+  await bookSays(bots, 'api-bot', { daily: ran('019f9600-0000-7000-8000-00000000cccc') });
+
+  const entry = entryOf(await usage(box), 'api-bot');
+
+  assert.deepEqual(
+    idsOf(entry.unclaimed),
+    [],
+    'no row for the child: a row of 90 in 3 calls counts the copy the torn line hid',
+  );
+  assert.deepEqual(leftOutOf(entry, 'unclaimed_not_counted'), leftOut({ unreadable_transcripts: 1 }), 'the child');
+});
+
+for (const [what, which, field] of [
+  ['a figure missing from its running total', 'total_token_usage', 'output_tokens'],
+  ['no running total', 'total_token_usage', undefined],
+  ['a figure missing from its own figure', 'last_token_usage', 'input_tokens'],
+  ['no own figure', 'last_token_usage', undefined],
+]) {
+  test(`F21 a child whose origin has a usage record with ${what} counts nothing and is reported as unreadable`, async (t) => {
+    // The origin's (30, 150) record is the damaged one.
+    const box = await createSandbox(t);
+    const { bots, home } = await fleet(box);
+    await plantSmallOrigin(box, [
+      codexTurn({ when: at(8, 55) }),
+      codexCall(SMALL_ORIGIN[0]),
+      withoutFigure(SMALL_ORIGIN[1], which, field),
+    ]);
+    await plantSmallChild(box, home);
+    await bookSays(bots, 'api-bot', { daily: ran('019f9600-0000-7000-8000-00000000cccc') });
+
+    const entry = entryOf(await usage(box), 'api-bot');
+
+    assert.deepEqual(
+      idsOf(entry.unclaimed),
+      [],
+      'no row for the child: where its copies end cannot be told, so a row counts records that may be copies',
+    );
+    assert.deepEqual(leftOutOf(entry, 'unclaimed_not_counted'), leftOut({ unreadable_transcripts: 1 }), 'the child');
+  });
+}
+
+test('F22 an origin with rate-limit notes among its records is not damaged, and its child counts its own call', async (t) => {
+  // A token_count with no `info`, or `info: null`, is a note about rate
+  // limits, not a usage record.
+  const box = await createSandbox(t);
+  const { bots, home } = await fleet(box);
+  const note = (when, info) => ({
+    timestamp: when,
+    type: 'event_msg',
+    payload: { type: 'token_count', ...info, rate_limits: { primary: { used_percent: 12.5, window_minutes: 300 } } },
+  });
+  await plantSmallOrigin(box, [
+    codexTurn({ when: at(8, 55) }),
+    note(at(8, 58), {}),
+    codexCall(SMALL_ORIGIN[0]),
+    note(at(9, 5), { info: null }),
+    codexCall(SMALL_ORIGIN[1]),
+  ]);
+  await plantSmallChild(box, home);
+  await bookSays(bots, 'api-bot', { daily: ran('019f9600-0000-7000-8000-00000000cccc') });
+
+  const answer = await usage(box);
+  const child = childIn(answer);
+
+  assert.equal(child.calls, 1, 'its own (40, 190) call');
+  assert.equal(tokensOf(child).input, 40, 'its rise over the last copy');
+  assert.deepEqual(leftOutOf(entryOf(answer, 'api-bot'), 'unclaimed_not_counted'), NOTHING_LEFT_OUT, 'the origin is whole');
+});
+
+// ------------------------------------ a copy is both of the origin's figures
+
+test('F23 a child\'s own call whose running total equals one of the origin\'s, but whose own figure does not, is not a copy', async (t) => {
+  // After the two copies, a new window: (120, 120), a fall from 150, counted by
+  // its own 120. Its running total is the origin's first record's, and its own
+  // figure is not that record's 20. Then (40, 160), a rise of 40. 160 in, 2 calls.
+  const box = await createSandbox(t);
+  const { bots, home } = await fleet(box);
+  await plantSmallOrigin(box, [codexTurn({ when: at(8, 55) }), ...SMALL_ORIGIN.map(codexCall)]);
+  await plantSmallChild(box, home, [
+    { when: at(10, 10), last: { input: 120 }, total: { input: 120 } },
+    { when: at(10, 20), last: { input: 40 }, total: { input: 160 } },
+  ]);
+  await bookSays(bots, 'api-bot', { daily: ran('019f9600-0000-7000-8000-00000000cccc') });
+
+  const child = childIn(await usage(box));
+
+  assert.equal(child.calls, 2, 'the new window\'s first call and the one after it: 1 takes the new window for a copy');
+  assert.equal(tokensOf(child).input, 160, '120 + 40: 40 takes the new window for a copy, 210 counts the copies too');
+  assert.equal(Date.parse(child.first), Date.parse(at(10, 10)), 'its first call is the new window\'s, at 10:10');
 });
 
 // ------------------------------------------------- nothing else changes
