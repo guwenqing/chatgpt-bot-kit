@@ -17,7 +17,12 @@
 //   setups      [{ id, projectId, hostId, repoId, path, displayName, kind, ... }]
 //   terminals   [{ handle, tabId, worktreePath, title, typed: [...],
 //               notices: [...], ... }]
-//               `typed` is what the kit sent into the tab with `terminal send`.
+//               `typed` is what the kit sent into the tab with `terminal send`,
+//               one `{ text, enter }` per send, with `waitSubmit` and
+//               `retryRequest` as well, as given, when the send carried
+//               `--wait-submit` or `--retry-request`. Every send the fake answers
+//               is typed: it does not model Orca replaying a receipt for a
+//               request id it has seen instead of typing again.
 //               The fake does not run what is typed, with one exception: the
 //               step a launch line starts with, which gives the session its
 //               mailbox (see `holdSteps`).
@@ -111,6 +116,44 @@
 //               prompt still said `codex` more than 70 s after Codex quit. The
 //               fake keeps a tab's own value after its harness quits, as Orca
 //               does.
+//   submit      what Orca sees happen after a text-plus-Enter `terminal send`
+//               it was asked to watch with `--wait-submit`, in every tab that
+//               has no `submit` of its own:
+//                 'turn-started' (default) the line started a turn: the receipt's
+//                                `prompt.stages` are input_accepted and
+//                                turn_started, and there are no warnings
+//                 'unseen'       no turn start within the wait: stages
+//                                input_accepted alone, and Orca's warning that
+//                                the Enter may have been swallowed, naming
+//                                the request id to confirm it with
+//                 'unsupported'  Orca did not watch the line at all and answers
+//                                a receipt it builds itself: stages
+//                                input_accepted alone, `provider` and
+//                                `observation` both 'unsupported',
+//                                `baselineWorkingSequence` 0, and its warning
+//                                that this provider cannot report delivery.
+//                                Seen live (#394) when the kit's line raced
+//                                Orca's own notice in a Claude tab.
+//                 'old-host'     the same from an Orca host too old to keep
+//                                prompt receipts: `provider` 'old-host',
+//                                `observation` 'unsupported', and its warning
+//                                to update Orca on that host (#394).
+//               These two answer so with or without `--wait-submit`: Orca
+//               watched nothing either way.
+//               The answer is Orca 1.4.214's, key for key (seen live, #394):
+//               `result.send` carries `handle`, `accepted`, `bytesWritten` and
+//               the `prompt` receipt, `result.mutation` the request id again,
+//               and `result.warnings` Orca's words when it saw no turn start.
+//               An idle harness answered 'turn-started' in about 1.8 s; a
+//               harness busy mid-turn queued the line and answered it later,
+//               and still answered 'unseen', in Claude Code and Codex alike.
+//               Orca has no stage for a queued line, so a queued line and a
+//               lost one look the same. A send without `--wait-submit` is not
+//               watched, and answers input_accepted alone with no warning: that
+//               is worked out from Orca's help, not seen live. Neither is the
+//               receipt for a tab with no harness in it, which here is the same.
+//               `bytesWritten` is the fake's own count. One terminal can carry a
+//               `submit` of its own, for that tab alone; Orca never lists it.
 //   fail        { "<command>": { code, message, after } } — that command
 //               answers ok:false. With `after: n` the first n calls of it go
 //               through and the ones after that fail, which is how a test
@@ -522,10 +565,11 @@ if (command === 'project setup-delete') {
 /**
  * What Orca reports about a tab. What was typed into it is ours, and stays
  * ours, and so are the notices Orca wrote into it, how many more listings a
- * closed tab still shows up in, who a test put in front of it, and the screen
- * a test gave it, which only `terminal read` shows.
+ * closed tab still shows up in, who a test put in front of it, the screen
+ * a test gave it, which only `terminal read` shows, and what a send into it is
+ * seen to do, which only `terminal send` answers.
  */
-const asReported = ({ typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, ...rest }) => (rest.orphaned === true
+const asReported = ({ typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, submit: _submit, ...rest }) => (rest.orphaned === true
   ? { ...rest, ...identity(), tabId: `pty:${rest.ptyId}`, leafId: `pty:${rest.ptyId}`, orphaned: true }
   : { ...rest, ...identity(), orphaned: false });
 
@@ -654,7 +698,7 @@ if (command === 'terminal close') {
 if (command === 'terminal show') {
   const terminal = (state.terminals ?? []).find((entry) => entry.handle === flag('--terminal'));
   if (!terminal) fail('terminal_not_found', `no terminal with handle ${flag('--terminal')}`);
-  const { typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, ...rest } = terminal;
+  const { typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, submit: _submit, ...rest } = terminal;
   ok({ terminal: { ...rest, ...identity(), orphaned: terminal.orphaned === true } });
 }
 
@@ -729,20 +773,86 @@ if (command === 'terminal wait') {
   });
 }
 
+/**
+ * The receipts Orca builds itself for a line it did not watch (see `submit` at
+ * the top of this file), in its own words, as seen live (#394).
+ */
+const UNWATCHED = {
+  unsupported: {
+    provider: 'unsupported',
+    warning: 'input was accepted, but this provider cannot report delivery. Inspect the terminal before retrying.',
+  },
+  'old-host': {
+    provider: 'old-host',
+    warning: 'this host predates durable prompt receipts. Update Orca on the execution host, and inspect the terminal before retrying an ambiguous send.',
+  },
+};
+
 if (command === 'terminal send') {
   const terminal = (state.terminals ?? []).find((entry) => entry.handle === flag('--terminal'));
   if (!terminal) fail('terminal_not_found', `no terminal with handle ${flag('--terminal')}`);
 
-  terminal.typed = [...(terminal.typed ?? []), { text: flag('--text') ?? '', enter: args.includes('--enter') }];
+  const text = flag('--text') ?? '';
+  const enter = args.includes('--enter');
+  const waitSubmit = flag('--wait-submit');
+  const retryRequest = flag('--retry-request');
+  terminal.typed = [...(terminal.typed ?? []), {
+    text,
+    enter,
+    ...(waitSubmit === undefined ? {} : { waitSubmit }),
+    ...(retryRequest === undefined ? {} : { retryRequest }),
+  }];
   // Orca learns which agent is in a tab once it runs there. The fake gives it
   // at once; a test that wants it late says so with `agentIdentity`.
   if (terminal.typed.length === 1 && launchedIn(terminal) !== undefined && terminal.agentIdentity == null) {
     terminal.agentIdentity = launchedIn(terminal);
   }
   save();
-  runMailboxStep(terminal, flag('--text') ?? '');
+  runMailboxStep(terminal, text);
+
   // `accepted: true` means the input was accepted, not that anything read it.
-  ok({ accepted: true, terminal: terminal.handle });
+  // Whether the line started a turn is in the receipt, and only when Orca was
+  // asked to watch for it (see `submit` at the top of this file).
+  const requestId = retryRequest ?? randomUUID();
+  const submit = terminal.submit ?? state.submit ?? 'turn-started';
+  const unwatched = UNWATCHED[submit];
+  const seen = unwatched === undefined && waitSubmit !== undefined && submit === 'turn-started';
+  const warnings = unwatched !== undefined
+    ? [unwatched.warning]
+    : waitSubmit !== undefined && !seen
+      ? [`input was accepted but no turn start was observed, so the Enter may have been swallowed. Confirm delivery by reissuing the exact command with --retry-request ${requestId} --wait-submit <seconds>; the same request ID replays the receipt instead of sending the prompt again.`]
+      : [];
+  const prompt = unwatched !== undefined
+    ? {
+      requestId,
+      stages: ['input_accepted'],
+      provider: unwatched.provider,
+      observation: 'unsupported',
+      processIncarnation: `incarnation-${terminal.handle}`,
+      generation: terminal.typed.length,
+      baselineWorkingSequence: 0,
+    }
+    : {
+      requestId,
+      stages: seen ? ['input_accepted', 'turn_started'] : ['input_accepted'],
+      provider: launchedIn(terminal) ?? null,
+      observation: 'supported',
+      processIncarnation: `incarnation-${terminal.handle}`,
+      generation: terminal.typed.length,
+      baselineWorkingSequence: 1,
+      baselineExplicitWorkingStartedAt: null,
+      baselinePermissionSequence: 1,
+    };
+  ok({
+    send: {
+      handle: terminal.handle,
+      accepted: true,
+      bytesWritten: Buffer.byteLength(text) + (enter ? 1 : 0),
+      ...(enter ? { prompt } : {}),
+    },
+    mutation: { requestId, replayed: false },
+    ...(warnings.length > 0 ? { warnings } : {}),
+  });
 }
 
 /**

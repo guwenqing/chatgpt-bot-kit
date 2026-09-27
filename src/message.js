@@ -442,11 +442,19 @@ function nudge(to, from, subject) {
     if (found.unsure !== undefined) return { nudged: false, nudgeTrouble: found.unsure };
     if (found.handle === undefined) return { nudged: false };
 
-    typeIntoTab(
+    const sent = typeIntoTab(
       found.handle,
       `Fleet mail from ${from.bot}/${from.session}: ${subject}. Read it with  ${shellWord(ownCli())} message check --bots ${shellWord(to.bots)} --bot ${shellWord(to.bot)} --session ${shellWord(to.session)}`,
+      { watch: true },
     );
-    return { nudged: true };
+    // Typed is not taken. A harness busy with a turn queues the line and gives
+    // it no turn of its own, and a line can be lost, and Orca's receipt looks
+    // the same for both: only a turn start it saw says the line landed (#394).
+    if (sent?.send?.prompt?.stages?.includes('turn_started')) return { nudged: true };
+    // Where Orca did not watch the line at all, as when its own notice has
+    // just started a turn in the tab, it saw nothing either way, and says so.
+    if (sent?.send?.prompt?.observation === 'unsupported') return { nudged: true, nudgeUnseen: unseen(sent), nudgeWatched: false };
+    return { nudged: true, nudgeUnseen: unseen(sent) };
   } catch (error) {
     // The message is already queued, and it is waiting whatever Orca says
     // about the tab. So this is reported rather than thrown: a send that ends
@@ -455,6 +463,14 @@ function nudge(to, from, subject) {
     // different thing from "Orca would not say".
     return { nudged: false, nudgeTrouble: error.message };
   }
+}
+
+/** Orca's words about a line it did not see start a turn, or what its receipt says when it gives none. */
+function unseen(sent) {
+  const warnings = Array.isArray(sent?.warnings) ? sent.warnings.filter((warning) => typeof warning === 'string') : [];
+  if (warnings.length > 0) return warnings.join(' ');
+  const stages = sent?.send?.prompt?.stages;
+  return `Orca's receipt shows ${Array.isArray(stages) ? stages.join(', ') : 'no stages'} and no turn start`;
 }
 
 /**

@@ -584,20 +584,28 @@ export const closeTab = (handle) =>
  * The wait is short because the caller is telling a session it has mail, not
  * handing it work: mail that has to wait for the next check is a smaller cost
  * than a command that hangs for half a minute.
+ *
+ * With `watch`, the line is sent with that wait from the start, and Orca's
+ * receipt says whether it saw the line start a turn (#394). It gives back
+ * Orca's `result`: the receipt is in its `send.prompt`, and Orca's words about
+ * a turn it did not see in its `warnings`.
  */
-export function typeIntoTab(handle, text) {
+export function typeIntoTab(handle, text, { watch = false } = {}) {
   const args = ['terminal', 'send', '--terminal', handle, '--text', text, '--enter'];
-  const answer = ask(args);
-  if (answer.ok === true) return answer.result.send;
+  const answer = ask(watch ? [...args, '--wait-submit', String(SUBMIT_WAIT_S)] : args);
+  if (answer.ok === true) return answer.result;
 
   const again = answer.error?.data?.orchestrationRequestId;
   if (answer.error?.code !== 'agent_prompt_blocked' || typeof again !== 'string') {
     throw new Error(`Orca refused ${args.join(' ')}: ${answer.error?.message ?? 'no reason given'}`);
   }
-  return orca([...args, '--retry-request', again, '--wait-submit', String(SUBMIT_WAIT_S)]).send;
+  return orca([...args, '--retry-request', again, '--wait-submit', String(SUBMIT_WAIT_S)]);
 }
 
-/** How long a re-issued line is given to be submitted before Orca gives up on it. */
+/**
+ * How long a watched or re-issued line is given to be submitted before Orca
+ * gives up on it. An idle harness started its turn in about 2 s, live (#394).
+ */
 const SUBMIT_WAIT_S = 5;
 
 /** Where Orca names the terminal a process runs in, in every pane it opens. */
