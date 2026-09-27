@@ -373,7 +373,10 @@ const QUESTION = 'PELICAN-4417';
  * The lines are numbered with a leading zero so that one of them is not a piece
  * of another — a file holding `STEP-30` must not read as `STEP-3` — and the
  * third is what the test waits for before it sends, which leaves most of the
- * loop still to run. The last one, and its time, say when the work ended.
+ * loop still to run. The last one, and its time, say when the work ended:
+ * each turn of the loop sleeps first and writes after, so writing `STEP-40` is
+ * the last thing the loop does. With the sleep after the write, a read in the
+ * second after `STEP-40` would come while the loop was still sleeping.
  *
  * Each line goes, through `tee`, to a file in the bot's own folder, the one
  * place a Codex bot in auto mode may write, because the file grows while the
@@ -389,7 +392,7 @@ const QUESTION = 'PELICAN-4417';
  */
 const COUNT_TO = 40;
 const STEPS_FILE = 'steps.txt';
-const work = (steps) => `for i in $(seq 1 ${COUNT_TO}); do printf 'STEP-%02d %s\\n' "$i" "$(date +%s)" | tee -a ${steps}; sleep 1; done`;
+const work = (steps) => `for i in $(seq 1 ${COUNT_TO}); do sleep 1; printf 'STEP-%02d %s\\n' "$i" "$(date +%s)" | tee -a ${steps}; done`;
 const PART_WAY = 'STEP-03';
 const LAST_STEP = `STEP-${COUNT_TO}`;
 
@@ -687,12 +690,15 @@ test('a busy receiver finishes what it was doing before it reads its mail', asyn
   await partWayThrough(receiver, steps);
 
   // Mail arrives in the middle of it. The kit types the nudge in; nobody
-  // interrupts anybody.
-  const sent = obk([
+  // interrupts anybody. The send exits 0 whether or not the nudge went in —
+  // the mail is queued either way — so the kit's own answer is what says it
+  // did: a tab it found blocked, or could not be sure of, gets nothing typed.
+  const sent = obkJson([
     'message', 'send', '--bots', bots, '--to', 'mail-codex/daily', '--from', 'mail-claude/daily',
     '--subject', 'while you are busy', '--text', `${mail} — nothing to do, just read this.`,
   ]);
-  assert.equal(sent.status, 0, `the send should have gone through: ${sent.stdout}${sent.stderr}`);
+  assert.equal(sent.sent, true, `the send should have gone through: ${JSON.stringify(sent)}`);
+  assert.equal(sent.nudged, true, `the kit should have typed its nudge into the receiver's tab while it worked: ${JSON.stringify(sent)}`);
 
   // The send types its nudge before it returns, so work not finished now was
   // not finished when the nudge went in.
@@ -718,7 +724,8 @@ test('a busy receiver finishes what it was doing before it reads its mail', asyn
     `the kit's check should have handed it the mail: ${JSON.stringify(read.answer)}`,
   );
 
-  // The work finished: the loop wrote its last line, and the time beside it.
+  // The work finished: the loop wrote its last line, which is the last thing
+  // it does, and the time beside it.
   const lastLine = new RegExp(`${LAST_STEP} (\\d+)`);
   const ended = await until(
     `the loop's last line in ${steps}`,
