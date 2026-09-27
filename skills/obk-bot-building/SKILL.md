@@ -226,9 +226,12 @@ such as an `Edit` rule or one exact command.
 Show the user the list word for word, with a line on what each lets the bot do,
 and only after their yes run `obk bot change --allow`, once per rule they said
 yes to. On a no, run nothing. `obk bot change --charter` names the rules the
-bot is allowed now; say which of them the new charter no longer grants, and
-that they stay allowed until the user takes them out, since the kit takes none
-out. Keep
+bot is allowed now; say which of them the new charter no longer grants, show
+each word for word, and ask whether to take it back. Only after their yes run
+`obk bot change --disallow`, once per rule, which takes it out of `bot.yaml`
+and the bot's settings or Codex rules; on a no, run nothing, and it stays
+allowed. A rule the user added to a settings file by hand is theirs to take
+out; the kit refuses it. Keep
 each rule narrow: a program and what it does. The kit refuses a rule that lets
 the bot run any command, a program with any arguments, or a shell or
 interpreter with any arguments; a user who wants one for a bot adds it to that
