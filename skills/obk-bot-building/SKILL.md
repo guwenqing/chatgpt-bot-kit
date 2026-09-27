@@ -278,23 +278,31 @@ otherwise `/Applications/Orca.app/Contents/Resources/bin/orca`. A bare
 `orca` can fail. Send each answer as one `<orca> terminal send --terminal
 <handle> --text …`, with the return inside the text and no `--enter`:
 
-| On screen | Send | Which is |
-|---|---|---|
-| Claude Code's folder trust list | `\x1b[B\r` | down, return: it starts on **No, exit** |
-| Codex's `Trust this folder?`, `1. Trust and continue` | `1\r` | yes (older: `1. Yes, continue`) |
-| Codex's `Hooks need review` | `2\r` | trust all and continue |
-| Codex's `/new`: `Where should the new conversation run?` | `1\r` | current checkout (bot home) |
-| Codex's update offer, `1. Update now` | `1\r` | accept it |
-| `[oh-my-zsh] Would you like to update?` | `n` | no: the shell is the user's to update |
-| Claude Code's `Teach auto mode about…` | `2\r` | **Not now**: it writes the user's settings |
+| On screen | Send | Which is | Proven on |
+|---|---|---|---|
+| Claude Code's trust list | `\x1b[B\r` | down, return: off **No, exit** | Claude Code 2.1.283 |
+| Codex's `Trust this folder?` | `\r` | return: it starts on yes | Codex 0.157.1 |
+| Codex's `Hooks need review` | `\x1b[B\r` | **Trust all and continue** | Codex 0.157.1 |
+| Codex's `Where should the new conversation run?` | `\r` | **Current checkout** | Codex 0.157.1 |
+| Codex's update offer, `1. Update now` | `\r` | **Update now**, where it starts | Codex 0.156.1 |
+| `[oh-my-zsh] Would you like to update?` | `n` | no: the user updates it | oh-my-zsh bf77e35 |
+| Claude Code's `Teach auto mode…` | `\x1b` | Esc, **Not now** | Not yet proven, below |
 
-Read the numbers off the screen in front of you rather than trusting the
-table: a harness that has added an option has moved them. Codex's hooks
+Each key counts on where the selection starts on the version named. Read the
+screen before you send: if the selection is elsewhere or the options have
+moved, go to the answer with the arrows, then return. Never a digit and then
+return: on Codex's update offer that took the highlighted **Update now**,
+whatever the digit was. Codex's trust said `1. Yes, continue` on older
+versions. Its hooks review sometimes starts on `2` already: then return alone.
+0.157.1 has had no newer release to offer, so its update offer was proven on
+0.156.1. Claude Code's `Teach auto mode` has not been seen live on 2.1.283:
+Esc is Not now in its code, and 2.1.278 was answered with `2. Not now`.
+Not now, because Yes writes the user's settings. Codex's hooks
 question matters most. The kit's hook is how the book learns which
 conversation the session is running, and until it is answered the
 conversation has not started. Codex's trust applies to the repository root,
 which is the whole bots folder. Codex's `/new` may ask where the new
-conversation runs (0.156.1 did; 0.157.1 has not so far); the answer is
+conversation runs (0.156.1 and 0.157.1 both did); the answer is
 always the current checkout, the bot home, and never `2. New worktree`:
 the kit never makes a git worktree.
 

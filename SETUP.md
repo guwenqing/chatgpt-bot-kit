@@ -191,19 +191,21 @@ What you will see, and the usual answer. Each goes as one
 text and **no** `--enter`, because a menu takes a return as the keypress it is
 waiting for:
 
-| On screen | Send | Which is |
-|---|---|---|
-| Claude Code's folder trust list | `\x1b[B\r` | down, then return: its selection starts on **No, exit** |
-| Codex's directory trust, `1. Trust and continue` (older: `1. Yes, continue`) | `1\r` | yes |
-| Codex's `Hooks need review` | `2\r` | trust all and continue |
-| Codex's `/new`: `Where should the new conversation run?` | `1\r` | current checkout (bot home) |
-| Codex's update offer, `1. Update now` | `1\r` | accept it |
-| `[oh-my-zsh] Would you like to update?` | `n` | they update their own shell |
-| Claude Code's `Teach auto mode about your environment?` | `2\r` | **Not now**: it would write settings of theirs |
+| On screen | Send | Which is | Proven on |
+|---|---|---|---|
+| Claude Code's folder trust list | `\x1b[B\r` | down, then return: its selection starts on **No, exit** | Claude Code 2.1.283 |
+| Codex's directory trust, `1. Trust and continue` (older: `1. Yes, continue`) | `\r` | return: its selection starts on **Trust and continue** | Codex 0.157.1 |
+| Codex's `Hooks need review` | `\x1b[B\r` | down, then return, to **Trust all and continue**; if the selection already starts there, return alone | Codex 0.157.1 |
+| Codex's `/new`: `Where should the new conversation run?` | `\r` | return: its selection starts on **Current checkout** (bot home) | Codex 0.157.1 |
+| Codex's update offer, `1. Update now` | `\r` | return: its selection starts on **Update now**, which accepts it | Codex 0.156.1; 0.157.1 has had no newer release to offer |
+| `[oh-my-zsh] Would you like to update?` | `n` | they update their own shell | oh-my-zsh bf77e35 |
+| Claude Code's `Teach auto mode about your environment?` | `\x1b` | Esc, which is **Not now**: it would write settings of theirs | Not yet proven: Esc is Not now in Claude Code 2.1.283's code; last seen live on 2.1.278, answered with 2. Not now |
 
-The numbers there are what these menus showed when this was written. Read them
-off the screen in front of you rather than trusting the table: a harness that has
-added an option since has moved them all down one.
+Each key counts on where the selection starts, as it did on the version named.
+Read the screen in front of you before you send: if the selection is somewhere
+else, or the options have moved, go to the answer with the arrows and then
+return. Never send a digit and then return: on Codex's update offer that took
+the highlighted **Update now**, whatever the digit was.
 
 Three things to know rather than guess at.
 
@@ -215,8 +217,7 @@ empty book and nothing says why.
 Codex's trust question applies to the **repository root**, which for a bot means
 the whole bots folder rather than the one bot. That is what they are agreeing to.
 
-Codex's `/new` question (seen on 0.156.1; 0.157.1 did not show it in the runs
-seen so far) is always answered with the current checkout, which is the bot
+Codex's `/new` question (seen on 0.156.1 and 0.157.1) is always answered with the current checkout, which is the bot
 home. The kit never makes a git worktree, so
 `2. New worktree` is never the answer.
 
