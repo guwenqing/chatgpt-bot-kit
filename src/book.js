@@ -191,12 +191,17 @@ function lockOn(file, waitMs) {
  * is nobody's to sweep, and the user can see it and delete it.
  *
  * One folder per bots folder, so two bots folders each holding an api-bot cannot
- * take each other's turn.
+ * take each other's turn. Resolved first, as the mailbox's is: one writer reaches
+ * the bots folder through a link and another by its real path, and two paths
+ * would be two locks for one book (#375).
  */
-const lockFile = (home) => path.join(
-  `${path.dirname(path.dirname(home))}.locks`,
-  `${encodeURIComponent(path.basename(home))}.lock`,
-);
+const lockFile = (home) => {
+  const real = realpathSync(home);
+  return path.join(
+    `${path.dirname(path.dirname(real))}.locks`,
+    `${encodeURIComponent(path.basename(real))}.lock`,
+  );
+};
 
 /**
  * One session's turn at its mailbox (#321): held by `session mailbox` for its
