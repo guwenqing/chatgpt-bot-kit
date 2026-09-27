@@ -21,7 +21,7 @@ export const botsDir = (bots) => path.join(bots, 'bots');
 export const botDir = (bots, name) => path.join(botsDir(bots), name);
 
 /** A bot's name: the folder it lives in, and safe to be one. */
-const NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+export const NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 /** The file that says what a bot is. A folder without one is not a bot. */
 const BOT_YAML = 'bot.yaml';

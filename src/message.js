@@ -361,7 +361,7 @@ function whoIsWriting(bots, sender, tab, asked = '--from <bot>/<session>: which 
 }
 
 /** The session the book says is in this Orca tab, wherever in the fleet it is. */
-function sessionInTab(bots, tab) {
+export function sessionInTab(bots, tab) {
   for (const name of botNames(bots)) {
     const book = readBook(botDir(bots, name));
     for (const [session, entry] of Object.entries(book.sessions)) {
