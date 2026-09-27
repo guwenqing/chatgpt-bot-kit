@@ -293,13 +293,14 @@ export function allowRules(bots, bot, rules) {
  * Take the permission rules the user said yes to taking back, `rules`, out of
  * the bot's `allow` (#360). Returns { bot, home, allow, disallowed }: the whole
  * list now, and what this call took out. The caller has refused a rule `allow`
- * does not hold, and takes them out of the harness's files first.
+ * does not hold, and takes them out of the harness's files first. With `write`
+ * false it only refuses what the edit would refuse, and writes nothing.
  */
-export function disallowRules(bots, bot, rules) {
+export function disallowRules(bots, bot, rules, { write = true } = {}) {
   const { home, was } = allowedNow(bots, bot, rules, '--disallow');
   const disallowed = [...new Set(rules)];
   const allow = was.filter((rule) => !disallowed.includes(rule));
-  editBot(bots, bot, `take back ${disallowed.join(', ')} for ${bot}`, (doc) => doc.set('allow', allow), (before) => ({ ...before, allow }));
+  editBot(bots, bot, `take back ${disallowed.join(', ')} for ${bot}`, (doc) => doc.set('allow', allow), (before) => ({ ...before, allow }), write);
   return { bot, home, allow, disallowed };
 }
 
@@ -401,9 +402,10 @@ function editSession(bots, bot, index, session, what) {
 
 /**
  * Make one edit to a bot's `bot.yaml` through the YAML library, and write it
- * only if exactly the change `expected` describes is what came out.
+ * only if exactly the change `expected` describes is what came out, and
+ * `write` is not false.
  */
-function editBot(bots, bot, what, edit, expected) {
+function editBot(bots, bot, what, edit, expected, write = true) {
   const file = path.join(existingBot(bots, bot), BOT_YAML);
   const source = readFileSync(file, 'utf8');
   const doc = parseDocument(source);
@@ -412,7 +414,7 @@ function editBot(bots, bot, what, edit, expected) {
   if (!changesExactly(source, text, expected)) {
     throw new Error(`${file} cannot be changed to ${what} without changing something else in it, so nothing was written. Make the change by hand.`);
   }
-  if (text !== source) writeFileSync(file, text);
+  if (write && text !== source) writeFileSync(file, text);
 }
 
 /** A bot that is there, by its home, or the refusal a caller who named another is owed. */

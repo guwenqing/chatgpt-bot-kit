@@ -626,6 +626,7 @@ const commands = {
     if (values.disallow !== undefined) {
       const { home } = allowedNow(bots, values.bot, values.disallow, '--disallow');
       takeBackFrom = takeBack(bots, home, readBot(home, values.bot), values.disallow);
+      disallowRules(bots, values.bot, values.disallow, { write: false });
     }
 
     const answer = { bots, bot: values.bot, home: botDir(bots, values.bot) };
@@ -678,18 +679,18 @@ const commands = {
       );
     }
     if (values.disallow !== undefined) {
-      // bot.yaml first: it is the one that may still refuse, and then nothing
-      // else has changed (#360).
+      // The harness's files first, bot.yaml last: a write that fails leaves the
+      // rules in `allow`, so the same command can take them back again (#360).
+      const permissions = takeBackFrom();
       const taken = disallowRules(bots, values.bot, values.disallow);
-      const permissions = takeBackFrom(readBot(taken.home));
       Object.assign(answer, { allow: taken.allow, disallowed: taken.disallowed, permissions });
       const codex = permissions.find((entry) => entry.unwritten !== undefined);
       lines.push(
         ...taken.disallowed.map((rule) => `${'took back'.padEnd(9)}  ${rule}`),
         ...permissions.filter((entry) => entry.removed?.length > 0).map((entry) => `${'wrote'.padEnd(9)}  ${path.relative(bots, entry.file)}  ${entry.removed.length} permission rule${entry.removed.length === 1 ? '' : 's'} taken out`),
         ...permissionsLines(permissions, bots),
-        ...(codex === undefined || codex.written.length === 0 ? [] : [
-          `Codex reads ${codex.file} when a session starts: a Codex session of ${taken.bot} that is running now keeps these rules until its next start (obk restart).`,
+        ...(codex === undefined || codex.removed.length === 0 ? [] : [
+          `Codex reads ${codex.file} when a session starts: a Codex session of ${taken.bot} that is running now keeps ${codex.removed.length === 1 ? 'this rule' : 'these rules'} until its next start (obk restart).`,
         ]),
         `${taken.bot}'s allow list in ${path.join('bots', taken.bot, 'bot.yaml')} no longer holds ${taken.disallowed.length === 1 ? 'it' : 'them'}.`,
       );

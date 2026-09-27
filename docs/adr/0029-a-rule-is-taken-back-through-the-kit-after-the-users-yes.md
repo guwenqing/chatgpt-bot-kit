@@ -32,8 +32,11 @@ from what `allow` still holds.
 Only a rule `allow` holds, spelled exactly as it is there, is taken back. Any
 other is refused, and nothing is changed: the kit did not write it, and an
 entry the user added by hand stays theirs. A settings file the kit could not
-safely write is refused as `--allow` refuses it. Everything is checked before
-anything is written, and `bot.yaml` is written before the harnesses' files.
+safely write is refused as `--allow` refuses it, and so is one it may not
+write at all. Everything is checked before anything is written, the edit to
+`bot.yaml` included, and `bot.yaml` is written after the harnesses' files, so
+a write that fails leaves the rule in `allow` and the same command takes it
+back again.
 
 A kit default taken back waits for the user's yes again, as a default not yet
 allowed does. `--allow` and `--disallow` in one command are refused.

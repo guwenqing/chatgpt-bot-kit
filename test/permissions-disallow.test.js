@@ -21,7 +21,11 @@
 //   and `--disallow` together; a settings file `--allow` would refuse (a link
 //   outside the bot folder, not JSON, `permissions` not a mapping,
 //   `permissions.allow` not a list); an `allow` in bot.yaml that is not a list
-//   of rules; an unknown bot;
+//   of rules; an unknown bot; a harness file the kit cannot write; with
+//   --charter, a bot.yaml whose `allow` edit cannot be made (an anchor another
+//   key uses);
+// - when a line leaves obk.rules, the last one included, the plain report
+//   says `obk restart`; when none does, it does not;
 // - the same rule given twice is taken out once; a kit default taken back
 //   waits again, listed with the command that allows it as `--allow` and
 //   `rules build` list waiting defaults; `--json` carries `allow` (the whole
@@ -40,10 +44,10 @@
 // no. That is the skill's prose, read in review, not something a unit test runs.
 
 import assert from 'node:assert/strict';
-import { appendFile, mkdir, readFile, readlink, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, mkdir, readFile, readlink, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
-import { parse, stringify } from 'yaml';
+import { parse, parseDocument, stringify } from 'yaml';
 
 import {
   assertKeptWhatTheyWrote,
@@ -521,6 +525,102 @@ test('D8 an unknown bot is refused, naming it, and nothing changes', async (t) =
   assertRefusedNaming(result, 'nobody-bot');
   await assertNothingChanged(bots, before);
 });
+
+// ----------------------------------------------------------------- a harness file the kit cannot write
+
+// Found in the review of PR #380: the refusal comes before anything is
+// written, so a file the kit cannot write leaves bot.yaml as it was too.
+for (const [label, harness, fileOf, holds] of [
+  ['the Claude settings file', 'claude', settingsOf, async (bots) => (await allowedIn(bots, BOT)).includes(OWN_RULE)],
+  ['a Codex bot\'s obk.rules', 'codex', codexRulesOf, async (bots) => (await codexAllowedIn(bots, BOT)).includes(OWN_LINE)],
+]) {
+  test(`D15 ${label} read-only: --disallow is refused and nothing changes; with write access back, it goes through`, async (t) => {
+    const box = await createSandbox(t);
+    const bots = await withBot(box, { harness, allowed: ['Bash(git add:*)', OWN_RULE] });
+    const file = fileOf(bots, BOT);
+    assert.ok(await holds(bots), `the premise: ${file} holds the rule`);
+    await chmod(file, 0o444);
+    t.after(() => chmod(file, 0o644).catch(() => {}));
+    const before = await snapshot(bots, skipGit);
+
+    const result = await change(box, ...disallowing(OWN_RULE));
+
+    assert.notEqual(result.code, 0, `a file the kit cannot write should be refused, got:\n${result.stdout}${result.stderr}`);
+    assert.ok(!/^\s+at /m.test(`${result.stdout}${result.stderr}`), `expected a message, got a crash:\n${result.stderr}`);
+    await assertNothingChanged(bots, before);
+    assert.deepEqual(await allowOf(bots, BOT), ['Bash(git add:*)', OWN_RULE], 'allow still holds the rule');
+    assert.ok(await holds(bots), `${file} still holds the rule`);
+
+    await chmod(file, 0o644);
+    await ok(change(box, ...disallowing(OWN_RULE)));
+    assert.deepEqual(await allowOf(bots, BOT), ['Bash(git add:*)']);
+    assert.ok(!(await holds(bots)), `the rule should have left ${file}`);
+  });
+}
+
+// ----------------------------------------------------------------- a bot.yaml edit that cannot be made
+
+test('D16 --charter with --disallow changes nothing, the charter included, when allow carries an anchor another key uses', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await withBot(box, { allowed: ['Bash(git add:*)', OWN_RULE] });
+  // A valid bot.yaml, edited by hand: allow is anchored and a key of the user's own is an alias of it.
+  const doc = parseDocument(await botText(bots));
+  const allowNode = doc.get('allow', true);
+  allowNode.anchor = 'grants';
+  doc.set('notes', doc.createAlias(allowNode, 'grants'));
+  await writeFile(botYamlOf(bots, BOT), String(doc));
+  const text = await botText(bots);
+  assert.ok(text.includes('&grants') && text.includes('*grants'), `the premise: an anchor and its alias, got:\n${text}`);
+  assert.deepEqual(parse(text).notes, ['Bash(git add:*)', OWN_RULE], 'the premise: the file is valid and the alias reads as allow');
+  const before = await snapshot(bots, skipGit);
+
+  const result = await change(box, '--charter', NEW_CHARTER, ...disallowing(OWN_RULE));
+
+  assert.notEqual(result.code, 0, `the edit cannot be made, so the run should be refused, got:\n${result.stdout}${result.stderr}`);
+  assert.ok(!/^\s+at /m.test(`${result.stdout}${result.stderr}`), `expected a message, got a crash:\n${result.stderr}`);
+  await assertNothingChanged(bots, before);
+  assert.equal(parse(await botText(bots)).charter.trim(), CHARTER, 'the charter is the one it had');
+});
+
+// ----------------------------------------------------------------- obk restart, when a Codex line leaves
+
+test('D17 a line leaving obk.rules: the plain report says obk restart', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await withBot(box, { harness: 'codex', allowed: ['Bash(git add:*)', OWN_RULE] });
+
+  const result = await ok(change(box, ...disallowing(OWN_RULE)));
+
+  assert.deepEqual(await codexAllowedIn(bots, BOT), [ADD_LINE], 'the premise: the line left');
+  assert.ok(result.stdout.includes('obk restart'), `a running Codex session keeps the rule until it restarts, so say obk restart, got:\n${result.stdout}`);
+});
+
+test('D17 the last line leaving obk.rules: the plain report says obk restart, and the file holds no rule', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await withBot(box, { harness: 'codex', allowed: [OWN_RULE] });
+  assert.deepEqual(await codexAllowedIn(bots, BOT), [OWN_LINE], 'the premise: obk.rules holds the one line');
+
+  const result = await ok(change(box, ...disallowing(OWN_RULE)));
+
+  assert.deepEqual(await allowOf(bots, BOT), []);
+  const left = await codexAllowedIn(bots, BOT);
+  assert.deepEqual(left.filter((line) => line.includes('prefix_rule')), [], `no prefix_rule should be left, got: ${JSON.stringify(left)}`);
+  assert.ok(result.stdout.includes('obk restart'), `a running Codex session keeps the rule until it restarts, so say obk restart, got:\n${result.stdout}`);
+});
+
+for (const [label, options, allowed] of [
+  ['the line stays because another rule gives it', { harness: 'codex' }, [OWN_RULE, OWN_RULE_SPACED]],
+  ['a Claude-only bot', {}, ['Bash(git add:*)', OWN_RULE]],
+]) {
+  test(`D17 no line leaving obk.rules (${label}): the plain report does not say obk restart`, async (t) => {
+    const box = await createSandbox(t);
+    const bots = await withBot(box, { ...options, allowed });
+
+    const result = await ok(change(box, ...disallowing(OWN_RULE)));
+
+    assert.ok(!(await allowOf(bots, BOT)).includes(OWN_RULE), 'the premise: the rule left allow');
+    assert.ok(!result.stdout.includes('obk restart'), `no Codex line left, so nothing to restart for, got:\n${result.stdout}`);
+  });
+}
 
 // ----------------------------------------------------------------- a kit default taken back waits again
 
