@@ -543,6 +543,12 @@ runs `obk session mailbox` before the harness. For the same reason a session's
 mail is read in its own tab. `message check` from any other tab reads nothing,
 binds nothing, and says so; the mail waits.
 
+For one session, that step, a `message check`, and `up` writing a new tab for it
+into the book take turns. So two starts of the same session at once leave its
+mailbox bound to the tab the book names, and no mail is read in the other one.
+Each waits a minute at most for its turn. A step that waits it out leaves the
+mailbox where it was and says so, and the harness starts all the same.
+
 Nothing in a mailbox wakes anybody, so `message send` also types one line into
 the receiver's tab telling it to look. Both harnesses take a typed line as the
 next thing to do rather than cutting into what they are doing, which is the

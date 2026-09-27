@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { setTimeout as pause } from 'node:timers/promises';
 
-import { forgetClaimed, forgetSession, readBook, sessionIdsIn, tabIdsIn, updateBook, withUnclaimed } from './book.js';
+import { forgetClaimed, forgetSession, MAILBOX_WAIT_MS, readBook, sessionIdsIn, tabIdsIn, takeMailboxTurn, updateBook, withUnclaimed } from './book.js';
 import { botDir, botNames, displayName, readBot } from './bot.js';
 import { conversationsIn, hasConversation, heldAsUserTurn, transcriptsIn } from './conversations.js';
 import { installHook } from './hooks.js';
@@ -296,20 +296,31 @@ async function bringUpSession(bots, home, live, session, bot, title) {
   // does not (#272).
   const rules = rulesStamp(home);
   let held;
-  await updateBook(home, (current) => {
-    // What the harness has in this folder that nobody claims goes on the record,
-    // for a person or Bot Father to settle — added to whatever was already noted,
-    // because this run's scan cannot see what an earlier one found. The kit never
-    // settles it itself.
-    let entry = { ...current.sessions[session.name], tab: made.tabId, launched, rules };
-    if (rules === undefined) delete entry.rules;
-    held = entry.session;
-    // Before the line is typed, so the hook finds no id here and takes the one
-    // it reports for a start rather than a clear, which would tell the duty twice.
-    if (which.noConversation !== undefined && held === which.noConversation) entry = forgetSession(entry, 'no conversation');
-    current.sessions[session.name] = withUnclaimed(entry, which.unclaimed ?? []);
-    forgetClaimed(current);
-  });
+  // Not while the session's mailbox step or a check in its old tab is at work:
+  // the book moving under one leaves the mailbox bound to, or read in, a tab the
+  // book no longer names (#321). Waited for a bounded time and then written all
+  // the same, because this tab is open and its harness has to start; the step
+  // in it then waits its own turn and says what it left. Let go before the line
+  // is typed, since that step takes it.
+  const turn = takeMailboxTurn(home, session.name);
+  try {
+    await updateBook(home, (current) => {
+      // What the harness has in this folder that nobody claims goes on the record,
+      // for a person or Bot Father to settle — added to whatever was already noted,
+      // because this run's scan cannot see what an earlier one found. The kit never
+      // settles it itself.
+      let entry = { ...current.sessions[session.name], tab: made.tabId, launched, rules };
+      if (rules === undefined) delete entry.rules;
+      held = entry.session;
+      // Before the line is typed, so the hook finds no id here and takes the one
+      // it reports for a start rather than a clear, which would tell the duty twice.
+      if (which.noConversation !== undefined && held === which.noConversation) entry = forgetSession(entry, 'no conversation');
+      current.sessions[session.name] = withUnclaimed(entry, which.unclaimed ?? []);
+      forgetClaimed(current);
+    });
+  } finally {
+    turn?.release();
+  }
 
   // The old tab's hook can name another conversation while the tab is being
   // opened. A fresh start chosen before that is chosen again from the id the
@@ -524,6 +535,20 @@ export async function ownMailbox(bots, botName, sessionName) {
     throw new Error(`session mailbox binds ${who}'s mailbox to the Orca tab it runs in, and this is not one: ${TERMINAL_ENV} is not set. The kit runs it in the session's own tab when it starts the session.`);
   }
 
+  // One step, check or tab write for this session at a time, and the book read
+  // once the turn is had (#321). A step that does not get it leaves everything
+  // as it is and says so, and the launch line goes on to the harness.
+  const turn = takeMailboxTurn(home, sessionName);
+  if (turn === undefined) throw noTurn(home, who, sessionName);
+  try {
+    return await mailboxInTurn(home, botName, sessionName, who);
+  } finally {
+    turn.release();
+  }
+}
+
+/** What `ownMailbox` does once it has the session's turn. */
+async function mailboxInTurn(home, botName, sessionName, who) {
   // Only in the tab the book names for the session. Two runs of `up` at once
   // can leave a session two tabs, and the book one of them: a mailbox made or
   // bound in the other would be bound to a tab no message is meant for.
@@ -599,6 +624,15 @@ export async function ownMailbox(bots, botName, sessionName) {
  * because a busy machine is slow.
  */
 const STEP_WAIT = { timeoutMs: 20_000 };
+
+/** A step that waited its turn out: nothing was made or bound, and where the mailbox was left. */
+function noTurn(home, who, sessionName) {
+  const held = readBook(home).sessions[sessionName]?.mailbox;
+  const left = typeof held === 'string'
+    ? `${who}'s mailbox ${held} is left bound to ${boundTo(held)}; an \`obk message check\` in ${who}'s own tab binds it there.`
+    : `None is written down for ${who}; it gets one the next time the kit starts it.`;
+  return new Error(`waited ${MAILBOX_WAIT_MS / 1000} seconds for ${who}'s mailbox while another obk was making, binding or reading it, and it did not finish. Nothing was made or bound in this tab. ${left}`);
+}
 
 /** Whether a session that can have a mailbox has none in its book. */
 const lacksMailbox = (home, session, harness) => reachesMail(session, harness)
