@@ -9,7 +9,9 @@
 //
 // Which conversation belongs to which session is the book's to say and is never
 // guessed, as everywhere else in the kit (ADR 0012). A session's conversations
-// are the one the book names for it now and the ones in its history. One in the
+// are the one the book names for it now and the ones in its history. A session
+// since retired keeps a block of its own, marked retired, so a window that spans
+// a retirement loses nothing (#379). One in the
 // bot's folder that no session claims is reported under the bot instead, with
 // its figures, so that what it spent is visible rather than quietly dropped.
 //
@@ -39,7 +41,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { botDir, botNames, readBot } from './bot.js';
 import { readBook, sessionIdsIn } from './book.js';
 import { claudeSubagentTranscripts, transcriptsIn } from './conversations.js';
-import { harnessOf } from './launch.js';
+import { HARNESSES, harnessOf } from './launch.js';
 
 /** The kinds a call's tokens are reported in, the same on either harness. */
 const KINDS = ['input', 'output', 'cache_read', 'cache_write', 'reasoning'];
@@ -101,6 +103,9 @@ function forBot(bots, name, onlySession, window) {
   // them runs on is asked. The bot's own is the answer when it has no sessions.
   const harnesses = new Set(bot.sessions.map((session) => harnessOf(session, bot.harness)));
   if (harnesses.size === 0) harnesses.add(bot.harness);
+  // The book does not say which harness a retired session ran on, so any is.
+  const retired = Array.isArray(book.retired) ? book.retired : [];
+  if (retired.length > 0) for (const harness of HARNESSES) harnesses.add(harness);
 
   const onRecord = new Map();
   for (const harness of harnesses) {
@@ -115,15 +120,19 @@ function forBot(bots, name, onlySession, window) {
 
   const claimed = sessionIdsIn(book);
 
-  const sessions = bot.sessions
-    .filter((session) => onlySession === undefined || session.name === onlySession)
-    .map((session) => {
-      const { conversations, gaps } = all(
-        idsIn(book.sessions[session.name] ?? {}).filter((id) => onRecord.has(id)).map((id) => onRecord.get(id)),
-        window,
-      );
-      return { name: session.name, conversations, not_counted: gaps };
-    });
+  const block = (entry) => {
+    const { conversations, gaps } = all(
+      idsIn(entry).filter((id) => onRecord.has(id)).map((id) => onRecord.get(id)),
+      window,
+    );
+    return { conversations, not_counted: gaps };
+  };
+  const sessions = [
+    ...bot.sessions.map((session) => ({ name: session.name, entry: book.sessions[session.name] ?? {} })),
+    ...retired.map((entry) => ({ name: entry?.name, retired: entry?.retired, entry: entry ?? {} })),
+  ]
+    .filter(({ name }) => onlySession === undefined || name === onlySession)
+    .map(({ name, entry, ...was }) => ({ name, ...('retired' in was ? { retired: was.retired } : {}), ...block(entry) }));
 
   const unclaimed = all([...onRecord.values()].filter((one) => !claimed.has(one.id)), window);
 

@@ -1054,7 +1054,7 @@ function usageLines(usage, bots) {
   for (const entry of usage) {
     lines.push(`${'bot'.padEnd(9)}  ${entry.bot}`);
     for (const session of entry.sessions) {
-      lines.push(`${'session'.padEnd(9)}  ${session.name}`);
+      lines.push(`${'session'.padEnd(9)}  ${session.name}${'retired' in session ? `  retired ${session.retired}` : ''}`);
       const notCounted = notCountedLine(session.not_counted);
       lines.push(...session.conversations.map(conversationLine));
       if (session.conversations.length === 0 && notCounted.length === 0) lines.push('             nothing on record');
