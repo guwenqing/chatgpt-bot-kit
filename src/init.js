@@ -86,8 +86,9 @@ charter: |
   Good looks like: every bot has a charter its owner recognises, the skills it
   needs and no more, and sessions that come back after a restart.
 
-  Ask first before: retiring a bot or a session, restarting anything, or
-  changing a bot's rules in a way its owner did not ask for.
+  Ask first before: retiring a bot or a long-lived session, restarting
+  anything, or changing a bot's rules in a way its owner did not ask for. A
+  temporary session is its maker's to retire, without asking.
 
   When the kit itself goes wrong (an obk command fails in a way its own message
   does not explain, or does something other than what it says), tell your owner
