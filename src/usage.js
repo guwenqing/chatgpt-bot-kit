@@ -121,10 +121,11 @@ function forBot(bots, name, onlySession, window) {
   const claimed = sessionIdsIn(book);
 
   // Two entries can name the same conversation, one resumed after its session
-  // was retired: it is counted once, in the first block asked for that names it.
+  // was retired, and one entry can name it twice, now and in its history: it is
+  // counted once, in the first block asked for that names it.
   const taken = new Set();
   const block = (entry) => {
-    const ids = idsIn(entry).filter((id) => onRecord.has(id) && !taken.has(id));
+    const ids = [...new Set(idsIn(entry))].filter((id) => onRecord.has(id) && !taken.has(id));
     for (const id of ids) taken.add(id);
     const { conversations, gaps } = all(ids.map((id) => onRecord.get(id)), window);
     return { conversations, not_counted: gaps };

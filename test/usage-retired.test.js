@@ -637,3 +637,46 @@ test('R10 with --session, a shared conversation is counted under the first block
     [{ name: 'daily', ids: ['shared'] }],
   );
 });
+
+// A → B → A in one tab leaves an entry whose session is A with A in its history
+// too, as the kit's own record of it writes it. A is still one conversation.
+
+test('R11 a live entry that names a conversation twice lists it once, and a retired entry naming it too does not list it', async (t) => {
+  // daily went conv-a → conv-b → conv-a. conv-a made one call inside the window
+  // (10:30), conv-b one before it. old, retired, also names conv-a, and has
+  // conv-o with a call of its own in the window.
+  const box = await createSandbox(t);
+  const { bots, home } = await fleet(box);
+  await plantOneCall(box, home, 'conv-a', at(10, 30), { input: 50, output: 5 });
+  await plantOneCall(box, home, 'conv-b', at(9, 1));
+  await plantOneCall(box, home, 'conv-o', at(10, 45));
+  await bookSays(bots, 'api-bot', { daily: ran('conv-a', 'conv-a', 'conv-b') }, [gone('old', at(12), 'conv-a', 'conv-o')]);
+
+  const entry = entryOf(await usage(box, '--since', at(10)), 'api-bot');
+
+  const daily = sessionOf(entry, 'daily');
+  assert.deepEqual(idsOf(conversationsOf(daily)), ['conv-a'], `conv-a once, got: ${JSON.stringify(daily)}`);
+  assert.equal(conversationOf(conversationsOf(daily), 'conv-a').calls, 1);
+  assert.equal(tokensOf(conversationOf(conversationsOf(daily), 'conv-a')).input, 50);
+  assert.deepEqual(idsOf(conversationsOf(sessionOf(entry, 'old'))), ['conv-o'], 'old lists its own and not conv-a');
+  assert.equal(callsIn(entry), 2, 'conv-a\'s call once and conv-o\'s');
+});
+
+test('R11 a retired entry that names a conversation twice lists it once', async (t) => {
+  // old went conv-a → conv-b → conv-a before it was retired. conv-a made one
+  // call inside the window, conv-b one before it.
+  const box = await createSandbox(t);
+  const { bots, home } = await fleet(box);
+  await plantOneCall(box, home, 'conv-a', at(10, 30), { input: 50, output: 5 });
+  await plantOneCall(box, home, 'conv-b', at(9, 1));
+  await plantOneCall(box, home, 'conv-d', at(10, 45));
+  await bookSays(bots, 'api-bot', { daily: ran('conv-d') }, [gone('old', at(12), 'conv-a', 'conv-a', 'conv-b')]);
+
+  const entry = entryOf(await usage(box, '--since', at(10)), 'api-bot');
+
+  const old = sessionOf(entry, 'old');
+  assert.deepEqual(idsOf(conversationsOf(old)), ['conv-a'], `conv-a once, got: ${JSON.stringify(old)}`);
+  assert.equal(conversationOf(conversationsOf(old), 'conv-a').calls, 1);
+  assert.equal(tokensOf(conversationOf(conversationsOf(old), 'conv-a')).input, 50);
+  assert.equal(callsIn(entry), 2, 'conv-a\'s call once and conv-d\'s');
+});
