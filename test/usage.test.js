@@ -2384,10 +2384,14 @@ test('U14 Codex: every event with no running total while a broken one is open is
   );
 });
 
-test('U14 Codex: an event with no running total, before any broken one or after the total has resumed, still counts by its own figure', async (t) => {
-  // The other side of the pair above. L1 comes before B; L2 comes after C,
-  // whose whole total closed what B opened. Both are calls by their own
-  // figure: 50/5 and 30/3.
+test('U14 Codex: an event with no running total, before any broken one or after the total has resumed, is not counted by its own figure but named, and so is the next whole one', async (t) => {
+  // #302. An event with only its own figure opens a gap just as a broken
+  // running total does: the next whole total's rise may be that same call
+  // written down again. L1 comes before B, L2 after C, whose whole total
+  // closed what L1 and B opened. L1, B, C, L2 and E, the whole one after L2,
+  // are each named and none is counted; F is measured by its rise from E,
+  // 270/27. Counting L1 and L2 by their own figure, as before, would also
+  // count E's rise of 30/3, which is L2 again.
   const box = await createSandbox(t);
   const { bots, home } = await fleet(box, { harness: 'codex' });
   await plant(box, 'codex', home, {
@@ -2400,6 +2404,8 @@ test('U14 Codex: an event with no running total, before any broken one or after 
       codexBrokenTotal({ when: at(9, 20), last: { input: 200, output: 20 }, total: { input: 1200, output: 120 } }),
       codexCall({ when: at(9, 30), last: { input: 200, output: 20 }, total: { input: 1200, output: 120 } }),
       codexLastOnly(at(9, 40), { input: 30, output: 3 }),
+      codexCall({ when: at(9, 50), last: { input: 30, output: 3 }, total: { input: 1230, output: 123 } }),
+      codexCall({ when: at(10, 0), last: { input: 270, output: 27 }, total: { input: 1500, output: 150 } }),
     ],
   });
   await bookSays(bots, 'api-bot', { daily: ran('conv-c') });
@@ -2407,10 +2413,10 @@ test('U14 Codex: an event with no running total, before any broken one or after 
   const whole = sessionOf(entryOf(await usage(box), 'api-bot'), 'daily');
 
   const all = conversationOf(conversationsOf(whole), 'conv-c');
-  assert.equal(all.calls, 3, 'A, L1 and L2');
-  assert.equal(tokensOf(all).input, 1080, '1,000 + 50 + 30');
-  assert.equal(tokensOf(all).output, 108, '100 + 5 + 3');
-  assert.deepEqual(leftOutOf(whole), leftOut({ records_without_numbers: 2 }), 'B and C only');
+  assert.equal(all.calls, 2, 'A and F');
+  assert.equal(tokensOf(all).input, 1270, '1,000 + F\'s rise of 270; not L1\'s 50, L2\'s 30 or E\'s 30');
+  assert.equal(tokensOf(all).output, 127, '100 + 27');
+  assert.deepEqual(leftOutOf(whole), leftOut({ records_without_numbers: 5 }), 'L1, B, C, L2 and E');
 });
 
 test('U14 Claude Code: a call whose copy last written before the window is broken is not counted in that window, and is reported there', async (t) => {

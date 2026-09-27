@@ -60,6 +60,17 @@ export function hasConversation(harness, home, id) {
 export const claudeTranscript = (home, id) => path.join(claudeDir(home), `${id}.jsonl`);
 
 /**
+ * The transcripts of the subagents a Claude Code conversation started, given the
+ * file the conversation is in. They sit beside it, in a folder named by its id,
+ * one `agent-<name>.jsonl` each, with a `.meta.json` beside each that is not a
+ * transcript (tech notes, section 2).
+ */
+export function claudeSubagentTranscripts(file) {
+  const dir = path.join(file.slice(0, -'.jsonl'.length), 'subagents');
+  return files(dir).filter((name) => name.endsWith('.jsonl')).sort().map((name) => path.join(dir, name));
+}
+
+/**
  * The same conversations, each with the file the harness keeps it in, for a
  * caller that has to read what is inside one rather than only know it is there,
  * and whether the harness marks it as a subagent's.
