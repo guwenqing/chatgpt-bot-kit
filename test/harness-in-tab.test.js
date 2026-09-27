@@ -80,10 +80,19 @@ async function assertWaitsUntyped(box, result) {
   assert.deepEqual(Object.values(await typedSinceLaunch(box)).flat(), [], 'and nothing was typed anywhere');
 }
 
-test('a busy harness is told its mail is there, and the run says it was told', async (t) => {
+/** The start of Orca's warning when it saw no turn start, as 1.4.214 wrote it live. */
+const ORCA_UNSEEN = 'input was accepted but no turn start was observed, so the Enter may have been swallowed';
+
+test('a busy harness is typed its mail line, and the run says the line was typed and not seen, and the mail waits', async (t) => {
   // The case the issue is about. Orca's wait runs out of time on a harness
   // that is working, just as it does on a shell; the harness is in front of
   // its tab all the same, and a line typed now is its next turn.
+  //
+  // But Orca does not see that turn start (#402). Seen live (Orca 1.4.214,
+  // Claude Code 2.1.283, Codex 0.157.1, 2026-09-27): a line typed into a
+  // harness busy mid-turn is queued, and Orca's receipt, even after a 60 s
+  // wait, is input_accepted alone with its warning, never turn_started. So
+  // the run may not say the tab was told to look (#394).
   const box = await createSandbox(t);
   const bots = await fleetIn(box);
   await box.orca.set({ waitIdle: 'busy' });
@@ -91,6 +100,7 @@ test('a busy harness is told its mail is there, and the run says it was told', a
   const result = await send(box);
 
   assert.equal(result.code, 0, result.stderr);
+  assert.equal((await box.orca.messages()).length, 1, 'the message is in the mailbox');
   const typed = await typedSinceLaunch(box);
   const reader = (await readerTab(box, bots)).tabId;
   assert.equal(typed[reader].length, 1, `one line into the receiver's tab, got: ${JSON.stringify(typed[reader])}`);
@@ -98,13 +108,50 @@ test('a busy harness is told its mail is there, and the run says it was told', a
   for (const [tab, lines] of Object.entries(typed)) {
     if (tab !== reader) assert.deepEqual(lines, [], `nothing may be typed into ${tab}: it is not the receiver's`);
   }
-  assert.match(result.stdout, TOLD, `the run should say the tab was told, got: ${result.stdout}`);
+  assert.doesNotMatch(result.stdout, TOLD, `Orca saw no turn start in a busy harness, so it was not told to look, got: ${result.stdout}`);
+  for (const [said, pattern] of [
+    ['the line was typed', /its tab was typed into/],
+    ['Orca did not see it start a turn', /did not see/],
+    ['the mail waits for the next check', /waits/],
+  ]) {
+    assert.match(result.stdout, pattern, `the run should say ${said}, got:\n${result.stdout}`);
+  }
   assert.doesNotMatch(result.stdout, NOT_UP);
 });
 
-test('a harness under a shell with no login above it is a harness, and is told', async (t) => {
+test('a busy harness\'s send reports it nudged, with Orca\'s warning in nudgeUnseen', async (t) => {
+  // The same live receipt as above, as `--json` gives it: the kit typed the
+  // line, and Orca's own words say it saw no turn start.
+  const box = await createSandbox(t);
+  const bots = await fleetIn(box);
+  await box.orca.set({ waitIdle: 'busy' });
+
+  const result = await box.run([
+    'message', 'send', '--bots', 'bots', '--to', 'coder', '--from', 'writer/daily',
+    '--subject', 'the staging host', '--text', 'It is down again.', '--json',
+  ]);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal((await box.orca.messages()).length, 1, 'the message is in the mailbox');
+  const answer = JSON.parse(result.stdout);
+  assert.equal(answer.nudged, true, `the kit typed the line, got: ${JSON.stringify(answer)}`);
+  assert.equal(typeof answer.nudgeUnseen, 'string', `why it was not seen, got: ${JSON.stringify(answer)}`);
+  assert.ok(answer.nudgeUnseen.includes(ORCA_UNSEEN), `in Orca's own words, got: ${answer.nudgeUnseen}`);
+  const typed = await typedSinceLaunch(box);
+  const reader = (await readerTab(box, bots)).tabId;
+  assert.equal(typed[reader].length, 1, `one line into the receiver's tab, got: ${JSON.stringify(typed[reader])}`);
+  for (const [tab, lines] of Object.entries(typed)) {
+    if (tab !== reader) assert.deepEqual(lines, [], `nothing may be typed into ${tab}: it is not the receiver's`);
+  }
+});
+
+test('a harness under a shell with no login above it is a harness, and is typed its mail line', async (t) => {
   // Only a `login` pane makes its child the shell. Where the pane is the shell
   // itself, its child in front is the harness it started.
+  //
+  // The harness here is busy, and live Orca never sees a busy harness's line
+  // start a turn (#402), so the run says the line was typed and not seen,
+  // never "told to look" (#394).
   const box = await createSandbox(t);
   const bots = await fleetIn(box);
   await box.orca.set({ waitIdle: 'busy', foreground: 'bare-harness' });
@@ -113,7 +160,9 @@ test('a harness under a shell with no login above it is a harness, and is told',
 
   assert.equal(result.code, 0, result.stderr);
   assert.equal(typedInto(await readerTab(box, bots)).slice(1).length, 1, 'the receiver was told');
-  assert.match(result.stdout, TOLD, `got: ${result.stdout}`);
+  assert.match(result.stdout, /its tab was typed into/, `got: ${result.stdout}`);
+  assert.match(result.stdout, /did not see/, `got: ${result.stdout}`);
+  assert.doesNotMatch(result.stdout, NOT_UP);
 });
 
 for (const [label, state] of [

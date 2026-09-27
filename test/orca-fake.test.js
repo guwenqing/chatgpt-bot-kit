@@ -448,6 +448,46 @@ test('the fake answers a watched send with Orca\'s receipt: a turn start by defa
   assert.equal('submit' in shown, false, 'terminal show carries no submit');
 });
 
+test('the fake answers a watched line into a busy harness as live Orca does: no turn start, and Orca\'s warning, unless a test says otherwise', async (t) => {
+  // Seen live (#402; Orca 1.4.214, Claude Code 2.1.283, Codex 0.157.1): a line
+  // typed into a harness busy mid-turn is queued, and Orca's receipt, even
+  // after a 60 s wait, is input_accepted alone with its warning. Only an idle
+  // harness's receipt shows turn_started.
+  const box = await createSandbox(t);
+  const { handle } = oneTab(box);
+  answer(ask(box, ['terminal', 'send', '--terminal', handle, '--text', 'OBK_TAB_SHELL=$$ codex --approve-for-me', '--enter', '--json']));
+  const watched = () => answer(ask(box, ['terminal', 'send', '--terminal', handle, '--text', 'mail', '--enter', '--wait-submit', '5', '--json']));
+
+  await box.orca.set({ waitIdle: true });
+  const idle = watched();
+  assert.deepEqual(idle.result.send.prompt.stages, ['input_accepted', 'turn_started'], 'an idle harness starts a turn');
+  assert.equal('warnings' in idle.result, false, 'and there is nothing to warn about');
+
+  await box.orca.set({ waitIdle: 'busy' });
+  const busy = watched();
+  assert.deepEqual(busy.result.send.prompt.stages, ['input_accepted'], 'a busy harness shows no turn start');
+  assert.equal(busy.result.send.prompt.observation, 'supported', 'Orca watched it');
+  assert.equal(busy.result.warnings.length, 1);
+  assert.match(busy.result.warnings[0], /^input was accepted but no turn start was observed, so the Enter may have been swallowed\./);
+  assert.ok(
+    busy.result.warnings[0].includes(`--retry-request ${busy.result.send.prompt.requestId} --wait-submit <seconds>`),
+    `Orca names the request id to confirm it with, got: ${busy.result.warnings[0]}`,
+  );
+
+  // A `submit` a test sets still wins, for one tab or for all.
+  await box.orca.set({
+    terminals: (await box.orca.terminals()).map((terminal) => (terminal.handle === handle ? { ...terminal, submit: 'turn-started' } : terminal)),
+  });
+  assert.deepEqual(watched().result.send.prompt.stages, ['input_accepted', 'turn_started'], 'a tab told turn-started, busy or not');
+  await box.orca.set({
+    terminals: (await box.orca.terminals()).map(({ submit: _submit, ...terminal }) => terminal),
+    submit: 'turn-started',
+  });
+  assert.deepEqual(watched().result.send.prompt.stages, ['input_accepted', 'turn_started'], 'every tab told turn-started, busy or not');
+  await box.orca.set({ submit: 'unsupported' });
+  assert.equal(watched().result.send.prompt.observation, 'unsupported', 'and any other word a test sets');
+});
+
 test('the fake answers a line Orca did not watch with the receipt Orca builds itself, and Orca\'s words', async (t) => {
   // Seen live (#394): a Claude tab where the kit's line raced Orca's own
   // notice, and an Orca host too old to keep receipts. Orca watched nothing,

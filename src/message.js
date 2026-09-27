@@ -1,4 +1,4 @@
-// `obk message`: one session writing to another (PRD 6.9, ADR 0018).
+// `obk message`: one session writing to another (PRD 6.9, ADR 0030).
 //
 // Two roads, and the bot never picks. Claude to Claude in the same approval
 // class is the harness's own messaging, which no command line can send for it —
