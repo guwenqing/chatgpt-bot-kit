@@ -24,6 +24,7 @@
   ],
   "scripts": {
     "test": "node --test test/*.test.js",
+    "test:shard": "node --test --test-shard=$SHARD test/*.test.js",
     "test:system": "node scripts/test-system.js",
     "mutate": "node scripts/mutate.js"
   },
