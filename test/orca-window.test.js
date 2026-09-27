@@ -568,6 +568,16 @@ function assertTheReloadTried(works) {
   ].join('\n'));
 }
 
+/**
+ * What W4 asks of its working retire: the reload tried, and no project.update
+ * call (#343). The reload first, so a run that also made a call still fails
+ * with how it ended and what the fake osascript logged.
+ */
+function assertTheWorkingRetire(works) {
+  assertTheReloadTried(works);
+  assert.deepEqual(works.calls, [], 'the working run makes no project.update call either (#343)');
+}
+
 /** The premise of a test of a refused listing: the listings before the delete went through, the delete happened, a listing after it was refused. */
 async function assertRefusedOnlyAfterTheDelete(refused) {
   assert.ok(orcaCallsOf(refused.before, 'project setups').length > 0, 'retire listed Orca\'s projects before the delete, and those went through');
@@ -651,8 +661,7 @@ for (const { label, orca } of [
     assert.deepEqual(kept.reloads, [], 'and no reload tried');
 
     const works = await retireOfABot(t, {}, []);
-    assert.deepEqual(works.calls, [], 'the working run makes no project.update call either (#343)');
-    assertTheReloadTried(works);
+    assertTheWorkingRetire(works);
   });
 }
 
@@ -660,7 +669,9 @@ for (const { label, orca } of [
 // run's end and the fake osascript's log in its message (#389). The working
 // run is made to stop short through the fake Orca, one way that ends in a
 // trouble on stdout and one that ends in an error on stderr, so each stream is
-// seen in the message with something in it.
+// seen in the message with something in it. The same run with a
+// project.update call written into what it returns (the kit makes none, so no
+// fake can give one) shows that check comes before the one on calls.
 for (const { label, orca, on, says } of [
   { label: 'Orca still lists the project after the delete', orca: { keepOnDelete: true }, on: 'stdout', says: 'still lists it' },
   {
@@ -677,7 +688,7 @@ for (const { label, orca, on, says } of [
     assert.deepEqual(stopped.reloads, [], 'the premise: no reload was tried');
     assert.ok(stopped.result[on].includes(says), `the premise: the run said why on ${on}, got:\n${said}`);
 
-    assert.throws(() => assertTheReloadTried(stopped), (error) => {
+    const saysHowItEnded = (error) => {
       assert.equal(error.code, 'ERR_ASSERTION', `the reload check failed, got: ${error.stack}`);
       assert.equal(error.actual, 0);
       assert.equal(error.expected, 1);
@@ -689,7 +700,9 @@ for (const { label, orca, on, says } of [
       assert.ok(lines.includes('the fake osascript\'s calls: []'), `its calls, got:\n${error.message}`);
       assert.ok(lines.includes('the calls it answered: []'), `and the calls it answered, got:\n${error.message}`);
       return true;
-    });
+    };
+    assert.throws(() => assertTheWorkingRetire(stopped), saysHowItEnded);
+    assert.throws(() => assertTheWorkingRetire({ ...stopped, calls: [touch(stopped.apiBot.projectId)] }), saysHowItEnded);
   });
 }
 
