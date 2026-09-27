@@ -610,6 +610,83 @@ test('S4 a call in both the main transcript and a subagent file is one call, cou
   assert.equal(tokensOf(conversation).output, 152, '100 + z\'s later 50 + 2');
 });
 
+test('S4 copies of one call in subagent files at the very same moment count by the largest, whichever file holds it', async (t) => {
+  // A call's records only grow (tech notes, section 2). Seen on real data:
+  // one call at one moment with 8 output in one subagent file and 322 in
+  // others. In conv-a the small copy is in the file that sorts last, in
+  // conv-b in the one that sorts first; both count 322.
+  const box = await createSandbox(t);
+  const { bots, home } = await fleet(box, { harness: 'claude' });
+  const moment = '2026-09-20T09:05:00.123Z';
+  for (const [id, small, large] of [['conv-a', 'zz', ['aa', 'bb']], ['conv-b', 'aa', ['bb', 'zz']]]) {
+    await plant(box, 'claude', home, {
+      id,
+      started: at(9),
+      lines: [claudeCall({ when: at(9, 1), request: `req-${id}`, message: `msg-${id}`, input: 1000, output: 1000 })],
+    });
+    await plantSubagent(box, home, {
+      parent: id,
+      agent: small,
+      started: at(9, 2),
+      lines: [claudeCall({ when: moment, request: `req-x-${id}`, message: `msg-x-${id}`, input: 2, cacheRead: 500, output: 8 })],
+    });
+    for (const agent of large) {
+      await plantSubagent(box, home, {
+        parent: id,
+        agent,
+        started: at(9, 2),
+        lines: [claudeCall({ when: moment, request: `req-x-${id}`, message: `msg-x-${id}`, input: 2, cacheRead: 500, output: 322 })],
+      });
+    }
+  }
+  await bookSays(bots, 'api-bot', { daily: ran('conv-b', 'conv-a') });
+
+  const answer = await usage(box);
+
+  for (const id of ['conv-a', 'conv-b']) {
+    const conversation = claimed(answer, id);
+    assert.equal(conversation.calls, 2, `${id}: the parent's and X, once`);
+    assert.equal(conversation.subagent_calls, 1, id);
+    assert.equal(tokensOf(conversation).output, 1322, `${id}: 1,000 + X's 322; not its 8, nor the copies added up`);
+    assert.equal(tokensOf(conversation).input, 1002, id);
+    assert.equal(tokensOf(conversation).cache_read, 500, id);
+  }
+});
+
+test('S4 copies of one call in the main transcript and a subagent file at the very same moment count by the largest', async (t) => {
+  // In conv-a the main transcript has the small copy, in conv-b the subagent
+  // file has it. Both count 322. Whose call it is, is not pinned here.
+  const box = await createSandbox(t);
+  const { bots, home } = await fleet(box, { harness: 'claude' });
+  const moment = '2026-09-20T09:05:00.123Z';
+  for (const [id, mainOutput, subagentOutput] of [['conv-a', 8, 322], ['conv-b', 322, 8]]) {
+    await plant(box, 'claude', home, {
+      id,
+      started: at(9),
+      lines: [
+        claudeCall({ when: at(9, 1), request: `req-${id}`, message: `msg-${id}`, input: 1000, output: 1000 }),
+        claudeCall({ when: moment, request: `req-x-${id}`, message: `msg-x-${id}`, input: 2, output: mainOutput }),
+      ],
+    });
+    await plantSubagent(box, home, {
+      parent: id,
+      agent: 'a1',
+      started: at(9, 2),
+      lines: [claudeCall({ when: moment, request: `req-x-${id}`, message: `msg-x-${id}`, input: 2, output: subagentOutput })],
+    });
+  }
+  await bookSays(bots, 'api-bot', { daily: ran('conv-b', 'conv-a') });
+
+  const answer = await usage(box);
+
+  for (const id of ['conv-a', 'conv-b']) {
+    const conversation = claimed(answer, id);
+    assert.equal(conversation.calls, 2, `${id}: the parent's first call and X, once`);
+    assert.equal(tokensOf(conversation).output, 1322, `${id}: 1,000 + X's 322`);
+    assert.equal(tokensOf(conversation).input, 1002, id);
+  }
+});
+
 test('S5 --since and --until count a subagent\'s calls by their own time, as the main transcript\'s', async (t) => {
   // Subagent calls at 09:59, 10:00, 10:30 and 11:00, a parent call at 10:15.
   // The window 10:00 to 11:00 is half open: 10:00 and 10:30 are in it.
@@ -785,6 +862,80 @@ test('S6 an unreadable subagent file is reported under the session, and the rest
   assert.equal(conversation.calls, 2, 'the parent\'s and the readable subagent\'s');
   assert.equal(conversation.subagent_calls, 1);
   assert.equal(tokensOf(conversation).input, 23);
+});
+
+test('S6 a subagents folder that cannot be listed is reported as unreadable under the session, and the main transcript still counts', { skip: UNREADABLE_NEEDS_A_USER }, async (t) => {
+  // conv-a, daily's, has a subagents folder nobody may list; conv-b,
+  // review's, has no subagents folder at all, which is nothing to report.
+  const box = await createSandbox(t);
+  const { bots, home } = await fleet(box, { harness: 'claude', sessions: ['daily', 'review'] });
+  for (const id of ['conv-a', 'conv-b']) {
+    await plant(box, 'claude', home, {
+      id,
+      started: at(9),
+      lines: [claudeCall({ when: at(9, 1), request: `req-${id}`, message: `msg-${id}`, input: 30, output: 3 })],
+    });
+  }
+  const file = await plantSubagent(box, home, {
+    parent: 'conv-a',
+    agent: 'a1',
+    started: at(9, 2),
+    lines: [claudeCall({ when: at(9, 3), request: 'req-s1', message: 'msg-s1', input: 9000, output: 900 })],
+  });
+  const folder = path.dirname(file);
+  await bookSays(bots, 'api-bot', { daily: ran('conv-a'), review: ran('conv-b') });
+
+  await chmod(folder, 0o000);
+  let answer;
+  try {
+    answer = await usage(box);
+  } finally {
+    await chmod(folder, 0o755);
+  }
+  const entry = entryOf(answer, 'api-bot');
+
+  assert.deepEqual(leftOutOf(sessionOf(entry, 'daily')), leftOut({ unreadable_transcripts: 1 }), 'the folder is named, not taken as empty');
+  assert.deepEqual(leftOutOf(sessionOf(entry, 'review')), NOTHING_LEFT_OUT, 'no subagents folder is nothing left out');
+  assert.deepEqual(leftOutOf(entry, 'unclaimed_not_counted'), NOTHING_LEFT_OUT);
+  const conversation = claimed(answer, 'conv-a');
+  assert.equal(conversation.calls, 1, 'its own call still counts');
+  assert.equal(tokensOf(conversation).input, 30);
+  assert.equal(conversation.subagent_calls, 0);
+});
+
+test('S6 a subagents folder that cannot be listed, of a conversation no session claims, is the bot\'s unclaimed unreadable', { skip: UNREADABLE_NEEDS_A_USER }, async (t) => {
+  const box = await createSandbox(t);
+  const { bots, home } = await fleet(box, { harness: 'claude' });
+  for (const id of ['conv-a', 'conv-nobodys']) {
+    await plant(box, 'claude', home, {
+      id,
+      started: at(9),
+      lines: [claudeCall({ when: at(9, 1), request: `req-${id}`, message: `msg-${id}`, input: 30, output: 3 })],
+    });
+  }
+  const file = await plantSubagent(box, home, {
+    parent: 'conv-nobodys',
+    agent: 'a1',
+    started: at(9, 2),
+    lines: [claudeCall({ when: at(9, 3), request: 'req-s1', message: 'msg-s1', input: 9000, output: 900 })],
+  });
+  const folder = path.dirname(file);
+  await bookSays(bots, 'api-bot', { daily: ran('conv-a') });
+
+  await chmod(folder, 0o000);
+  let answer;
+  try {
+    answer = await usage(box);
+  } finally {
+    await chmod(folder, 0o755);
+  }
+  const entry = entryOf(answer, 'api-bot');
+
+  assert.deepEqual(leftOutOf(entry, 'unclaimed_not_counted'), leftOut({ unreadable_transcripts: 1 }));
+  assert.deepEqual(leftOutOf(sessionOf(entry, 'daily')), NOTHING_LEFT_OUT);
+  const nobodys = conversationOf(entry.unclaimed, 'conv-nobodys');
+  assert.equal(nobodys.calls, 1, 'its own call still counts');
+  assert.equal(tokensOf(nobodys).input, 30);
 });
 
 test('S6 the .meta.json beside a subagent file is neither counted nor reported, however it is written', async (t) => {

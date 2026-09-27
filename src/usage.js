@@ -171,7 +171,9 @@ function counted(one, window) {
 
   // A Claude Code conversation's subagents wrote their calls to files of their
   // own, and what they spent is the conversation's.
-  const sources = [one.file, ...(one.harness === 'claude' ? claudeSubagentTranscripts(one.file) : [])]
+  const subagents = one.harness === 'claude' ? claudeSubagentTranscripts(one.file) : { files: [], unreadable: 0 };
+  tally.gaps.unreadable_transcripts += subagents.unreadable;
+  const sources = [one.file, ...subagents.files]
     .map((file, index) => {
       const { entries, unreadable, broken } = transcript(file);
       tally.gaps.unreadable_transcripts += unreadable;
@@ -217,8 +219,10 @@ function counted(one, window) {
  *
  * A call is one `requestId` and `message.id` across the main transcript and its
  * subagents' files together, since the same call can be in more than one of
- * them, and its records are taken in the order of their times. It is a
- * subagent's when the main transcript has no record of it.
+ * them, and its records are taken in the order of their times. Copies written
+ * at the very same moment, in different files, are taken smallest first, since
+ * a call's figures only grow: the largest is the latest. It is a subagent's
+ * when the main transcript has no record of it.
  *
  * A record with no time, or with a figure missing, is left out whole and said to
  * be; the call it belongs to is counted from its other records, if it has any.
@@ -253,7 +257,7 @@ function fromClaude(sources, window, tally) {
   }
 
   for (const records of byCall.values()) {
-    records.sort((one, other) => one.when - other.when);
+    records.sort((one, other) => one.when - other.when || size(one.entry) - size(other.entry));
     const made = records[0].when;
     const atEnd = records.findLast(({ when, broken }) => !broken && when < window.to);
     if (atEnd === undefined) continue;
@@ -273,6 +277,12 @@ function fromClaude(sources, window, tally) {
     count(tally, grew, atEnd.entry.message?.model, atEnd.entry.effort, isNew ? made : atEnd.when, isNew ? 1 : 0, subagent);
   }
 }
+
+/** How much one Claude Code record says its call has used so far, all kinds together. */
+const size = (entry) => {
+  const now = figures(entry);
+  return KINDS.reduce((sum, kind) => sum + now[kind], 0);
+};
 
 /** The figures Claude Code writes on every call, all of which a record needs to be counted. */
 const CLAUDE_FIELDS = ['input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'];
