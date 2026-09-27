@@ -546,7 +546,36 @@ async function retireOfABot(t, orca, json) {
     after: deleted === -1 ? [] : cli.slice(deleted + 1),
     calls: (await app.calls()).slice(called),
     reloads: await box.osascript.calls(),
+    answered: await box.osascript.answered(),
   };
+}
+
+/**
+ * The working retire of a W4 test tried the reload, once. It once came up 0
+ * in a full suite and passed alone, with nothing to say why (#389): the kit
+ * never ran osascript, the shell did not reach its first line in the kit's
+ * 5 s, or the run ended before its reload. So a failure says how the run ended,
+ * what it printed, and what the fake osascript logged.
+ */
+function assertTheReloadTried(works) {
+  assert.equal(works.reloads.length, 1, [
+    'it tries the reload',
+    `the working run's exit code: ${works.result.code}, signal: ${works.result.signal}`,
+    `its stdout:\n${works.result.stdout}`,
+    `its stderr:\n${works.result.stderr}`,
+    `the fake osascript's calls: ${JSON.stringify(works.reloads)}`,
+    `the calls it answered: ${JSON.stringify(works.answered)}`,
+  ].join('\n'));
+}
+
+/**
+ * What W4 asks of its working retire: the reload tried, and no project.update
+ * call (#343). The reload first, so a run that also made a call still fails
+ * with how it ended and what the fake osascript logged.
+ */
+function assertTheWorkingRetire(works) {
+  assertTheReloadTried(works);
+  assert.deepEqual(works.calls, [], 'the working run makes no project.update call either (#343)');
 }
 
 /** The premise of a test of a refused listing: the listings before the delete went through, the delete happened, a listing after it was refused. */
@@ -632,8 +661,48 @@ for (const { label, orca } of [
     assert.deepEqual(kept.reloads, [], 'and no reload tried');
 
     const works = await retireOfABot(t, {}, []);
-    assert.deepEqual(works.calls, [], 'the working run makes no project.update call either (#343)');
-    assert.equal(works.reloads.length, 1, 'it tries the reload');
+    assertTheWorkingRetire(works);
+  });
+}
+
+// A W4 whose working retire does not get as far as the reload fails with the
+// run's end and the fake osascript's log in its message (#389). The working
+// run is made to stop short through the fake Orca, one way that ends in a
+// trouble on stdout and one that ends in an error on stderr, so each stream is
+// seen in the message with something in it. The same run with a
+// project.update call written into what it returns (the kit makes none, so no
+// fake can give one) shows that check comes before the one on calls.
+for (const { label, orca, on, says } of [
+  { label: 'Orca still lists the project after the delete', orca: { keepOnDelete: true }, on: 'stdout', says: 'still lists it' },
+  {
+    label: 'Orca refuses the delete',
+    orca: { fail: { 'project setup-delete': { code: 'runtime_error', message: 'the store is locked' } } },
+    on: 'stderr',
+    says: 'the store is locked',
+  },
+]) {
+  test(`W4 when ${label}, the working run's reload check fails saying its exit code, stdout, stderr and what the fake osascript logged`, async (t) => {
+    const stopped = await retireOfABot(t, orca, []);
+    const said = `${stopped.result.stdout}${stopped.result.stderr}`;
+    assert.equal(stopped.result.code, 1, `the premise: the run stopped short, got:\n${said}`);
+    assert.deepEqual(stopped.reloads, [], 'the premise: no reload was tried');
+    assert.ok(stopped.result[on].includes(says), `the premise: the run said why on ${on}, got:\n${said}`);
+
+    const saysHowItEnded = (error) => {
+      assert.equal(error.code, 'ERR_ASSERTION', `the reload check failed, got: ${error.stack}`);
+      assert.equal(error.actual, 0);
+      assert.equal(error.expected, 1);
+      const lines = error.message.split('\n');
+      assert.equal(lines[0], 'it tries the reload', `got:\n${error.message}`);
+      assert.ok(lines.includes('the working run\'s exit code: 1, signal: null'), `the exit code, got:\n${error.message}`);
+      assert.ok(error.message.includes(`its stdout:\n${stopped.result.stdout}`), `the stdout, got:\n${error.message}`);
+      assert.ok(error.message.includes(`its stderr:\n${stopped.result.stderr}`), `the stderr, got:\n${error.message}`);
+      assert.ok(lines.includes('the fake osascript\'s calls: []'), `its calls, got:\n${error.message}`);
+      assert.ok(lines.includes('the calls it answered: []'), `and the calls it answered, got:\n${error.message}`);
+      return true;
+    };
+    assert.throws(() => assertTheWorkingRetire(stopped), saysHowItEnded);
+    assert.throws(() => assertTheWorkingRetire({ ...stopped, calls: [touch(stopped.apiBot.projectId)] }), saysHowItEnded);
   });
 }
 
