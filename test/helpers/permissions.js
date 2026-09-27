@@ -8,12 +8,18 @@
 // `shellWord` spells it), and the bots folder as the command was given it,
 // absolute. Four test files need the same set and the same reading, so it lives
 // here rather than four times.
+//
+// #354 (slice C) writes the same yes for a bot that runs on Codex, in Codex's
+// own form, into `<bot home>/.codex/rules/obk.rules`: one
+// `prefix_rule(pattern=[...], decision="allow")` line per rule, each word a
+// JSON string. The Codex lines are spelled here from that requirement too.
 
 import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { parse, stringify } from 'yaml';
 
-import { hookFileOf, hooksIn, shellWord } from './cli.js';
+import { botHomeOf, hookFileOf, hooksIn, shellWord } from './cli.js';
 import { botYamlOf } from './skills.js';
 
 /**
@@ -34,6 +40,56 @@ export function defaultRules(box, bots) {
     'Bash(git commit:*)',
   ];
 }
+
+/**
+ * The five rules a bot that runs only on Codex is offered: the six, in their
+ * order, without the Read rule, since Codex's sandbox reads every file already.
+ */
+export const codexDefaultRules = (box, bots) => defaultRules(box, bots).filter((rule) => !rule.startsWith('Read('));
+
+/** The Read rule of the six: the one a Codex-only bot is not offered. */
+export const readDefault = (box, bots) => defaultRules(box, bots)[3];
+
+/**
+ * One line of a Codex rules file that allows commands starting with `words`,
+ * as the requirement spells it: each word a JSON string literal, joined by
+ * `, `.
+ */
+export const prefixRule = (words) => `prefix_rule(pattern=[${words.map((word) => JSON.stringify(word)).join(', ')}], decision="allow")`;
+
+/**
+ * The Codex lines for the five default Bash rules, in their order. The CLI and
+ * the bots folder are plain words here, whatever quoting `shellWord` gave them
+ * inside the Claude rule.
+ */
+export const codexDefaultLines = (box, bots) => [
+  prefixRule([box.cli, 'message', 'check', '--bots', bots]),
+  prefixRule([box.cli, 'message', 'send', '--bots', bots]),
+  prefixRule([box.cli, 'message', 'to', '--bots', bots]),
+  prefixRule(['git', 'add']),
+  prefixRule(['git', 'commit']),
+];
+
+/** The bot's own Codex rules file, which the kit owns whole. */
+export const codexRulesOf = (bots, bot) => path.join(botHomeOf(bots, bot), '.codex', 'rules', 'obk.rules');
+
+/**
+ * The rule lines of a Codex rules file, in the file's order: every line but
+ * blank ones and `#` comments. Undefined when there is no file.
+ */
+export async function codexLinesIn(file) {
+  let text;
+  try {
+    text = await readFile(file, 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return undefined;
+    throw error;
+  }
+  return text.split('\n').filter((line) => line.trim() !== '' && !line.startsWith('#'));
+}
+
+/** The rule lines of the bot's obk.rules: an empty list for no file. */
+export const codexAllowedIn = async (bots, bot) => (await codexLinesIn(codexRulesOf(bots, bot))) ?? [];
 
 /** A rule no default is: one a user might say yes to for one bot of their own. */
 export const OWN_RULE = 'Bash(gh pr merge:*)';
@@ -86,6 +142,16 @@ export function waitingOf(answer, bot) {
   return found[0].waiting;
 }
 
+/**
+ * The one `permissions` entry about `bot` and `file`: for a bot that runs on
+ * both harnesses there is one per harness file.
+ */
+export function entryAt(answer, bot, file) {
+  const found = answer.permissions.filter((entry) => entry.bot === bot && entry.file === file);
+  assert.equal(found.length, 1, `one permissions entry should be about ${bot} and ${file}, got: ${JSON.stringify(answer.permissions)}`);
+  return found[0];
+}
+
 /** The bots a `permissions` list is about, in the order it gives them. */
 export const permissionBots = (answer) => answer.permissions.map((entry) => entry.bot);
 
@@ -110,6 +176,9 @@ export async function writeAllow(bots, bot, allow) {
   doc.allow = allow;
   await writeFile(botYamlOf(bots, bot), stringify(doc));
 }
+
+/** Whether a plain report names `file`: by its full path, or by its path from the folder the command ran in. */
+export const namesFile = (text, box, file) => text.includes(file) || text.includes(path.relative(box.cwd, file));
 
 /** Which of `rules` appear anywhere in `text`: an empty list when none does. */
 export const mentionsAny = (text, rules) => rules.filter((rule) => text.includes(rule));

@@ -201,24 +201,28 @@ say that you edited it by hand.
 Run `obk --help` for the flags of the version actually installed rather than
 trusting a line you remember.
 
-A bot on Claude Code needs a few permission rules so that auto mode does not
-stop it for what the kit's own rules tell it to do: its mail through the kit,
-reading a long message kept beside the bots folder, and its commits. `obk bot
-create`, `obk up` and `obk rules build` list the rules still waiting for a bot
-and give one command that allows them. Show the user those rules word for word
-and say in a line what each lets the bot do. Run the command only after their
-yes: it records the yes in the bot's `bot.yaml` and writes the rules into its
-settings. On a no, run nothing, and nothing is written. When the kit lists new
-rules for a bot later, ask again. Never write a permission rule into a settings
-file by hand.
+A bot needs a few permission rules so that auto mode, or Codex's sandbox and
+reviewer, does not stop it for what the kit's own rules tell it to do: its
+mail through the kit, reading a long message kept beside the bots folder, and
+its commits. `obk bot create`, `obk up` and `obk rules build` list the rules
+still waiting for a bot and give one command that allows them. Show the user
+those rules word for word and say in a line what each lets the bot do. Run the
+command only after their yes: it records the yes in the bot's `bot.yaml` and
+writes the rules into its settings, or for Codex into its
+`.codex/rules/obk.rules`. On a no, run nothing, and nothing is written. When
+the kit lists new rules for a bot later, ask again. Never write a permission
+rule into a settings or rules file by hand.
 
 The charter decides what else the bot needs. What it lets the bot do without
-asking, such as merging pull requests, auto mode can still stop, so on Claude
-Code each grant needs its own rule. When the charter is written, and again
+asking, such as merging pull requests, auto mode or Codex's sandbox can still
+stop, so each grant needs its own rule. When the charter is written, and again
 whenever it changes, list the exact rules it grants: `Bash(gh pr merge:*)` for
 a bot that merges pull requests, `Bash(gh issue close:*)` for one that closes
 issues. Spell each command as the bot will run it, the kit by the path the
 bot's rules give it and every folder absolute, or the rule will not match.
+Spell them in Claude Code's form for a Codex bot too, `Bash(<command>:*)`: the
+kit writes Codex's own form of each, and says which ones Codex has none for,
+such as an `Edit` rule or one exact command.
 Show the user the list word for word, with a line on what each lets the bot do,
 and only after their yes run `obk bot change --allow`, once per rule they said
 yes to. On a no, run nothing. `obk bot change --charter` names the rules the
