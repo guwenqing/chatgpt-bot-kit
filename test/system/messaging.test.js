@@ -87,8 +87,8 @@
 //
 // To see them fail, which is the other half of believing them: take the reply
 // sentence out of the Codex bot's start prompt and case 1 cannot find MARMOSET;
-// take the shell loop out of the busy bot's and case 2 cannot find the total.
-// Neither passes on what its tab was told.
+// take the shell loop out of the busy bot's and case 2 finds no line in the
+// loop's file. Neither passes on what its tab was told.
 //
 // It is slow: two real agents, a round trip between them, and a long task in
 // the middle. Minutes, not seconds.
@@ -299,25 +299,31 @@ async function readyForMail(handle, within = READY_MS) {
  * and it is read off the work's own output rather than out of Orca. Orca cannot
  * answer it: Codex runs a shell command in the background and waits on it, so
  * the TUI reads idle for the whole forty seconds — `satisfied` was never false
- * once in a live run where the work plainly ran (its screen: "Waited for
- * background terminal", then the numbers, then the total). A longer loop would
- * not change that. What does answer it is the loop's own lines: some of them
- * printed, and the total not yet.
+ * once in a live run where the work plainly ran.
+ *
+ * Nor can the screen, any more. Codex 0.157.1 shows a command's output only
+ * when the command ends: while the loop ran, no STEP line was ever on the
+ * screen, only `Working (22s • esc to interrupt) · 1 background terminal
+ * running`, and when it ended, `└ STEP-38 / STEP-39 / STEP-40 / + Show
+ * details` (#363). So the loop writes each line to a file in the bot's own
+ * folder as well as printing it, and the file is what is read: the third line
+ * written, and the last one not.
  */
-async function partWayThrough(handle, marker, within = ANSWER_MS) {
+async function partWayThrough(handle, steps, within = ANSWER_MS) {
+  let written = '';
   await until(
     `${handle} to be part way through the work it was given`,
     within,
     async () => {
-      const screen = screenOf(handle);
-      if (!screen.includes(marker)) return undefined;
+      written = await readFile(steps, 'utf8').catch(() => '');
+      if (!written.includes(PART_WAY)) return undefined;
       assert.ok(
-        !screen.includes(TOTAL),
-        `the work finished before this could send anything, so nothing here would be about a busy receiver: ${screen.slice(0, 2000)}`,
+        !written.includes(LAST_STEP),
+        `the work finished before this could send anything, so nothing here would be about a busy receiver: ${steps} holds ${JSON.stringify(written)}`,
       );
       return true;
     },
-    () => whatIsUp(handle),
+    () => ` ${steps} holds ${JSON.stringify(written)}.${whatIsUp(handle)}`,
   );
 }
 
@@ -337,9 +343,10 @@ async function partWayThrough(handle, marker, within = ANSWER_MS) {
  *            never told it — not by the message, which asks for a reply without
  *            saying what it should carry. So MARMOSET on the Claude screen is
  *            the reply having been written, carried and read.
- *   TOTAL    is the sum of the numbers the busy receiver counts. Its
- *            instruction asks for the sum and never says what it is, so the
- *            number is what doing the work produces and nothing else.
+ *   STEP-40  is the busy receiver's last line, and it and the time beside it
+ *            are what running the loop writes to its file. Its instruction
+ *            holds the format that makes them and never the line or the time,
+ *            so the file holds them only if the work was done.
  *
  * Which is why each bot's part is in its own start prompt: a prompt that told
  * one bot what the other would say would put that word on the wrong screen
@@ -360,18 +367,41 @@ const PASSPHRASE = 'MARMOSET-9930';
 const QUESTION = 'PELICAN-4417';
 
 /**
- * The work the busy receiver is given: a shell loop of about a minute, the
- * lines it prints while it runs, and the total only doing it produces.
+ * The work the busy receiver is given: a shell loop of about a minute, and the
+ * lines it writes while it runs, each with the time it was written.
  *
  * The lines are numbered with a leading zero so that one of them is not a piece
- * of another — a screen holding `STEP-30` must not read as `STEP-3` — and the
+ * of another — a file holding `STEP-30` must not read as `STEP-3` — and the
  * third is what the test waits for before it sends, which leaves most of the
- * loop still to run.
+ * loop still to run. The last one, and its time, say when the work ended:
+ * each turn of the loop sleeps first and writes after, so writing `STEP-40` is
+ * the last thing the loop does. With the sleep after the write, a read in the
+ * second after `STEP-40` would come while the loop was still sleeping.
+ *
+ * Each line goes, through `tee`, to a file in the bot's own folder, the one
+ * place a Codex bot in auto mode may write, because the file grows while the
+ * loop runs and the screen does not (see `partWayThrough`). Neither `STEP-03`
+ * nor `STEP-40` nor any time is in the instruction, only the format that makes
+ * them, so the file holds one only if the loop has run that far.
+ *
+ * The work used to end in a total the model worked out from the lines, and the
+ * case waited for it. It is gone: seen live on Codex 0.157.1, the model stopped
+ * waiting on the loop after 30 seconds (`Unknown process id`), summed the
+ * thirty lines it had and printed `TOTAL: 465`, while the loop ran on to the
+ * end. A sum the model gets wrong says nothing about the kit.
  */
 const COUNT_TO = 40;
-const WORK = `for i in $(seq 1 ${COUNT_TO}); do printf 'STEP-%02d\\n' "$i"; sleep 1; done`;
+const STEPS_FILE = 'steps.txt';
+const work = (steps) => `for i in $(seq 1 ${COUNT_TO}); do sleep 1; printf 'STEP-%02d %s\\n' "$i" "$(date +%s)" | tee -a ${steps}; done`;
 const PART_WAY = 'STEP-03';
-const TOTAL = `TOTAL: ${(COUNT_TO * (COUNT_TO + 1)) / 2}`;
+const LAST_STEP = `STEP-${COUNT_TO}`;
+
+/**
+ * Where the busy receiver reads its mail to: the time, in whole seconds, just
+ * before the kit's check ran, and then the check's answer. The time comes
+ * first, so the read itself can only have been later.
+ */
+const MAIL_FILE = 'mail-read.txt';
 
 /**
  * What every bot here is told, whatever its part: who it is, where its bots
@@ -439,18 +469,28 @@ const exchangePrompts = (bots, bot) => (bot.harness === 'claude'
  * numbers of its own and it was finished before Orca could be asked whether it
  * was working — the tab has to be busy long enough for "busy" to be a fact
  * anybody can check.
+ *
+ * Its mail it reads the way the receiver in case 3 does: the kit's own check,
+ * in its own tab, with its shell writing the answer to a file, here after the
+ * time. So when the mail was read is a time its own shell wrote down, and so
+ * is when the work ended; the order is theirs, not where things sit on a
+ * screen.
  */
-const busyPrompts = (bots, bot) => (bot.harness === 'codex'
-  ? [
-    ...aBotOf(bots),
-    'As soon as you are running, run exactly this command, once:',
-    WORK,
-    'When it has finished, print TOTAL: followed by the sum of the numbers in the STEP lines it printed,',
-    'on a line of its own.',
-    ...READS_ITS_MAIL,
-    'Then wait, and say nothing else.',
-  ]
-  : [...aBotOf(bots), 'Say nothing now and wait.']).join(' ');
+const busyPrompts = (bots, bot) => {
+  const home = path.join(bots, 'bots', bot.name);
+  const check = `${KIT} message check --bots ${bots} --bot ${bot.name} --session daily --json`;
+  return (bot.harness === 'codex'
+    ? [
+      ...aBotOf(bots),
+      'As soon as you are running, run exactly this command, once, and wait for it to finish:',
+      work(path.join(home, STEPS_FILE)),
+      'When a line arrives saying fleet mail is waiting, do not run the command that line names.',
+      'Run exactly this command instead, once, and then wait and say nothing else:',
+      `{ date +%s; ${check}; } > ${path.join(home, MAIL_FILE)}`,
+      'The two files these commands write in your folder are the only thing you write.',
+    ]
+    : [...aBotOf(bots), 'Say nothing now and wait.']).join(' ');
+};
 
 /**
  * Where the receiver in case 3 puts the two answers its mail check gave: its
@@ -621,46 +661,86 @@ test('a busy receiver finishes what it was doing before it reads its mail', asyn
   // Three things have to hold for that to have been shown, rather than assumed.
   //
   // The receiver has to be busy when the message arrives. That is read off the
-  // work's own output — some of the loop's lines printed, the total not yet —
-  // and not out of Orca, which cannot answer it: Codex runs a shell command in
-  // the background and waits on it, so the tab reads idle for the whole forty
-  // seconds it is working (live run, 2 of 3).
+  // work's own output — some of the loop's lines written to its file, the last
+  // one not yet — and not out of Orca, which cannot answer it: Codex runs a
+  // shell command in the background and waits on it, so the tab reads idle for
+  // the whole forty seconds it is working (live run, 2 of 3). Nor off the
+  // screen, where Codex 0.157.1 shows none of the loop's lines until it has
+  // ended (#363).
   //
-  // The work has to have finished, so the receipt is the total, a value its
-  // instruction asks for and never states; the word the first version of this
-  // case waited for was in the instruction itself, and was on the screen whether
-  // or not a single line was ever printed.
+  // The work has to have finished, so the receipt is the loop's last line in
+  // its file. An earlier version waited for a word that was in the instruction
+  // itself, and was on the screen whether or not a single line was ever
+  // printed; a later one waited for a total the model summed, which Codex
+  // 0.157.1 once got wrong with the work done (see `work`).
   //
-  // And the mail has to have been read after that, which is the order the two
-  // sit in on the screen, both of them present.
-  const { bots, tabs } = await aFleet(t, 'busy', busyPrompts);
+  // And the mail has to have been read after that. The order is two times the
+  // receiver's own shell wrote down: beside the loop's last line, and just
+  // before the kit's check handed the mail over. Nobody's screen decides it.
+  const { bots, homeOf, tabs } = await aFleet(t, 'busy', busyPrompts);
   const mail = 'OTTER-2245';
   const receiver = tabs['mail-codex'].terminal;
+  const steps = path.join(homeOf('mail-codex'), STEPS_FILE);
+  const mailRead = path.join(homeOf('mail-codex'), MAIL_FILE);
 
   // It is part way through what its start prompt gave it: some of the loop's
-  // lines are on the screen and the total is not. That is what says the mail
+  // lines are in its file, and the last one is not. That is what says the mail
   // below arrives at a receiver with work in hand, and there are some thirty
   // seconds of loop still to run after it.
-  await partWayThrough(receiver, PART_WAY);
+  await partWayThrough(receiver, steps);
 
   // Mail arrives in the middle of it. The kit types the nudge in; nobody
-  // interrupts anybody.
-  const sent = obk([
+  // interrupts anybody. The send exits 0 whether or not the nudge went in —
+  // the mail is queued either way — so the kit's own answer is what says it
+  // did: a tab it found blocked, or could not be sure of, gets nothing typed.
+  const sent = obkJson([
     'message', 'send', '--bots', bots, '--to', 'mail-codex/daily', '--from', 'mail-claude/daily',
     '--subject', 'while you are busy', '--text', `${mail} — nothing to do, just read this.`,
   ]);
-  assert.equal(sent.status, 0, `the send should have gone through: ${sent.stdout}${sent.stderr}`);
+  assert.equal(sent.sent, true, `the send should have gone through: ${JSON.stringify(sent)}`);
+  assert.equal(sent.nudged, true, `the kit should have typed its nudge into the receiver's tab while it worked: ${JSON.stringify(sent)}`);
 
-  await showsUp(receiver, mail, ROUND_TRIP_MS);
-
-  const screen = screenOf(receiver);
+  // The send types its nudge before it returns, so work not finished now was
+  // not finished when the nudge went in.
+  const written = await readFile(steps, 'utf8');
   assert.ok(
-    screen.includes(TOTAL),
-    `the work it was given should have finished, and ${TOTAL} is what finishing it produces: ${screen.slice(0, 3000)}`,
+    !written.includes(LAST_STEP),
+    `the work finished before the nudge went in, so this shows nothing about a busy receiver: ${steps} holds ${JSON.stringify(written)}`,
   );
+
+  // It read its mail with the kit's check, and the answer holds the mail. The
+  // tab was never told OTTER: the nudge carries the sender and the subject.
+  const readIn = async () => {
+    try {
+      const [at, ...answer] = (await readFile(mailRead, 'utf8')).split('\n');
+      return { at: Number(at), answer: JSON.parse(answer.join('\n')) };
+    } catch {
+      return undefined;
+    }
+  };
+  const read = await until('the receiver to have read its mail', ROUND_TRIP_MS, readIn, () => whatIsUp(receiver));
   assert.ok(
-    screen.indexOf(TOTAL) < screen.indexOf(mail),
-    `the mail should have been read after the work, not in the middle of it: ${screen.slice(0, 3000)}`,
+    (read.answer.messages ?? []).some((message) => String(message.body).includes(mail)),
+    `the kit's check should have handed it the mail: ${JSON.stringify(read.answer)}`,
+  );
+
+  // The work finished: the loop wrote its last line, which is the last thing
+  // it does, and the time beside it.
+  const lastLine = new RegExp(`${LAST_STEP} (\\d+)`);
+  const ended = await until(
+    `the loop's last line in ${steps}`,
+    ANSWER_MS,
+    async () => lastLine.exec(await readFile(steps, 'utf8').catch(() => ''))?.[1],
+    () => whatIsUp(receiver),
+  );
+
+  // And the mail was read after it. Both times are whole seconds, so the read's
+  // has to be a later second than the last line's: in the same second either
+  // could have come first.
+  assert.ok(
+    read.at > Number(ended),
+    `the mail should have been read after the work ended, not in the middle of it: the check ran at ${read.at}, and the loop wrote its last line at ${ended}. `
+    + `If the screen shows Codex stopped waiting on the loop, the model left its own work, which is not the nudge cutting in: ${screenOf(receiver).slice(0, 3000)}`,
   );
 });
 

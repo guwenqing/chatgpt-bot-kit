@@ -277,9 +277,9 @@ const RELOAD_SCRIPT = fileURLToPath(new URL('./orca-reload.applescript', import.
  * the real id, so an orphaned entry is given that one: the tab id is the key
  * (PRD 6.2), and this is where Orca is asked for it (tech notes, section 1).
  */
-export const tabs = (home) => orca(['terminal', 'list', '--worktree', `path:${home}`]).terminals
+export const tabs = (home, options) => orca(['terminal', 'list', '--worktree', `path:${home}`], options).terminals
   .map((tab) => (tab.orphaned === true
-    ? { ...tab, tabId: orca(['terminal', 'show', '--terminal', tab.handle]).terminal.tabId }
+    ? { ...tab, tabId: orca(['terminal', 'show', '--terminal', tab.handle], options).terminal.tabId }
     : tab));
 
 /**
@@ -645,12 +645,12 @@ export function postMessage({ to, from, subject, body, type = 'status', thread }
  * the terminal `handle` when one is given, which is how a read works from a tab
  * bound to another Run; otherwise as this process's own terminal.
  */
-export const readMailbox = (id, { peek = false, handle } = {}) =>
-  orca(['orchestration', 'check', '--run', id, ...as(handle), ...(peek ? ['--peek'] : [])]);
+export const readMailbox = (id, { peek = false, handle } = {}, options) =>
+  orca(['orchestration', 'check', '--run', id, ...as(handle), ...(peek ? ['--peek'] : [])], options);
 
 /** Say a batch has been read. Orca answers with the batch after it. */
-export const ackMailbox = (id, delivery, handle) =>
-  orca(['orchestration', 'check', '--run', id, ...as(handle), '--ack', delivery]);
+export const ackMailbox = (id, delivery, handle, options) =>
+  orca(['orchestration', 'check', '--run', id, ...as(handle), '--ack', delivery], options);
 
 /** The reader of a `check`: the terminal named, or this process's own. */
 const as = (handle) => (handle === undefined ? [] : ['--terminal', handle]);

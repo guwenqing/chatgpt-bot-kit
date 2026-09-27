@@ -18,10 +18,10 @@
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { readBook } from './book.js';
+import { MAILBOX_WAIT_MS, readBook, takeMailboxTurn } from './book.js';
 import { botDir, botNames, readBot } from './bot.js';
 import { harnessOf, isAddressOf, ownCli, reachesMail, shellWord } from './launch.js';
-import { ackMailbox, coordinatorOf, postMessage, readMailbox, tabs, tabToTypeInto, TERMINAL_ENV, typeIntoTab, useMailbox } from './orca.js';
+import { ackMailbox, coordinatorOf, postMessage, readMailbox, tabs, tabToTypeInto, TERMINAL_ENV, TIMED_OUT, typeIntoTab, useMailbox } from './orca.js';
 
 /**
  * How much of a message travels as itself. Above this it is written to a file
@@ -186,10 +186,37 @@ export function sendMessage(bots, { to: target, from: sender, tab, subject, text
  * check hands over all of it (issue #299).
  */
 export function checkMail(bots, { bot: botName, session: sessionName, tab, peek = false }) {
-  const who = sessionName === undefined && botName === undefined
+  const asked = sessionName === undefined && botName === undefined
     ? whoIsWriting(bots, undefined, tab, '--bot <bot> [--session <name>]: whose mail to read')
     : findSession(bots, sessionName === undefined ? botName : `${botName}/${sessionName}`);
 
+  // The session's turn at its mailbox, so the book does not move to another tab
+  // between the bind and the last ack, and the book read again once it is had:
+  // a check that waited while `up` wrote a new tab reads nothing from the old
+  // one (#321).
+  const turn = takeMailboxTurn(asked.home, asked.session);
+  if (turn === undefined) {
+    return {
+      bots,
+      bot: asked.bot,
+      session: asked.session,
+      mailbox: asked.mailbox,
+      messages: [],
+      trouble: `waited ${MAILBOX_WAIT_MS / 1000} seconds for ${asked.bot}/${asked.session}'s mailbox while another obk was making, binding or reading it, and it did not finish. Nothing was read, and its mail is still waiting.`,
+    };
+  }
+  try {
+    return mailOf(bots, findSession(bots, `${asked.bot}/${asked.session}`), peek, Date.now() + HOLD_MS);
+  } finally {
+    turn.release();
+  }
+}
+
+/**
+ * What `checkMail` does once it has the session's turn, with `who` as the book
+ * says now, asking Orca nothing after `until`.
+ */
+function mailOf(bots, who, peek, until) {
   if (who.mailbox === undefined) {
     return {
       bots,
@@ -205,7 +232,7 @@ export function checkMail(bots, { bot: botName, session: sessionName, tab, peek 
   // every message after (issue #228). A session with no live tab is read as
   // whatever its mailbox is bound to, a closed tab included, and nothing is
   // bound: the session's tab is bound again when it is back up (issue #249).
-  const live = who.tab === undefined ? undefined : tabs(who.home).find((tab) => tab.tabId === who.tab)?.handle;
+  const live = who.tab === undefined ? undefined : tabs(who.home, timeLeft(until)).find((tab) => tab.tabId === who.tab)?.handle;
   // Orca 1.4.210 lets a process in a tab bind and read as that tab and no
   // other, and refuses the rest with nothing done (#317). So from inside any
   // other tab, the kit asks nothing and says where the mail can be read.
@@ -220,8 +247,8 @@ export function checkMail(bots, { bot: botName, session: sessionName, tab, peek 
       trouble: `${who.bot}/${who.session}'s mail can be read only in its own tab: Orca lets a tab bind and read its own mailbox and no other. Nothing was read, and its mail is still waiting.`,
     };
   }
-  if (live !== undefined) useMailbox(who.mailbox, live);
-  const handle = live ?? coordinatorOf(who.mailbox);
+  if (live !== undefined) useMailbox(who.mailbox, live, timeLeft(until));
+  const handle = live ?? coordinatorOf(who.mailbox, timeLeft(until));
   if (handle === undefined) {
     return {
       bots,
@@ -235,15 +262,60 @@ export function checkMail(bots, { bot: botName, session: sessionName, tab, peek 
   // Orca hands mail over a batch at a time and replays the oldest until it is
   // acknowledged; the acknowledgement answers with the next batch. So a read
   // takes every batch in turn, or newer mail waits behind an older one (#299).
+  //
+  // A batch is given back once it is acknowledged, and not before: one this
+  // check stops short of acknowledging is handed over again to the next.
   const messages = [];
-  let found = readMailbox(who.mailbox, { peek, handle });
+  const read = { bots, bot: who.bot, session: who.session, mailbox: who.mailbox, read: !peek, messages };
+  let found = readMailbox(who.mailbox, { peek, handle }, timeLeft(until));
   for (;;) {
-    messages.push(...(found.messages ?? []).map((message) => asMessage(bots, message)));
-    if (peek || !found.deliveryId || (found.messages ?? []).length === 0) break;
-    found = ackMailbox(who.mailbox, found.deliveryId, handle);
+    const batch = (found.messages ?? []).map((message) => asMessage(bots, message));
+    if (peek || !found.deliveryId || batch.length === 0) {
+      messages.push(...batch);
+      return read;
+    }
+    const wait = timeLeft(until, false);
+    if (wait === undefined) {
+      return { ...read, trouble: `${who.bot}/${who.session} has more mail than one check reads in ${HOLD_MS / 1000} seconds, so it stopped there. The rest is still waiting: check again.` };
+    }
+    try {
+      found = ackMailbox(who.mailbox, found.deliveryId, handle, wait);
+    } catch (error) {
+      // An ack Orca did not answer about may have been taken all the same, and
+      // then this batch is never handed over again: it is shown, said to be
+      // uncertain, rather than lost (review of PR #368). One Orca refused was
+      // not taken, and waits for the next check.
+      if (error.code === TIMED_OUT) {
+        messages.push(...batch);
+        return { ...read, trouble: `${error.message} Orca did not answer whether it took the last ${batch.length === 1 ? 'message' : `${batch.length} messages`} shown above as read, so the next check may show ${batch.length === 1 ? 'it' : 'them'} again. The rest waits for the next check.` };
+      }
+      // What was acknowledged before this is gone from Orca, and would be lost
+      // to everyone if the failure took it down with it.
+      if (messages.length === 0) throw error;
+      return { ...read, trouble: `${error.message} The mail shown above is read, and the rest waits for the next check.` };
+    }
+    messages.push(...batch);
   }
+}
 
-  return { bots, bot: who.bot, session: who.session, mailbox: who.mailbox, read: !peek, messages };
+/**
+ * How long a check holds the session's turn, all its Orca calls together. Well
+ * inside the minute `up` waits for the turn before it writes a new tab, so a
+ * check in the old tab is done before the book moves, however slow Orca is,
+ * and however much mail there is (review of PR #368).
+ */
+const HOLD_MS = 40_000;
+
+/**
+ * What one Orca call is given: twenty seconds, as the step gives its own, or
+ * what is left of the check's hold, in whole seconds. With none left, the
+ * call is refused here, or, when `refuse` is false, undefined is answered.
+ */
+function timeLeft(until, refuse = true) {
+  const left = Math.min(20_000, Math.floor((until - Date.now()) / 1000) * 1000);
+  if (left >= 1000) return { timeoutMs: left };
+  if (refuse) throw new Error(`the kit gives a mail check ${HOLD_MS / 1000} seconds of Orca's time, and Orca took them all. Nothing more was asked of it, and the mail is still waiting.`);
+  return undefined;
 }
 
 /** One message, in the kit's words rather than Orca's. */

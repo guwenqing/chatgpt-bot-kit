@@ -201,30 +201,37 @@ say that you edited it by hand.
 Run `obk --help` for the flags of the version actually installed rather than
 trusting a line you remember.
 
-A bot on Claude Code needs a few permission rules so that auto mode does not
-stop it for what the kit's own rules tell it to do: its mail through the kit,
-reading a long message kept beside the bots folder, and its commits. `obk bot
-create`, `obk up` and `obk rules build` list the rules still waiting for a bot
-and give one command that allows them. Show the user those rules word for word
-and say in a line what each lets the bot do. Run the command only after their
-yes: it records the yes in the bot's `bot.yaml` and writes the rules into its
-settings. On a no, run nothing, and nothing is written. When the kit lists new
-rules for a bot later, ask again. Never write a permission rule into a settings
-file by hand.
+A bot needs a few permission rules so that auto mode, or Codex's sandbox and
+reviewer, does not stop it for what the kit's own rules tell it to do: its
+mail through the kit, reading a long message kept beside the bots folder, and
+its commits. `obk bot create`, `obk up` and `obk rules build` list the rules
+still waiting for a bot and give one command that allows them. Show the user
+those rules word for word and say in a line what each lets the bot do. Run the
+command only after their yes: it records the yes in the bot's `bot.yaml` and
+writes the rules into its settings, or for Codex into its
+`.codex/rules/obk.rules`. On a no, run nothing, and nothing is written. When
+the kit lists new rules for a bot later, ask again. Never write a permission
+rule into a settings or rules file by hand.
 
 The charter decides what else the bot needs. What it lets the bot do without
-asking, such as merging pull requests, auto mode can still stop, so on Claude
-Code each grant needs its own rule. When the charter is written, and again
+asking, such as merging pull requests, auto mode or Codex's sandbox can still
+stop, so each grant needs its own rule. When the charter is written, and again
 whenever it changes, list the exact rules it grants: `Bash(gh pr merge:*)` for
 a bot that merges pull requests, `Bash(gh issue close:*)` for one that closes
 issues. Spell each command as the bot will run it, the kit by the path the
 bot's rules give it and every folder absolute, or the rule will not match.
+Spell them in Claude Code's form for a Codex bot too, `Bash(<command>:*)`: the
+kit writes Codex's own form of each, and says which ones Codex has none for,
+such as an `Edit` rule or one exact command.
 Show the user the list word for word, with a line on what each lets the bot do,
 and only after their yes run `obk bot change --allow`, once per rule they said
 yes to. On a no, run nothing. `obk bot change --charter` names the rules the
-bot is allowed now; say which of them the new charter no longer grants, and
-that they stay allowed until the user takes them out, since the kit takes none
-out. Keep
+bot is allowed now; say which of them the new charter no longer grants, show
+each word for word, and ask whether to take it back. Only after their yes run
+`obk bot change --disallow`, once per rule, which takes it out of `bot.yaml`
+and the bot's settings or Codex rules; on a no, run nothing, and it stays
+allowed. A rule the user added to a settings file by hand is theirs to take
+out; the kit refuses it. Keep
 each rule narrow: a program and what it does. The kit refuses a rule that lets
 the bot run any command, a program with any arguments, or a shell or
 interpreter with any arguments; a user who wants one for a bot adds it to that
@@ -274,23 +281,31 @@ otherwise `/Applications/Orca.app/Contents/Resources/bin/orca`. A bare
 `orca` can fail. Send each answer as one `<orca> terminal send --terminal
 <handle> --text …`, with the return inside the text and no `--enter`:
 
-| On screen | Send | Which is |
-|---|---|---|
-| Claude Code's folder trust list | `\x1b[B\r` | down, return: it starts on **No, exit** |
-| Codex's `Trust this folder?`, `1. Trust and continue` | `1\r` | yes (older: `1. Yes, continue`) |
-| Codex's `Hooks need review` | `2\r` | trust all and continue |
-| Codex's `/new`: `Where should the new conversation run?` | `1\r` | current checkout (bot home) |
-| Codex's update offer, `1. Update now` | `1\r` | accept it |
-| `[oh-my-zsh] Would you like to update?` | `n` | no: the shell is the user's to update |
-| Claude Code's `Teach auto mode about…` | `2\r` | **Not now**: it writes the user's settings |
+| On screen | Send | Which is | Proven on |
+|---|---|---|---|
+| Claude Code's trust list | `\x1b[B\r` | down, return: off **No, exit** | Claude Code 2.1.283 |
+| Codex's `Trust this folder?` | `\r` | return: it starts on yes | Codex 0.157.1 |
+| Codex's `Hooks need review` | `\x1b[B\r` | **Trust all and continue** | Codex 0.157.1 |
+| Codex's `Where should the new conversation run?` | `\r` | **Current checkout** | Codex 0.157.1 |
+| Codex's update offer, `1. Update now` | `\r` | **Update now**, where it starts | Codex 0.156.1 |
+| `[oh-my-zsh] Would you like to update?` | `n` | no: the user updates it | oh-my-zsh bf77e35 |
+| Claude Code's `Teach auto mode…` | `\x1b` | Esc, **Not now** | Not yet proven, below |
 
-Read the numbers off the screen in front of you rather than trusting the
-table: a harness that has added an option has moved them. Codex's hooks
+Each key counts on where the selection starts on the version named. Read the
+screen before you send: if the selection is elsewhere or the options have
+moved, go to the answer with the arrows, then return. Never a digit and then
+return: on Codex's update offer that took the highlighted **Update now**,
+whatever the digit was. Codex's trust said `1. Yes, continue` on older
+versions. Its hooks review sometimes starts on `2` already: then return alone.
+0.157.1 has had no newer release to offer, so its update offer was proven on
+0.156.1. Claude Code's `Teach auto mode` has not been seen live on 2.1.283:
+Esc is Not now in its code, and 2.1.278 was answered with `2. Not now`.
+Not now, because Yes writes the user's settings. Codex's hooks
 question matters most. The kit's hook is how the book learns which
 conversation the session is running, and until it is answered the
 conversation has not started. Codex's trust applies to the repository root,
 which is the whole bots folder. Codex's `/new` may ask where the new
-conversation runs (0.156.1 did; 0.157.1 has not so far); the answer is
+conversation runs (0.156.1 and 0.157.1 both did); the answer is
 always the current checkout, the bot home, and never `2. New worktree`:
 the kit never makes a git worktree.
 

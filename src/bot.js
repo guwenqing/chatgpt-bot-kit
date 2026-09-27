@@ -254,14 +254,14 @@ export function changeBot(bots, bot, { charter }) {
 }
 
 /**
- * The bot's `allow` list as it is, after refusing what `allowRules` would refuse:
- * an empty rule, or a list already there that is not a list of rules. Asked
- * before anything is written, so a refused `bot change` changes nothing, its
- * charter included.
+ * The bot's `allow` list as it is, after refusing what `allowRules` or
+ * `disallowRules` would refuse: an empty rule, or a list already there that is
+ * not a list of rules. Asked before anything is written, so a refused `bot
+ * change` changes nothing, its charter included.
  */
-export function allowedNow(bots, bot, rules) {
+export function allowedNow(bots, bot, rules, flag = '--allow') {
   if (rules.some((rule) => rule.trim() === '')) {
-    throw new Error('--allow is empty. Give it the exact permission rule the user said yes to, such as Bash(git add:*).');
+    throw new Error(`${flag} is empty. Give it the exact permission rule the user said yes to, such as Bash(git add:*).`);
   }
   const home = existingBot(bots, bot);
   const was = readBot(home, bot).allow ?? [];
@@ -287,6 +287,21 @@ export function allowRules(bots, bot, rules) {
     editBot(bots, bot, `allow ${added.join(', ')} for ${bot}`, (doc) => doc.set('allow', allow), (before) => ({ ...before, allow }));
   }
   return { bot, home, allow, added };
+}
+
+/**
+ * Take the permission rules the user said yes to taking back, `rules`, out of
+ * the bot's `allow` (#360). Returns { bot, home, allow, disallowed }: the whole
+ * list now, and what this call took out. The caller has refused a rule `allow`
+ * does not hold, and takes them out of the harness's files first. With `write`
+ * false it only refuses what the edit would refuse, and writes nothing.
+ */
+export function disallowRules(bots, bot, rules, { write = true } = {}) {
+  const { home, was } = allowedNow(bots, bot, rules, '--disallow');
+  const disallowed = [...new Set(rules)];
+  const allow = was.filter((rule) => !disallowed.includes(rule));
+  editBot(bots, bot, `take back ${disallowed.join(', ')} for ${bot}`, (doc) => doc.set('allow', allow), (before) => ({ ...before, allow }), write);
+  return { bot, home, allow, disallowed };
 }
 
 /**
@@ -387,9 +402,10 @@ function editSession(bots, bot, index, session, what) {
 
 /**
  * Make one edit to a bot's `bot.yaml` through the YAML library, and write it
- * only if exactly the change `expected` describes is what came out.
+ * only if exactly the change `expected` describes is what came out, and
+ * `write` is not false.
  */
-function editBot(bots, bot, what, edit, expected) {
+function editBot(bots, bot, what, edit, expected, write = true) {
   const file = path.join(existingBot(bots, bot), BOT_YAML);
   const source = readFileSync(file, 'utf8');
   const doc = parseDocument(source);
@@ -398,7 +414,7 @@ function editBot(bots, bot, what, edit, expected) {
   if (!changesExactly(source, text, expected)) {
     throw new Error(`${file} cannot be changed to ${what} without changing something else in it, so nothing was written. Make the change by hand.`);
   }
-  if (text !== source) writeFileSync(file, text);
+  if (write && text !== source) writeFileSync(file, text);
 }
 
 /** A bot that is there, by its home, or the refusal a caller who named another is owed. */

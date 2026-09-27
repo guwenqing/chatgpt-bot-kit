@@ -60,6 +60,30 @@ export function hasConversation(harness, home, id) {
 export const claudeTranscript = (home, id) => path.join(claudeDir(home), `${id}.jsonl`);
 
 /**
+ * The transcripts of the subagents a Claude Code conversation started, given the
+ * file the conversation is in. They sit beside it, in a folder named by its id,
+ * one `agent-<name>.jsonl` each, with a `.meta.json` beside each that is not a
+ * transcript (tech notes, section 2).
+ *
+ * No folder is a conversation that started no subagent. A folder that is there
+ * and cannot be listed is `unreadable`: what is in it cannot be counted, and
+ * taking it as empty would say nothing of that.
+ */
+export function claudeSubagentTranscripts(file) {
+  const dir = path.join(file.slice(0, -'.jsonl'.length), 'subagents');
+  let names;
+  try {
+    names = readdirSync(dir);
+  } catch (error) {
+    return { files: [], unreadable: error.code === 'ENOENT' ? 0 : 1 };
+  }
+  return {
+    files: names.filter((name) => name.endsWith('.jsonl')).sort().map((name) => path.join(dir, name)),
+    unreadable: 0,
+  };
+}
+
+/**
  * The same conversations, each with the file the harness keeps it in, for a
  * caller that has to read what is inside one rather than only know it is there,
  * and whether the harness marks it as a subagent's.
