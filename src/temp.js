@@ -88,13 +88,20 @@ export async function makeTemp(bots, { tab, ...given }) {
     // A session in bot.yaml that the book does not call temporary would be a
     // long-lived one to everything that reads it, its maker's retire included,
     // so it is taken back off rather than left that way.
+    const failed = `${caller.bot}/${given.name} could not be recorded in the book as temporary (${error.message})`;
     try {
       dropSession(bots, caller.bot, given.name);
-      if (written !== undefined) rmSync(written, { force: true });
     } catch (undo) {
-      throw new Error(`${caller.bot}/${given.name} could not be recorded in the book as temporary (${error.message}), and taking it back off bot.yaml failed too (${undo.message}). It is in bot.yaml as a session the book does not call temporary. Take it off with  ${shellWord(ownCli())} retire --bots ${shellWord(bots)} --bot ${caller.bot} --session ${given.name}`);
+      throw new Error(`${failed}, and taking it back off bot.yaml failed too (${undo.message}). It is in bot.yaml as a session the book does not call temporary. Take it off with  ${shellWord(ownCli())} retire --bots ${shellWord(bots)} --bot ${caller.bot} --session ${given.name}`);
     }
-    throw new Error(`${caller.bot}/${given.name} could not be recorded in the book as temporary (${error.message}), so it was taken back off bot.yaml and nothing was made. Run this again once the book can be written.`);
+    // Off bot.yaml, nothing is made; a prompt file that stays is only a file,
+    // and nothing reads it (#393).
+    try {
+      if (written !== undefined) rmSync(written, { force: true });
+    } catch (left) {
+      throw new Error(`${failed}, so it was taken back off bot.yaml and nothing was made. Its start prompt ${written} could not be removed (${left.message}), and nothing reads it. Remove it with  rm ${shellWord(written)}`);
+    }
+    throw new Error(`${failed}, so it was taken back off bot.yaml and nothing was made. Run this again once the book can be written.`);
   }
 
   let up;

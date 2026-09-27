@@ -719,6 +719,51 @@ test('TQ1 a make that cannot write the book leaves nothing of the session, says 
   assert.equal((await sessionIn(bots, BOT, 'scout'))?.temporary?.maker, 'planner', 'with the lock let go, the same make works');
 });
 
+test('TQ4 a make whose book write fails and whose prompt file cannot be removed says the session was taken back and names the file left, with rm', { skip: NEEDS_A_USER }, async (t) => {
+  // From round 2 of the review of PR 404: bot.yaml was put back as it was, the
+  // prompt file could not be removed, and the message said the session was
+  // still in bot.yaml and to retire it, which then refused a session that was
+  // not there. A leftover prompt file of the same name can be written over but
+  // not removed, in a prompts folder that is read-only for the run.
+  const box = await createSandbox(t);
+  const { bots, planner } = await fleet(box);
+  const file = promptFileOf(bots, BOT, 'scout');
+  await writeFile(file, 'left over from an earlier run\n');
+  const folder = promptsOf(bots);
+  const mode = (await stat(folder)).mode & 0o7777;
+  const from = await callCount(box);
+
+  await chmod(folder, 0o555);
+  const lock = await holdBookLock(bots, BOT);
+  let result;
+  try {
+    result = await make(box, planner, SCOUT);
+  } finally {
+    lock.release();
+    await chmod(folder, mode);
+  }
+
+  const said = `${result.stdout}${result.stderr}`;
+  assert.notEqual(result.code, 0, `the make failed, and says so in its exit code, got:\n${said}`);
+  assert.ok(!/^\s+at /m.test(said), `expected a message, got a crash:\n${said}`);
+  assert.ok(await exists(file), 'the prompt file is still there, or this is not the case at hand');
+  assert.equal(await entryIn(bots, BOT, 'scout'), undefined, 'scout is not in bot.yaml');
+  assert.equal(await sessionIn(bots, BOT, 'scout'), undefined, 'nor in the book');
+  assert.deepEqual(orcaCallsOf(await since(box, from), 'terminal create'), [], 'and no tab was opened');
+  assert.match(said, /nothing|taken back|taken off/i, `it says the session was taken back, nothing made, got:\n${said}`);
+  assert.ok(said.includes(file), `it names the prompt file left, got:\n${said}`);
+  assert.match(said, /EACCES|EPERM|permission/i, `and why it could not be removed, got:\n${said}`);
+  assert.ok(
+    said.split('\n').some((line) => /\brm\b/.test(line) && line.includes(file)),
+    `and a command that removes it, got:\n${said}`,
+  );
+  assert.deepEqual(
+    commandsIn(said).filter((one) => /^(temp )?retire\b/.test(one)),
+    [],
+    `it does not send the user to retire a session that is not there, got:\n${said}`,
+  );
+});
+
 /** Names that are not one plain name: not a single folder under work/, or not a name the kit gives anything. */
 const NOT_A_NAME = ['../../escaped-work', 'a/b', 'Upper', '..'];
 
