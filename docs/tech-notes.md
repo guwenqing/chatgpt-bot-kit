@@ -359,19 +359,41 @@ Nothing in the kit's code, tests or skills stands in his way.
 - The shell's own question. On this machine zsh asks `[oh-my-zsh] Would you like to update? [Y/n]`, and
   it swallows anything typed while it is up. The usual answer is `n`; the user updates his shell
   himself. It cannot be turned off per tab, since a tab cannot be given an environment of its own.
+  It reads one key: `n` alone, with no return, answered it and left the shell prompt, and the update
+  check's `LAST_EPOCH` moved to today. **verified** (live, 2026-09-27, oh-my-zsh bf77e35, brought up
+  with `ZSH_CACHE_DIR` set to a throwaway folder holding `LAST_EPOCH=0`, so the user's own cache was
+  not touched)
 - A folder-trust question. Claude Code draws a list whose selection starts on **`No, exit`**, so it
   takes an arrow down and then return, not a bare return. Codex draws `1. Yes, continue` / `2. No, quit`
   (`Trust this folder?` with `1. Trust and continue` / `2. Quit` on 0.156.1, seen 2026-09-24) with the selection already on yes, and says plainly that trusting applies to the **repository root**,
   not the bot folder — for a bot that means the whole bots repo. Click yes either way. The harness then
   writes its own config, which is fine.
+  On Codex 0.157.1 the screen ends `enter continue · esc quit`, and return alone took
+  `1. Trust and continue`: the hooks review came next and `~/.codex/config.toml` gained the root.
+  **verified** (live, 2026-09-27, #335)
 - A harness update offer. Codex shows `✨ Update available! … 1. Update now / 2. Skip / 3. Skip until
-  next version`. Accept it.
+  next version`. Accept it. The selection starts on `1. Update now` and the screen ends
+  `enter continue · esc skip`, so return accepts it. A digit then return is no way to pick an option
+  here: `2` then return, meant as Skip, took **Update now** on 0.156.1 (2026-09-26, #329). **verified**
+  (live, 0.156.1). 0.157.1 has had no newer release to offer, so it has not shown there.
 - Codex's hooks review, because the kit's own hook is new to it: `Hooks need review … 1. Review hooks /
   2. Trust all and continue / 3. Continue without trusting`. Trust them, or the kit's hook never runs
-  (section 3). The selection starts on `1`, so it takes an arrow down and then return.
+  (section 3). The selection starts on `1`, so it takes an arrow down and then return; the screen ends
+  `enter confirm · esc skip`. On some runs it started on `2` already, and then return alone is the
+  answer, so read where it starts. **verified** (live, 2026-09-27, 0.157.1: the kit's hook ran and the
+  book got the session's id, #335)
+- Codex's `/new` may ask `Where should the new conversation run?` with `1. Current checkout` /
+  `2. New worktree`, ending `enter select · esc back`. The selection starts on `1`, and return took
+  it: a new conversation in the same folder, and no worktree added. **verified** (live, 2026-09-27,
+  0.157.1, #335; also seen on 0.156.1)
 - Claude Code may offer to learn the machine: `Teach auto mode about your environment?` with
-  `1. Yes / 2. Not now / 3. Don't show again`. Answer **`2. Not now`**: it would write settings of the
+  `1. Yes / 2. Not now / 3. Don't show again`. Answer **Not now**: it would write settings of the
   user's, and that is not the kit's to start. **verified** (live, 2.1.278)
+  Read in the 2.1.283 binary: Esc on it is Not now (both the list's and the dialog's cancel choose
+  "later"). It shows in auto mode when the user has no auto-mode environment set, at least 5 startups
+  and at least 5 auto-mode denials, and not within 7 days of a Not now; Don't show again ends it for
+  good. On this machine the last Not now was 2026-09-21T09:26Z, so no run before 2026-09-28T09:27Z
+  can show it. Proving Esc live waits for that (#370).
 - Anything else: type nothing and raise it with the user, naming the bot, the tab and what is on screen.
 
 The kit's own code does not change user-level settings on its own initiative.

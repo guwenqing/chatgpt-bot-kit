@@ -9,7 +9,10 @@
 // What is deliberately left alone: the Orca CLI path, the harness names in step
 // 1 and the key sequences in step 5's table. Those are facts about other
 // people's software, recorded in docs/tech-notes.md and proven live, and there
-// is nothing here to check them against.
+// is nothing here to check them against. The shape of step 5's table is held in
+// test/screen-table.test.js: its Proven on column, no key that is a digit and
+// then return, and its agreeing with the same table in the obk-bot-building
+// skill.
 
 import assert from 'node:assert/strict';
 import { readFile, stat } from 'node:fs/promises';
