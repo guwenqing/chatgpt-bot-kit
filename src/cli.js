@@ -12,14 +12,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
-import { addSession, allowedNow, allowRules, botDir, changeBot, changeSession, createBot, leadsOutside, readBot, SESSION_FIELDS } from './bot.js';
+import { addSession, allowedNow, allowRules, botDir, changeBot, changeSession, createBot, disallowRules, leadsOutside, readBot, SESSION_FIELDS } from './bot.js';
 import { addCommand, groomCommand, grooming, upCommand } from './groom.js';
 import { checkHealth, orcaSettingFindings } from './health.js';
 import { initBots } from './init.js';
 import { APPROVALS, HARNESSES, ownCli, shellWord, workDirOf } from './launch.js';
 import { checkMail, lookUp, noMailboxYet, sendMessage } from './message.js';
 import { orcaCli, orcaTrouble, RELOAD_LINE } from './orca.js';
-import { allowCommand, beyondDefaults, refuseBroad, refuseNoCodexForm, runsOnClaude, runsOnCodex, writePermissions } from './permissions.js';
+import { allowCommand, beyondDefaults, refuseBroad, refuseNoCodexForm, runsOnClaude, runsOnCodex, takeBack, writePermissions } from './permissions.js';
 import { pauseSessions, unpauseSessions } from './pause.js';
 import { recordSession, SHELL_ENV, TAB_ENV } from './record.js';
 import { restartSessions } from './restart.js';
@@ -56,13 +56,17 @@ Usage:
                             as ours: --prompt='- a bullet', and
                             --extra-arg=--search, once per extra argument.
   obk bot change --bots <path> --bot <bot> [--charter <text>]
-                 [--allow <rule> ...]
+                 [--allow <rule> ... | --disallow <rule> ...]
                             Give a bot a new charter and rebuild its AGENTS.md.
                             A running session reads it when it next starts.
                             --allow records a permission rule the user said
                             yes to, once per rule, and writes it into the bot's
                             Claude settings. A broad rule, such as Bash(gh:*),
                             is refused and nothing is written.
+                            --disallow takes back a rule the bot was allowed,
+                            once the user has said yes to that, from bot.yaml
+                            and the bot's settings. A rule the user added by
+                            hand is not the kit's, and is refused.
   obk session change --bots <path> --bot <bot> --session <session>
                   [--model <m>] [--effort <e>] [--context <c>]
                   [--approval ${APPROVALS.join('|')}]
@@ -307,6 +311,7 @@ async function run(argv) {
       peek: { type: 'boolean' },
       charter: { type: 'string' },
       allow: { type: 'string', multiple: true },
+      disallow: { type: 'string', multiple: true },
       ...Object.fromEntries(SETTINGS.map(([flag]) => [flag, { type: 'string' }])),
       'extra-arg': { type: 'string', multiple: true },
       json: { type: 'boolean' },
@@ -604,8 +609,11 @@ const commands = {
     if (values.harness !== undefined) {
       throw new Error(`bot change does not change a bot's harness: its sessions' conversations belong to the harness they ran on. To move to ${values.harness}, give it a session on ${values.harness} with obk session add, or retire the bot with obk retire and create a new one.`);
     }
-    if (values.charter === undefined && values.allow === undefined) {
-      throw new Error('bot change needs --charter <text> or --allow <rule>: what to change.');
+    if (values.charter === undefined && values.allow === undefined && values.disallow === undefined) {
+      throw new Error('bot change needs --charter <text>, --allow <rule> or --disallow <rule>: what to change.');
+    }
+    if (values.allow !== undefined && values.disallow !== undefined) {
+      throw new Error('bot change takes --allow or --disallow, not both at once, so nothing was changed. Run one, then the other.');
     }
     // Refused before anything is written, so a bad rule, or a bad list already
     // there, leaves the charter as it was too.
@@ -613,6 +621,11 @@ const commands = {
       const { home } = allowedNow(bots, values.bot, values.allow);
       refuseBroad(home, values.allow);
       refuseNoCodexForm(readBot(home, values.bot), values.allow);
+    }
+    let takeBackFrom;
+    if (values.disallow !== undefined) {
+      const { home } = allowedNow(bots, values.bot, values.disallow, '--disallow');
+      takeBackFrom = takeBack(bots, home, readBot(home, values.bot), values.disallow);
     }
 
     const answer = { bots, bot: values.bot, home: botDir(bots, values.bot) };
@@ -637,7 +650,7 @@ const commands = {
       // An allow list that is not a list is named by rules build and health,
       // and a charter already written is not undone for it.
       const bot = readBot(changed.home, changed.bot);
-      if (values.allow === undefined && (runsOnClaude(bot) || runsOnCodex(bot))) {
+      if (values.allow === undefined && values.disallow === undefined && (runsOnClaude(bot) || runsOnCodex(bot))) {
         try {
           answer.beyondDefaults = beyondDefaults(bots, changed.home, bot);
           lines.push(...charterRulesLines(bots, bot, answer.beyondDefaults));
@@ -662,6 +675,23 @@ const commands = {
         allowed.added.length === 0
           ? `${allowed.bot} was allowed every one of these already.`
           : `${allowed.bot}'s allow list in ${path.join('bots', allowed.bot, 'bot.yaml')} holds the user's yes.`,
+      );
+    }
+    if (values.disallow !== undefined) {
+      // bot.yaml first: it is the one that may still refuse, and then nothing
+      // else has changed (#360).
+      const taken = disallowRules(bots, values.bot, values.disallow);
+      const permissions = takeBackFrom(readBot(taken.home));
+      Object.assign(answer, { allow: taken.allow, disallowed: taken.disallowed, permissions });
+      const codex = permissions.find((entry) => entry.unwritten !== undefined);
+      lines.push(
+        ...taken.disallowed.map((rule) => `${'took back'.padEnd(9)}  ${rule}`),
+        ...permissions.filter((entry) => entry.removed?.length > 0).map((entry) => `${'wrote'.padEnd(9)}  ${path.relative(bots, entry.file)}  ${entry.removed.length} permission rule${entry.removed.length === 1 ? '' : 's'} taken out`),
+        ...permissionsLines(permissions, bots),
+        ...(codex === undefined || codex.written.length === 0 ? [] : [
+          `Codex reads ${codex.file} when a session starts: a Codex session of ${taken.bot} that is running now keeps these rules until its next start (obk restart).`,
+        ]),
+        `${taken.bot}'s allow list in ${path.join('bots', taken.bot, 'bot.yaml')} no longer holds ${taken.disallowed.length === 1 ? 'it' : 'them'}.`,
       );
     }
     return { answer, lines, code: trouble ? 1 : 0 };
@@ -1264,7 +1294,7 @@ function charterRulesLines(bots, bot, rules) {
   return [
     `${name} is allowed these permission rules beyond the kit's defaults, from before this change:`,
     ...rules.map((rule) => `             ${rule}`),
-    `They stay allowed, whatever the user answers, until the user takes one out of ${path.join('bots', name, 'bot.yaml')}${settings}${codex}; the kit takes none out. ${until}`,
+    `They stay allowed, whatever the user answers, until the user says yes to taking one back out of ${path.join('bots', name, 'bot.yaml')}${settings}${codex}. For one the new charter no longer grants, ask the user, and only after their yes run  ${shellWord(ownCli())} bot change --bots ${shellWord(bots)} --bot ${shellWord(name)} --disallow <rule>. ${until}`,
   ];
 }
 
