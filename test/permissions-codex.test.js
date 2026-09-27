@@ -146,14 +146,19 @@ function assertNoCodexForm(result, rule) {
  * `.codex` in a path does not count.
  */
 function reportsForCodex(stdout, rule) {
+  return codexLinesNaming(stdout, rule) > 0;
+}
+
+/** How many lines of a plain report say something about `rule` and Codex, as `reportsForCodex` reads them. */
+function codexLinesNaming(stdout, rule) {
   const lines = stdout.split('\n').map((line) => line.replaceAll('.codex', ''));
-  return lines.some((line, at) => {
+  return lines.filter((line, at) => {
     if (!line.includes(rule)) return false;
     if (/codex/i.test(line)) return true;
     if (!/^\s/.test(line)) return false;
     const heading = lines.slice(0, at).findLast((above) => above.trim() !== '' && !/^\s/.test(above));
     return heading !== undefined && /codex/i.test(heading);
-  });
+  }).length;
 }
 
 /** Nothing under the bots folder changed: not bot.yaml, not AGENTS.md, not obk.rules. */
@@ -590,4 +595,92 @@ test('X16 Bot Father on Codex: the five allowed go into its own obk.rules, and i
 
   assert.deepEqual(await codexAllowedIn(bots, 'bot-father'), codexDefaultLines(box, bots));
   assert.deepEqual(await allowedIn(bots, 'bot-father'), [], `${settingsOf(bots, 'bot-father')} is not Codex's`);
+});
+
+// ----------------------------------------------------------------- empty quoted words are part of the prefix
+
+// Only the wildcard comes off a Bash rule (`:*` at the end, or a last word
+// `*`); every fixed word stays in the pattern, an empty quoted one too. A
+// pattern that drops an empty word is looser than the rule the user allowed.
+
+test('X17 --allow Bash(git "" *) for a Codex bot never writes the pattern ["git"]: it keeps the empty word, or is refused', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await withBot(box);
+
+  const result = await change(box, ...allowing('Bash(git "" *)'));
+
+  const lines = await codexAllowedIn(bots, BOT);
+  assert.ok(!lines.includes('prefix_rule(pattern=["git"], decision="allow")'), `["git"] lets every git command through, got:\n${lines.join('\n')}`);
+  if (result.code === 0) {
+    assert.deepEqual(lines, ['prefix_rule(pattern=["git", ""], decision="allow")'], 'allowed, it keeps the empty word');
+  } else {
+    assert.deepEqual(lines, [], 'refused, nothing is written');
+    assert.deepEqual(await allowOf(bots, BOT), [], 'and nothing recorded');
+  }
+});
+
+for (const [rule, line] of [
+  ['Bash(gh pr create --body "" *)', 'prefix_rule(pattern=["gh", "pr", "create", "--body", ""], decision="allow")'],
+  ['Bash(gh pr create --body "":*)', 'prefix_rule(pattern=["gh", "pr", "create", "--body", ""], decision="allow")'],
+  ["Bash(gh pr create --body '' *)", 'prefix_rule(pattern=["gh", "pr", "create", "--body", ""], decision="allow")'],
+  ['Bash(gh pr create --body "" --title x:*)', 'prefix_rule(pattern=["gh", "pr", "create", "--body", "", "--title", "x"], decision="allow")'],
+]) {
+  test(`X17 --allow ${rule} for a Codex bot keeps the empty word in the pattern`, async (t) => {
+    const box = await createSandbox(t);
+    const bots = await withBot(box);
+
+    await ok(change(box, ...allowing(rule)));
+
+    assert.deepEqual(await codexAllowedIn(bots, BOT), [line]);
+  });
+}
+
+// ----------------------------------------------------------------- a grant with no Codex form, in every plain report
+
+for (const [writer, run] of Object.entries(WRITERS)) {
+  test(`X18 plain ${writer} names an allowed rule with no Codex form on a line that says Codex, once Codex is added to a Claude bot`, async (t) => {
+    // The reproduction: the yes was given while the bot ran only on Claude,
+    // so no --allow ever said it has no Codex form.
+    const box = await createSandbox(t);
+    const bots = await withBot(box, 'claude');
+    await ok(change(box, ...allowing('Bash(npm test)', 'Bash(git add:*)')));
+    await ok(box.run(['session', 'add', '--bots', 'bots', '--bot', BOT, '--name', 'review', '--harness', 'codex']));
+
+    const result = await ok(run(box));
+
+    assert.deepEqual(await codexAllowedIn(bots, BOT), [ADD_LINE], 'the premise: the bot runs on Codex now, and only git add has a Codex form');
+    assert.equal(
+      codexLinesNaming(result.stdout, 'Bash(npm test)'),
+      1,
+      `the report should say once, on a line that says Codex, that Bash(npm test) is not written for Codex, got:\n${result.stdout}`,
+    );
+    assert.equal(codexLinesNaming(result.stdout, 'Bash(git add:*)'), 0, `a rule written for Codex is no such line, got:\n${result.stdout}`);
+  });
+}
+
+test('X18 plain rules build names every allowed rule with no Codex form of a bot on both harnesses, not the Read rule', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await withBot(box, 'codex', BOTH);
+  const read = readDefault(box, bots);
+  await writeAllow(bots, BOT, ['Edit(~/notes/**)', read, 'Bash(git add:*)', 'Bash(git push * main)']);
+
+  const result = await ok(box.run(['rules', 'build', '--bots', 'bots', '--bot', BOT]));
+
+  for (const rule of ['Edit(~/notes/**)', 'Bash(git push * main)']) {
+    assert.equal(codexLinesNaming(result.stdout, rule), 1, `the report should say once that ${rule} is not written for Codex, got:\n${result.stdout}`);
+  }
+  assert.equal(codexLinesNaming(result.stdout, read), 0, `a Read rule needs no Codex form, got:\n${result.stdout}`);
+});
+
+test('X18 bot change --allow of a rule with no Codex form, on a bot on both harnesses, says so once, not twice', async (t) => {
+  const box = await createSandbox(t);
+  await withBot(box, 'codex', BOTH);
+
+  const result = await ok(change(box, ...allowing('Bash(npm test)')));
+
+  assert.equal(
+    codexLinesNaming(result.stdout, 'Bash(npm test)'),
+    1,
+    `the report should say once that Bash(npm test) is not written for Codex, got:\n${result.stdout}`,
+  );
 });

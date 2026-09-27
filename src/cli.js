@@ -651,13 +651,9 @@ const commands = {
       // Written at once, as the charter's rules are built at once (#344).
       const permissions = writePermissions(bots, allowed.home, readBot(allowed.home));
       Object.assign(answer, { allow: allowed.allow, permissions });
-      // What Codex has no form for was refused above for a bot only on Codex;
-      // one on both harnesses has it for Claude alone, and is told so (#354).
-      const notForCodex = permissions.flatMap((entry) => entry.unwritten ?? []).filter((one) => allowed.added.includes(one.rule));
       const codex = permissions.find((entry) => entry.unwritten !== undefined);
       lines.push(
         ...allowed.added.map((rule) => `${'allowed'.padEnd(9)}  ${rule}`),
-        ...notForCodex.map((one) => `${'not'.padEnd(9)}  written for Codex: ${one.rule}. ${one.why}.`),
         ...permissionsLines(permissions, bots),
         // Codex reads its rules when a session starts, not while it runs.
         ...(codex === undefined || codex.written.length === 0 ? [] : [
@@ -1284,6 +1280,10 @@ function permissionsLines(permissions, bots) {
     ...(entry.written.length === 0
       ? []
       : [`${'wrote'.padEnd(9)}  ${path.relative(bots, entry.file)}  ${entry.written.length} permission rule${entry.written.length === 1 ? '' : 's'} the user allowed`]),
+    // What the user allowed and Codex has no form for is said at every build,
+    // so a bot given a Codex session later hears of it too (#354). For a bot
+    // only on Codex, `--allow` refused it already.
+    ...(entry.unwritten ?? []).map((one) => `${'not'.padEnd(9)}  written for Codex: ${one.rule}. ${one.why}.`),
     ...(entry.waiting.length === 0 || listed.has(entry.bot) || !listed.add(entry.bot) ? [] : [
       `${'waiting'.padEnd(9)}  ${entry.bot}: these permission rules wait for the user's yes, and none of them is written until then:`,
       ...entry.waiting.map((rule) => `             ${rule}`),

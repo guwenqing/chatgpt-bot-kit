@@ -17,7 +17,9 @@
 // is not what the kit would write from `allow`, a rule missing or a line
 // added, and says `obk up` rewrites it. A Read rule and a rule with no Codex
 // form are not missing from it. And a Codex bot with nothing allowed and no
-// rules files hears nothing.
+// rules files hears nothing. A `.rules` file that cannot be read (a link to
+// nothing) does not stop health: it is a finding naming the file, beside every
+// other finding, and the file is left as it is.
 //
 // A finding "names the file" when its `where` is the file or its `says`
 // carries the path; which of the two is the implementer's. Everything goes
@@ -25,7 +27,7 @@
 // test/health-unknown-keys.test.js does.
 
 import assert from 'node:assert/strict';
-import { appendFile, mkdir, readFile, stat, utimes, writeFile } from 'node:fs/promises';
+import { appendFile, lstat, mkdir, readFile, readlink, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -317,4 +319,32 @@ test('H8 a Codex bot with nothing allowed and no rules files has nothing to hear
   for (const rule of defaultRules(box, bots)) {
     assert.deepEqual(saying(found, rule), [], `got: ${show(found)}`);
   }
+});
+
+test('H9 a .rules file of the user\'s that cannot be read is a finding naming it, and health still answers everything else', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await fleet(box, 'codex');
+  // A finding elsewhere in the fleet: an entry nobody allowed in Bot Father's settings.
+  const father = settingsOf(bots, 'bot-father');
+  const settings = (await settingsIn(bots, 'bot-father')) ?? {};
+  settings.permissions = { ...settings.permissions, allow: [FOREIGN_RULE] };
+  await mkdir(path.dirname(father), { recursive: true });
+  await writeFile(father, `${JSON.stringify(settings, null, 2)}\n`);
+  // The user's own rules file, a link to a file that is not there.
+  const theirs = path.join(path.dirname(codexRulesOf(bots, BOT)), 'default.rules');
+  const missing = path.join(box.root, 'gone', 'default.rules');
+  await mkdir(path.dirname(theirs), { recursive: true });
+  await symlink(missing, theirs);
+
+  const found = await health(box);
+
+  const unread = found.filter((one) => names(one, theirs));
+  assert.equal(unread.length, 1, `one finding should name ${theirs}, got: ${show(found)}`);
+  assert.equal(unread[0].bot, BOT, `got: ${show(unread[0])}`);
+  assert.match(unread[0].says, /read/i, `and say it could not be read, got: ${unread[0].says}`);
+  const other = saying(found, FOREIGN_RULE);
+  assert.equal(other.length, 1, `the rest of the fleet's findings are still there, got: ${show(found)}`);
+  assert.equal(other[0].bot, 'bot-father', `got: ${show(other[0])}`);
+  assert.ok((await lstat(theirs)).isSymbolicLink(), 'the link is left as it is');
+  assert.equal(await readlink(theirs), missing, 'leading where it led');
 });

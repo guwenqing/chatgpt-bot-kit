@@ -228,8 +228,12 @@ export function codexForm(rule) {
   if (!words.some((word) => word.includes('*'))) {
     return { why: 'Codex has no rule for one exact command: its rules match a command\'s first words, whatever comes after them' };
   }
-  const last = words.at(-1);
-  const prefix = [...words.slice(0, -1), last === '*' ? '' : last.replace(/:\*$/, '')].filter((word) => word !== '');
+  // Only the wildcard comes off, ` *` or `:*` at the very end: every word
+  // before it stays, an empty quoted one included, or the rule would be looser
+  // than the one the user said yes to.
+  const text = bash[1].trimEnd();
+  const end = /(?: |:)\*$/.exec(text);
+  const prefix = end === null ? [] : shellWords(text.slice(0, end.index)).words;
   if (prefix.length === 0 || prefix.some((word) => word.includes('*'))) {
     return { why: 'Codex has no rule for a wildcard anywhere but at the end, as a word of its own or after a colon' };
   }
@@ -413,16 +417,39 @@ function codexTrouble(home, bot) {
     }
   }
 
-  const theirs = (existsSync(folder) ? readdirSync(folder) : [])
+  // A file health cannot read is one finding of its own, and the rest of the
+  // fleet's health still comes out.
+  const unread = (where, error) => [{ where, says: `${where} could not be read (${error.code ?? error.message}), so health cannot say what it holds. It stays where it is.` }];
+  let names = [];
+  try {
+    names = existsSync(folder) ? readdirSync(folder) : [];
+  } catch (error) {
+    return unread(folder, error);
+  }
+  const theirs = names
     .filter((name) => name.endsWith('.rules') && name !== path.basename(file))
     .sort()
-    .flatMap((name) => ruleLines(readFileSync(path.join(folder, name), 'utf8')).map((line) => ({
-      where: path.join(folder, name),
-      says: `${path.join(folder, name)} holds ${line}, which the user added, not the kit. It stays where it is.`,
-    })));
+    .flatMap((name) => {
+      const where = path.join(folder, name);
+      let text;
+      try {
+        text = readFileSync(where, 'utf8');
+      } catch (error) {
+        return unread(where, error);
+      }
+      return ruleLines(text).map((line) => ({
+        where,
+        says: `${where} holds ${line}, which the user added, not the kit. It stays where it is.`,
+      }));
+    });
 
   const wanted = [...lines.keys()];
-  const present = existsSync(file) ? ruleLines(readFileSync(file, 'utf8')) : [];
+  let present = [];
+  try {
+    present = existsSync(file) ? ruleLines(readFileSync(file, 'utf8')) : [];
+  } catch (error) {
+    return [...theirs, ...unread(file, error)];
+  }
   const missing = wanted.filter((line) => !present.includes(line));
   const extra = present.filter((line) => !wanted.includes(line));
   if (missing.length === 0 && extra.length === 0) return theirs;
