@@ -980,6 +980,12 @@ function toLines(answer, bots, where) {
  * about the message.
  */
 function nudgeLine(answer, where) {
+  if (answer.nudged && answer.nudgeWatched === false) {
+    return `             its tab was typed into, and Orca could not say whether it was taken: ${answer.nudgeUnseen} The message waits in its mailbox for its next check either way.`;
+  }
+  if (answer.nudged && answer.nudgeUnseen !== undefined) {
+    return '             its tab was typed into, but Orca did not see the line start a turn: it may be queued behind the work in hand, or lost. The message waits in its mailbox for its next check either way.';
+  }
   if (answer.nudged) return '             its tab was told to look; it will read it when it is done with what it is doing.';
   if (answer.blocked !== undefined) {
     return `             its tab has something waiting to be answered (${answer.blocked}), so nothing was typed into it. Settle that, and the mail is there.`;
