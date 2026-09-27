@@ -853,6 +853,125 @@ test('F23 a child\'s own call whose running total equals one of the origin\'s, b
   assert.equal(Date.parse(child.first), Date.parse(at(10, 10)), 'its first call is the new window\'s, at 10:10');
 });
 
+// ------------------------------------- a damaged record among the fork's copies
+
+/** Plant the small origin's child in the bot's home, unclaimed, its lines after the turn as given. */
+const plantSmallChildLines = (box, home, lines) => plantRollout(box, {
+  id: CHILD,
+  cwd: home,
+  started: at(10),
+  meta: forkedFrom(PARENT),
+  lines: [codexTurn({ when: at(10) }), ...lines],
+});
+
+/** The small origin's record `n`, copied into the child at its start. */
+const smallCopy = (n) => ({ ...SMALL_ORIGIN[n], when: at(10) });
+
+for (const [what, field] of [['a figure missing from its own figure', 'input_tokens'], ['no own figure', undefined]]) {
+  test(`F24 a leading record of the fork with ${what} is not counted and is named, and the fork's own call after it counts by its rise`, async (t) => {
+    // The child: the copy (20, 120), then (30, 150) with its own figure
+    // damaged, then its own call (40, 190). 40 in, one call, one record named.
+    const box = await createSandbox(t);
+    const { bots, home } = await fleet(box);
+    await plantSmallOrigin(box, [codexTurn({ when: at(8, 55) }), ...SMALL_ORIGIN.map(codexCall)]);
+    await plantSmallChildLines(box, home, [
+      codexCall(smallCopy(0)),
+      withoutFigure(smallCopy(1), 'last_token_usage', field),
+      codexCall({ when: at(10, 10), last: { input: 40 }, total: { input: 190 } }),
+    ]);
+    await bookSays(bots, 'api-bot', { daily: ran('019f9600-0000-7000-8000-00000000cccc') });
+
+    const answer = await usage(box);
+    const child = childIn(answer);
+
+    assert.equal(child.calls, 1, 'its own call: 2 counts the damaged record as a call');
+    assert.equal(tokensOf(child).input, 40, 'its rise of 40: 70 counts the damaged record\'s rise of 30 too');
+    assert.deepEqual(
+      leftOutOf(entryOf(answer, 'api-bot'), 'unclaimed_not_counted'),
+      leftOut({ records_without_numbers: 1 }),
+      'the damaged record, which cannot be told from a copy or an own call',
+    );
+  });
+}
+
+test('F25 a damaged leading record of the fork outside the window is not named, and the own call inside it still counts by its rise', async (t) => {
+  // As F24, the damaged record at 10:00 and the own call at 10:10, with the
+  // window opening at 10:05.
+  const box = await createSandbox(t);
+  const { bots, home } = await fleet(box);
+  await plantSmallOrigin(box, [codexTurn({ when: at(8, 55) }), ...SMALL_ORIGIN.map(codexCall)]);
+  await plantSmallChildLines(box, home, [
+    codexCall(smallCopy(0)),
+    withoutFigure(smallCopy(1), 'last_token_usage', 'input_tokens'),
+    codexCall({ when: at(10, 10), last: { input: 40 }, total: { input: 190 } }),
+  ]);
+  await bookSays(bots, 'api-bot', { daily: ran('019f9600-0000-7000-8000-00000000cccc') });
+
+  const answer = await usage(box, '--since', at(10, 5));
+  const child = childIn(answer);
+
+  assert.equal(child.calls, 1);
+  assert.equal(tokensOf(child).input, 40, 'its rise over the damaged record\'s whole running total');
+  assert.deepEqual(
+    leftOutOf(entryOf(answer, 'api-bot'), 'unclaimed_not_counted'),
+    NOTHING_LEFT_OUT,
+    'the damaged record is before the window',
+  );
+});
+
+test('F26 a leading record of the fork with a figure missing from its running total is named, and a whole copy after it still is a copy', async (t) => {
+  // The origin has a third record, (10, 160). The child: the copy (20, 120);
+  // (30, 150) with its running total damaged; the whole copy (10, 160), which
+  // restores the running total; its own call (40, 200). 40 in, one call, one
+  // record named.
+  const box = await createSandbox(t);
+  const { bots, home } = await fleet(box);
+  const third = { when: at(9, 20), last: { input: 10 }, total: { input: 160 } };
+  await plantSmallOrigin(box, [codexTurn({ when: at(8, 55) }), ...SMALL_ORIGIN.map(codexCall), codexCall(third)]);
+  await plantSmallChildLines(box, home, [
+    codexCall(smallCopy(0)),
+    withoutFigure(smallCopy(1), 'total_token_usage', 'output_tokens'),
+    codexCall({ ...third, when: at(10) }),
+    codexCall({ when: at(10, 10), last: { input: 40 }, total: { input: 200 } }),
+  ]);
+  await bookSays(bots, 'api-bot', { daily: ran('019f9600-0000-7000-8000-00000000cccc') });
+
+  const answer = await usage(box);
+  const child = childIn(answer);
+
+  assert.equal(child.calls, 1, 'its own call: 2 counts the copy after the damaged record');
+  assert.equal(tokensOf(child).input, 40, 'its rise over the copy (10, 160): 50 counts that copy too');
+  assert.deepEqual(
+    leftOutOf(entryOf(answer, 'api-bot'), 'unclaimed_not_counted'),
+    leftOut({ records_without_numbers: 1 }),
+    'the damaged record alone: 2 takes the copy after it for the fork\'s first own record after a broken total',
+  );
+});
+
+test('F27 a leading record of the fork with a figure missing from its running total, followed by its own call, leaves that call uncounted and named too', async (t) => {
+  // The child: the copy (20, 120); (30, 150) with its running total damaged;
+  // its own call (40, 190). After the damaged total the running total is not
+  // known, so the own call's rise cannot be measured (#302).
+  const box = await createSandbox(t);
+  const { bots, home } = await fleet(box);
+  await plantSmallOrigin(box, [codexTurn({ when: at(8, 55) }), ...SMALL_ORIGIN.map(codexCall)]);
+  await plantSmallChildLines(box, home, [
+    codexCall(smallCopy(0)),
+    withoutFigure(smallCopy(1), 'total_token_usage', 'output_tokens'),
+    codexCall({ when: at(10, 10), last: { input: 40 }, total: { input: 190 } }),
+  ]);
+  await bookSays(bots, 'api-bot', { daily: ran('019f9600-0000-7000-8000-00000000cccc') });
+
+  const entry = entryOf(await usage(box), 'api-bot');
+
+  assert.deepEqual(idsOf(entry.unclaimed), [], 'nothing of the child is counted: a row counts a rise measured from a total not known');
+  assert.deepEqual(
+    leftOutOf(entry, 'unclaimed_not_counted'),
+    leftOut({ records_without_numbers: 2 }),
+    'the damaged record and the own call after it',
+  );
+});
+
 // ------------------------------------------------- nothing else changes
 
 test('F17 an ordinary rollout counts as it did: its first record, a repeat that is not a call, and a new window by its own figure', async (t) => {

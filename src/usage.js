@@ -362,6 +362,8 @@ const CODEX_FIELDS = [
  * in and stamped at the fork's start, or all at one time in a file Codex rebuilt.
  * Those are the origin's calls, counted with the origin: the leading records
  * that are in `copied`, both figures, are followed and not counted (#376).
+ * A leading record with a figure missing may be a copy or the fork's own call;
+ * it is not counted, and is said to be.
  */
 function fromCodex(entries, window, tally, copied) {
   let model;
@@ -394,17 +396,26 @@ function fromCodex(entries, window, tally, copied) {
     if (info === undefined || info === null) continue;
 
     const total = info.total_token_usage;
-    if (copying && complete(total, CODEX_READ) && complete(info.last_token_usage, CODEX_READ)
-      && copied.has(key(info))) {
+    const whole = complete(total, CODEX_READ) && complete(info.last_token_usage, CODEX_READ);
+    if (copying && whole && copied.has(key(info))) {
       running = total;
+      broken = false;
       continue;
     }
-    copying = false;
+    // A record with a figure missing cannot be told from a copy while copies
+    // may still be coming: it is not counted and is said to be, and the next
+    // record is matched as before.
+    const unknown = copying && !whole;
+    if (!unknown) copying = false;
 
     let used;
     // No running total at all is a running total with every figure missing:
     // the next one's rise would take this call in again (#302).
-    if (!complete(total, CODEX_READ)) {
+    if (unknown && complete(total, CODEX_READ)) {
+      used = null;
+      running = total;
+      broken = false;
+    } else if (!complete(total, CODEX_READ)) {
       used = null;
       broken = true;
     } else {
