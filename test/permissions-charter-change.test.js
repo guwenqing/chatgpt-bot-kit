@@ -1,5 +1,5 @@
 // A charter change and the rules the bot is allowed now (#353, slice B of
-// #344).
+// #344, and #354 for Codex).
 //
 // A new charter may grant more or less than the old one, and its rules are to
 // be listed and shown to the user again; until the user answers, nothing
@@ -10,8 +10,10 @@
 // the defaults, the report lists no rule. Its `--json` answer carries
 // `beyondDefaults`: the rules in bot.yaml `allow` that are not defaults, in
 // `allow`'s order, `[]` for none. The change writes nothing into the settings
-// file and leaves `allow` as it was. A bot that runs only on Codex gets no such
-// note and no `beyondDefaults`.
+// file and leaves `allow` as it was. A bot that runs on Codex gets the same
+// note and `beyondDefaults`, and the note names its `.codex/rules/obk.rules`
+// among the places the rules would be taken out of; the change writes nothing
+// into that file either.
 //
 // Plain text is read only for the exact rule strings; the sentence that
 // nothing changes until the user answers is the implementer's wording.
@@ -25,8 +27,12 @@ import { parse } from 'yaml';
 import { createSandbox } from './helpers/cli.js';
 import {
   allowOf,
+  codexAllowedIn,
+  codexDefaultRules,
+  codexRulesOf,
   defaultRules,
   mentionsAny,
+  namesFile,
   OWN_RULE,
   settingsIn,
   settingsOf,
@@ -148,23 +154,50 @@ test('C5 a charter change writes nothing into the settings file and leaves allow
   assert.equal((await stat(file)).mtime.getTime(), PAST.getTime(), 'not even written back the same');
 });
 
-// ----------------------------------------------------------------- only Claude
+// ----------------------------------------------------------------- a bot on Codex
 
-test('C6 a bot that runs only on Codex gets no note of allowed rules and no beyondDefaults, where a Claude bot does', async (t) => {
+test('C6 a bot that runs only on Codex gets the note of allowed rules and beyondDefaults, naming its obk.rules', async (t) => {
   const box = await createSandbox(t);
   const bots = await withBot(box, 'codex');
-  await writeAllow(bots, BOT, [OWN_RULE]);
-  // The same allow on a Claude bot beside it, so the difference is the harness.
-  const made = await box.run(['bot', 'create', '--bots', 'bots', '--name', 'claude-bot', '--harness', 'claude']);
-  assert.equal(made.code, 0, made.stderr);
-  await writeAllow(bots, 'claude-bot', [OWN_RULE]);
-  const claude = jsonOf(await box.run(['bot', 'change', '--bots', 'bots', '--bot', 'claude-bot', '--charter', NEW_CHARTER, '--json']));
-  assert.deepEqual(claude.beyondDefaults, [OWN_RULE], 'the premise: a Claude bot with this allow is told of it');
+  await writeAllow(bots, BOT, [...codexDefaultRules(box, bots), OWN_RULE, CLOSE_RULE]);
 
   const answer = jsonOf(await charterChange(box, '--json'));
-  assert.ok(!('beyondDefaults' in answer), `the bot does not run on Claude, got: ${JSON.stringify(answer)}`);
+  assert.deepEqual(answer.beyondDefaults, [OWN_RULE, CLOSE_RULE]);
 
   const plain = await box.run(['bot', 'change', '--bots', 'bots', '--bot', BOT, '--charter', `${NEW_CHARTER} Again.`]);
   assert.equal(plain.code, 0, plain.stderr);
-  assert.ok(!plain.stdout.includes(OWN_RULE), `no rule should be listed for a Codex bot, got:\n${plain.stdout}`);
+  for (const rule of [OWN_RULE, CLOSE_RULE]) {
+    assert.ok(plain.stdout.includes(rule), `the report should name ${rule}, allowed now beyond the defaults, got:\n${plain.stdout}`);
+  }
+  assert.deepEqual(mentionsAny(plain.stdout, codexDefaultRules(box, bots)), [], `the defaults are not beyond the defaults, got:\n${plain.stdout}`);
+  assert.ok(namesFile(plain.stdout, box, codexRulesOf(bots, BOT)), `the report should name ${codexRulesOf(bots, BOT)}, got:\n${plain.stdout}`);
+});
+
+test('C6 a Codex bot with nothing allowed beyond the defaults hears of no rule', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await withBot(box, 'codex');
+  await writeAllow(bots, BOT, codexDefaultRules(box, bots));
+
+  const answer = jsonOf(await charterChange(box, '--json'));
+
+  assert.deepEqual(answer.beyondDefaults, []);
+});
+
+test('C7 a charter change writes nothing into a Codex bot\'s obk.rules and leaves allow as it was', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await withBot(box, 'codex');
+  const allowed = await box.run(['bot', 'change', '--bots', 'bots', '--bot', BOT, '--allow', 'Bash(git add:*)', '--allow', OWN_RULE]);
+  assert.equal(allowed.code, 0, allowed.stderr);
+  const file = codexRulesOf(bots, BOT);
+  assert.equal((await codexAllowedIn(bots, BOT)).length, 2, 'the premise: obk.rules holds both');
+  await utimes(file, PAST, PAST);
+  const text = await readFile(file, 'utf8');
+
+  const result = await charterChange(box);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(parse(await readFile(botYamlOf(bots, BOT), 'utf8')).charter.trim(), NEW_CHARTER, 'the premise: the charter did change');
+  assert.deepEqual(await allowOf(bots, BOT), ['Bash(git add:*)', OWN_RULE], 'allow is as it was');
+  assert.equal(await readFile(file, 'utf8'), text, 'obk.rules is as it was');
+  assert.equal((await stat(file)).mtime.getTime(), PAST.getTime(), 'not even written back the same');
 });

@@ -155,7 +155,7 @@ export function prepareBots(bots, names, onlySession) {
   // And the permission rules the user allowed, beside the hook and for the same
   // reason: a session that comes up before its rules are there is asked about
   // what the user already said yes to (#344).
-  const permissions = running.map(({ bot, home }) => writePermissions(bots, home, bot)).filter((entry) => entry !== undefined);
+  const permissions = running.flatMap(({ bot, home }) => writePermissions(bots, home, bot));
 
   return { running, rules, skills, permissions };
 }
