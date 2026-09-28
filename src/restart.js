@@ -34,7 +34,7 @@ import { setTimeout as pause } from 'node:timers/promises';
 import { bookFile, readBook } from './book.js';
 import { botDir, readBot } from './bot.js';
 import { ownCli, shellWord } from './launch.js';
-import { closeTab, findProject, frontOfTab, tabs } from './orca.js';
+import { closeTab, closeTerminal, findProject, frontOfTab, orcaCli, tabs } from './orca.js';
 import { botsNamed, bringUp, prepareBots, sessionsOf } from './up.js';
 
 /**
@@ -68,7 +68,7 @@ export async function restartSessions(bots, { bot: name, session: onlySession } 
   }
 
   const going = tabsToClose(bots, name, home, sessions.filter((session) => session.paused !== true), { quit: true });
-  const closed = await closeTabs(home, going, bots, name);
+  const closed = await closeTabs(home, going, bots, name, commandLine('restart', bots, name, onlySession));
   return { closed, ...(await bringUp(bots, { bot: name, session: onlySession })) };
 }
 
@@ -113,12 +113,14 @@ export function tabsToClose(bots, name, home, sessions, { keepless = false, quit
 /**
  * Close the tabs `tabsToClose` gave, one at a time by their own handles, and
  * wait until Orca's listing agrees they are gone. Returns one entry per tab.
+ * `again` is the command that asked, as the user would run it again: what to do
+ * once a tab Orca would not close has been closed by hand.
  */
-export async function closeTabs(home, going, bots, name) {
+export async function closeTabs(home, going, bots, name, again) {
   const closed = [];
   for (const { name: session, tab } of going) {
     try {
-      closeTab(tab.handle);
+      closeWhole(tab.handle, again);
     } catch (error) {
       // A tab that would not close still holds its session, so nothing is
       // opened after this: two harnesses on one conversation is worse than a
@@ -131,6 +133,41 @@ export async function closeTabs(home, going, bots, name) {
   await gone(home, closed, bots, name);
   return closed;
 }
+
+/**
+ * Close one session's tab. Orca finds a `--tab` close in a tab snapshot of its
+ * own, which a tab it still lists can be missing from after a restart, and then
+ * answers `tab_not_found` (#405, read in the 1.4.215 bundle). The same terminal
+ * closed without `--tab` closes its one-pane tab by id, so that is done instead,
+ * and `gone` checks the tab went as it does after any close. Every other
+ * refusal stops the restart as it did.
+ */
+function closeWhole(handle, again) {
+  try {
+    closeTab(handle);
+  } catch (error) {
+    if (!notFound(error)) throw error;
+    try {
+      closeTerminal(handle);
+    } catch (second) {
+      // With the tab closed by hand there is nothing left for the command to
+      // close, so running it again finishes it, whichever command it was.
+      throw new Error(`${error.message}, and then ${second.message}. Close it by hand, then run the same command again: ${shellWord(orcaCli())} terminal close --terminal ${shellWord(handle)}  then  ${again}`);
+    }
+  }
+}
+
+/**
+ * Whether Orca refused a `--tab` close for a tab it could not find: its code,
+ * or its 1.4.215 form of code `runtime_error` with exactly that message. Orca's
+ * own words, never the kit's wrapped text, and no other form (#405).
+ */
+const notFound = (error) =>
+  error.code === 'tab_not_found' || (error.code === 'runtime_error' && error.reason === 'tab_not_found');
+
+/** A command of the kit's as the user would type it, for a message to name. */
+export const commandLine = (verb, bots, bot, session) =>
+  `${shellWord(ownCli())} ${verb} --bots ${shellWord(bots)} --bot ${bot}${session === undefined ? '' : ` --session ${session}`}`;
 
 /** How long Orca is given to stop listing a tab it has closed, and how often it is asked. */
 const SETTLED_MS = 5000;

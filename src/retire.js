@@ -26,7 +26,7 @@ import { readBook, tabIdsIn, updateBook } from './book.js';
 import { botDir, dropSession, readBot } from './bot.js';
 import { deleteProject, findProject, projects, reloadWindow, tabs } from './orca.js';
 import { fleetMember } from './pause.js';
-import { closeTabs, tabsToClose } from './restart.js';
+import { closeTabs, commandLine, tabsToClose } from './restart.js';
 import { unlinkSkills } from './skills.js';
 import { promptPath, sessionsOf } from './up.js';
 
@@ -41,7 +41,7 @@ export async function retireSession(bots, { bot, session }) {
   const home = fleetMember(bots, bot, 'retire', session);
   const sessions = sessionsOf(readBot(home, bot), session);
 
-  const closed = await closeTabs(home, tabsToClose(bots, bot, home, sessions, { keepless: true }), bots, bot);
+  const closed = await closeTabs(home, tabsToClose(bots, bot, home, sessions, { keepless: true }), bots, bot, commandLine('retire', bots, bot, session));
   dropSession(bots, bot, session);
 
   const at = new Date().toISOString();
@@ -86,7 +86,7 @@ export async function retireBot(bots, { bot }) {
   // taken away with one of them still open. `closeTabs` waits until Orca agrees
   // they are gone.
   const booked = Object.keys(readBook(home).sessions).map((name) => ({ name }));
-  const closed = await closeTabs(home, tabsToClose(bots, bot, home, booked, { keepless: true }), bots, bot);
+  const closed = await closeTabs(home, tabsToClose(bots, bot, home, booked, { keepless: true }), bots, bot, commandLine('retire', bots, bot));
   let windowReloaded;
   if (project !== undefined) {
     deleteProject(project.id);

@@ -40,10 +40,14 @@ export function orca(args, { timeoutMs } = {}) {
 /** What an error carries when Orca was given a time and did not answer in it. */
 export const TIMED_OUT = 'orca_timed_out';
 
-/** Orca's refusal as an error, with its code on it, so a caller can tell a stale handle from the rest (#294). */
+/**
+ * Orca's refusal as an error, with its code on it, so a caller can tell a stale
+ * handle from the rest (#294), and its own message as `reason`, so a caller
+ * that goes by the message reads Orca's words rather than the kit's (#405).
+ */
 const refusal = (args, answer) => Object.assign(
   new Error(`Orca refused ${args.join(' ')}: ${answer.error?.message ?? 'no reason given'}`),
-  { code: answer.error?.code },
+  { code: answer.error?.code, reason: answer.error?.message },
 );
 
 /** One Orca command, and the whole envelope back, refusals included. */
@@ -563,13 +567,24 @@ function psLine(pid) {
 /**
  * Close one tab, by the handle Orca issued for it.
  *
- * The only place in the kit that takes anything away, and it takes away one
- * tab: `--terminal <handle> --tab`. Orca's other form, `--worktree <sel> --all`,
+ * With `closeTerminal` below, the only place in the kit that takes anything
+ * away, and each takes away one tab: `--terminal <handle> --tab`. Orca's other
+ * form, `--worktree <sel> --all`,
  * closes every tab of a project with its layouts and resume records, which are
  * the user's work and not the kit's to end (tech notes, section 1).
  */
 export const closeTab = (handle) =>
   orca(['terminal', 'close', '--terminal', handle, '--tab']).close;
+
+/**
+ * Close one terminal without `--tab`: for a tab of one pane, as every tab the
+ * kit opens is, Orca then closes that tab by its id and stops its process (read
+ * in the 1.4.215 bundle). Only for a tab `--tab` could not find (#405): Orca
+ * looks a `--tab` close up in a tab snapshot of its own, which a tab it still
+ * lists can be missing from after a restart, and answers `tab_not_found`.
+ */
+export const closeTerminal = (handle) =>
+  orca(['terminal', 'close', '--terminal', handle]).close;
 
 /**
  * Type `text` into a tab and press return.
