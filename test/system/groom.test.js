@@ -113,6 +113,7 @@ import { parse } from 'yaml';
 
 import { cliEntry } from '../helpers/cli.js';
 import { waitingOn } from '../helpers/screens.js';
+import { tabGuard } from '../helpers/tab-guard.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
 
 /**
@@ -213,22 +214,12 @@ const MAIL_FROM_GROOMING = 'Fleet mail from bot-father/grooming';
 /** What a message by Claude Code's own messaging arrives wrapped in. */
 const CROSS_SESSION = '<cross-session-message';
 
-/** Ask Orca something and read its JSON. Never the blanket close, on any road. */
-function orca(args) {
-  assert.ok(
-    !(args.includes('--all') && args.includes('close')),
-    `refusing to run \`orca ${args.join(' ')}\`: it would take away someone else's tabs`,
-  );
-  const done = spawnSync(ORCA, [...args, '--json'], { encoding: 'utf8' });
-  assert.equal(done.error, undefined, `could not run ${ORCA}: ${done.error?.message}`);
-  let answer;
-  try {
-    answer = JSON.parse(done.stdout);
-  } catch {
-    assert.fail(`orca ${args.join(' ')} did not answer JSON: ${done.stdout}${done.stderr}`);
-  }
-  return answer;
-}
+/**
+ * Ask Orca something and read its JSON. Never the blanket close, on any road.
+ * Every tab it closes is counted as this test's, for the check at the end (#246).
+ */
+const guard = tabGuard(ORCA);
+const { orca } = guard;
 
 /** Every terminal Orca knows about right now. */
 function allTerminals() {
@@ -659,15 +650,9 @@ test('grooming runs on Claude Code\'s own schedule in the grooming session: off 
   // path, which `bots` already is.
   const marker = `obk grooming for ${bots}`;
 
-  // Every tab the kit said it opened for this run, by handle, from each answer
-  // that opens one: init, up and the restarts.
-  const ourTabs = new Set();
-  const openedBy = (answer) => {
-    for (const entry of answer.tabs ?? []) {
-      if (entry.created === true && typeof entry.terminal === 'string') ourTabs.add(entry.terminal);
-    }
-    return answer;
-  };
+  // Every tab the kit said it opened for this run, from each answer that opens
+  // one: init, up and the restarts. The guard counts them as this test's own.
+  const openedBy = (answer) => guard.openedByKit(answer);
 
   // Registered before anything is created, so it runs however this test ends.
   t.after(async () => {
@@ -677,44 +662,31 @@ test('grooming runs on Claude Code\'s own schedule in the grooming session: off 
     const strays = newAutomationsAt(before.automations, bots);
     for (const one of strays) orca(['automations', 'remove', '--id', one.id]);
 
-    const closed = [];
-    for (const terminal of terminalsAt(home)) {
-      if (before.handles.has(terminal.handle)) continue;
-      orca(['terminal', 'close', '--terminal', terminal.handle, '--tab']);
-      closed.push(terminal.handle);
-    }
+    // Only this test's own tabs are closed. A tab it did not create at its
+    // home is not its to close: that project and the bots folder stay where
+    // they are, and the test fails naming the tab (#426).
+    const { closed, foreign } = guard.closeOwnAt([home]);
+    const held = new Set(foreign.map((one) => one.home));
     let deleted = 0;
     for (const setup of allSetups()) {
-      if (setup.path !== home || before.setups.has(setup.id)) continue;
+      if (setup.path !== home || before.setups.has(setup.id) || held.has(setup.path)) continue;
       orca(['project', 'setup-delete', '--setup', setup.id]);
       deleted += 1;
     }
     // Orca's sidebar keeps a deleted project's row until its window is
     // rebuilt (#343): the kit's own reload, as after a retire.
     if (deleted > 0 && !(await reloadWindow())) t.diagnostic(RELOAD_LINE);
+    assert.deepEqual(foreign, [], `tabs this test did not create are open at its home, so it closed only its own and left that project and ${bots} in place`);
     await removeBotsFolderAndSiblings(bots);
 
-    // It closed nothing but its own. Every tab this teardown closed is one the
-    // kit said it opened for this run, and each restart closed only the grooming
-    // tab it held (checked where it ran); nothing else here closes a tab, and
-    // `orca` refuses the blanket close.
-    assert.deepEqual(
-      closed.filter((one) => !ourTabs.has(one)),
-      [],
-      `this test closed tabs in its own folder that the kit never said it opened for it; it opened: ${JSON.stringify([...ourTabs])}`,
-    );
-
-    // A tab that was open before and is gone now was closed by someone else: the
-    // machine is shared, and other sessions open and close their own tabs while
-    // this runs. So it is said, not failed.
-    const left = new Set(allTerminals().map((terminal) => terminal.handle));
-    const goneElsewhere = [...before.handles].filter((one) => !left.has(one));
-    if (goneElsewhere.length > 0) {
-      t.diagnostic(
-        `${goneElsewhere.length} tab(s) open before this test are gone now, and this test did not close them`
-        + ` (it closed only ${JSON.stringify(closed)}, in its own folder): ${goneElsewhere.join(', ')}`,
-      );
-    }
+    // It closed nothing but its own: every tab closed here or by a restart is
+    // one the kit said it opened for this run (each restart's close is checked
+    // where it ran too). A tab that was open before and is gone now was closed
+    // by someone else: the machine is shared, and other sessions open and close
+    // their own tabs while this runs. So it is said, not failed.
+    const { closedNotOurs, goneElsewhere } = guard.verdict(before.handles);
+    assert.deepEqual(closedNotOurs, [], 'this test closed tabs it did not create');
+    if (goneElsewhere.length > 0) t.diagnostic(`tabs open before this test and closed elsewhere meanwhile: ${goneElsewhere.join(', ')}`);
     // Orca's automations as this test found them: none gone, none edited. What
     // is compared is only what a kit could change about one, not what Orca
     // writes when it runs (see `steady`).
@@ -975,6 +947,7 @@ test('grooming runs on Claude Code\'s own schedule in the grooming session: off 
   // 4. The restart the user asks for. The kit closes the grooming tab and brings
   // the conversation back in a new one; the job has to come back with it.
   const restarted = openedBy(obkJson(['restart', '--bots', bots, '--bot', 'bot-father', '--session', 'grooming']));
+  guard.closedByKit(restarted.closed);
   assert.deepEqual(
     (restarted.closed ?? []).map((one) => one.name),
     ['grooming'],
@@ -1088,6 +1061,7 @@ test('grooming runs on Claude Code\'s own schedule in the grooming session: off 
   // holds the kit to whatever Claude Code does.
   const resumedBefore = resumesIn(linesOf(home, cleared)).length;
   const reopened = openedBy(obkJson(['restart', '--bots', bots, '--bot', 'bot-father', '--session', 'grooming']));
+  guard.closedByKit(reopened.closed);
   assert.deepEqual(
     (reopened.closed ?? []).map((one) => one.name),
     ['grooming'],

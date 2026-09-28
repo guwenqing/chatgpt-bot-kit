@@ -640,23 +640,21 @@ test('a cleared session gets a new id, keeps the old one, and is told its duty a
 
   // Registered before anything is created, so it runs however this test ends.
   t.after(async () => {
-    const closed = [];
-    for (const home of homes) {
-      for (const terminal of terminalsAt(home)) {
-        if (before.handles.has(terminal.handle)) continue;
-        orca(['terminal', 'close', '--terminal', terminal.handle, '--tab']);
-        closed.push(terminal.handle);
-      }
-    }
+    // Only this test's own tabs are closed. A tab it did not create at one of
+    // its homes is not its to close: that project and the bots folder stay
+    // where they are, and the test fails naming the tab (#426).
+    const { closed, foreign } = guard.closeOwnAt(homes);
+    const held = new Set(foreign.map((one) => one.home));
     let deleted = 0;
     for (const setup of allSetups()) {
-      if (!homes.includes(setup.path) || before.setups.has(setup.id)) continue;
+      if (!homes.includes(setup.path) || before.setups.has(setup.id) || held.has(setup.path)) continue;
       orca(['project', 'setup-delete', '--setup', setup.id]);
       deleted += 1;
     }
     // Orca's sidebar keeps a deleted project's row until its window is
     // rebuilt (#343): the kit's own reload, as after a retire.
     if (deleted > 0 && !(await reloadWindow())) t.diagnostic(RELOAD_LINE);
+    assert.deepEqual(foreign, [], `tabs this test did not create are open at its homes, so it closed only its own and left those projects and ${bots} in place`);
     await removeBotsFolderAndSiblings(bots);
 
     // The point of all the care above: this test closed no tab but its own. A
@@ -797,23 +795,21 @@ test('a session whose tab was closed comes back with its conversation', async (t
   const homes = ['bot-father', ...BOTS.map((bot) => bot.name)].map(homeOf);
 
   t.after(async () => {
-    const closed = [];
-    for (const home of homes) {
-      for (const terminal of terminalsAt(home)) {
-        if (before.handles.has(terminal.handle)) continue;
-        orca(['terminal', 'close', '--terminal', terminal.handle, '--tab']);
-        closed.push(terminal.handle);
-      }
-    }
+    // Only this test's own tabs are closed. A tab it did not create at one of
+    // its homes is not its to close: that project and the bots folder stay
+    // where they are, and the test fails naming the tab (#426).
+    const { closed, foreign } = guard.closeOwnAt(homes);
+    const held = new Set(foreign.map((one) => one.home));
     let deleted = 0;
     for (const setup of allSetups()) {
-      if (!homes.includes(setup.path) || before.setups.has(setup.id)) continue;
+      if (!homes.includes(setup.path) || before.setups.has(setup.id) || held.has(setup.path)) continue;
       orca(['project', 'setup-delete', '--setup', setup.id]);
       deleted += 1;
     }
     // Orca's sidebar keeps a deleted project's row until its window is
     // rebuilt (#343): the kit's own reload, as after a retire.
     if (deleted > 0 && !(await reloadWindow())) t.diagnostic(RELOAD_LINE);
+    assert.deepEqual(foreign, [], `tabs this test did not create are open at its homes, so it closed only its own and left those projects and ${bots} in place`);
     await removeBotsFolderAndSiblings(bots);
 
     // The point of all the care above: this test closed no tab but its own. A
@@ -950,23 +946,21 @@ test('a harness the session starts for itself does not become the session\'s con
   const homes = ['bot-father', ...CHILDREN.map((bot) => bot.name)].map(homeOf);
 
   t.after(async () => {
-    const closed = [];
-    for (const home of homes) {
-      for (const terminal of terminalsAt(home)) {
-        if (before.handles.has(terminal.handle)) continue;
-        orca(['terminal', 'close', '--terminal', terminal.handle, '--tab']);
-        closed.push(terminal.handle);
-      }
-    }
+    // Only this test's own tabs are closed. A tab it did not create at one of
+    // its homes is not its to close: that project and the bots folder stay
+    // where they are, and the test fails naming the tab (#426).
+    const { closed, foreign } = guard.closeOwnAt(homes);
+    const held = new Set(foreign.map((one) => one.home));
     let deleted = 0;
     for (const setup of allSetups()) {
-      if (!homes.includes(setup.path) || before.setups.has(setup.id)) continue;
+      if (!homes.includes(setup.path) || before.setups.has(setup.id) || held.has(setup.path)) continue;
       orca(['project', 'setup-delete', '--setup', setup.id]);
       deleted += 1;
     }
     // Orca's sidebar keeps a deleted project's row until its window is
     // rebuilt (#343): the kit's own reload, as after a retire.
     if (deleted > 0 && !(await reloadWindow())) t.diagnostic(RELOAD_LINE);
+    assert.deepEqual(foreign, [], `tabs this test did not create are open at its homes, so it closed only its own and left those projects and ${bots} in place`);
     await removeBotsFolderAndSiblings(bots);
 
     // The point of all the care above: this test closed no tab but its own. A
@@ -1106,23 +1100,21 @@ test('a Codex conversation that ran before the hooks file was trusted is written
   const homes = ['bot-father', 'untrusted-codex'].map(homeOf);
 
   t.after(async () => {
-    const closed = [];
-    for (const home of homes) {
-      for (const terminal of terminalsAt(home)) {
-        if (before.handles.has(terminal.handle)) continue;
-        orca(['terminal', 'close', '--terminal', terminal.handle, '--tab']);
-        closed.push(terminal.handle);
-      }
-    }
+    // Only this test's own tabs are closed. A tab it did not create at one of
+    // its homes is not its to close: that project and the bots folder stay
+    // where they are, and the test fails naming the tab (#426).
+    const { closed, foreign } = guard.closeOwnAt(homes);
+    const held = new Set(foreign.map((one) => one.home));
     let deleted = 0;
     for (const setup of allSetups()) {
-      if (!homes.includes(setup.path) || before.setups.has(setup.id)) continue;
+      if (!homes.includes(setup.path) || before.setups.has(setup.id) || held.has(setup.path)) continue;
       orca(['project', 'setup-delete', '--setup', setup.id]);
       deleted += 1;
     }
     // Orca's sidebar keeps a deleted project's row until its window is
     // rebuilt (#343): the kit's own reload, as after a retire.
     if (deleted > 0 && !(await reloadWindow())) t.diagnostic(RELOAD_LINE);
+    assert.deepEqual(foreign, [], `tabs this test did not create are open at its homes, so it closed only its own and left those projects and ${bots} in place`);
     await removeBotsFolderAndSiblings(bots);
 
     // The point of all the care above: this test closed no tab but its own. A

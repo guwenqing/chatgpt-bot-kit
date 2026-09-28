@@ -537,18 +537,16 @@ test('mail from a Codex session in its sandbox nudges an idle Claude receiver, a
 
   // Registered before anything is created, so it runs however this test ends.
   t.after(async () => {
-    const closed = [];
-    for (const each of homes) {
-      for (const terminal of terminalsAt(each)) {
-        if (before.handles.has(terminal.handle)) continue;
-        orca(['terminal', 'close', '--terminal', terminal.handle, '--tab']);
-        closed.push(terminal.handle);
-      }
-    }
+    // Only this test's own tabs are closed. A tab it did not create at one of
+    // its homes is not its to close: that project and the bots folder stay
+    // where they are, and the test fails naming the tab (#426).
+    const { closed, foreign } = guard.closeOwnAt(homes);
+    const held = new Set(foreign.map((one) => one.home));
     for (const setup of allSetups()) {
-      if (!homes.includes(setup.path) || before.setups.has(setup.id)) continue;
+      if (!homes.includes(setup.path) || before.setups.has(setup.id) || held.has(setup.path)) continue;
       orca(['project', 'setup-delete', '--setup', setup.id]);
     }
+    assert.deepEqual(foreign, [], `tabs this test did not create are open at its homes, so it closed only its own and left those projects and ${bots} in place`);
     await removeBotsFolderAndSiblings(bots);
 
     // The point of all the care above: this test closed no tab but its own. A
