@@ -441,8 +441,9 @@ export function tabToTypeInto(home, tabId, timeoutMs) {
   // not let go of (tech notes, section 1). A harness run under another name,
   // such as `node` for an npm install, passes on the kit's own mark instead
   // (#261).
-  const named = seen.agent !== undefined && seen.command === seen.agent;
-  if (seen.front === undefined || (!named && !launchedHere(seen.pid, tabId))) {
+  // Either way Orca has to name an agent there: a harness it has not named yet
+  // may be seconds into its launch and not ready for a line.
+  if (seen.front === undefined || seen.agent === undefined || (seen.command !== seen.agent && !launchedHere(seen.pid, tabId))) {
     const why = seen.front === undefined
       ? seen.unreadable
       : `${seen.command} holds its terminal, and Orca names ${seen.agent ?? 'no agent'} in it`;
