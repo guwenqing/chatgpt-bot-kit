@@ -37,7 +37,7 @@ import test from '../helpers/system.js';
 import { setTimeout } from 'node:timers/promises';
 import { parse } from 'yaml';
 
-import { cliEntry, HOOK_FILES, kitHooksIn, spellingsOf } from '../helpers/cli.js';
+import { assertMarkedName, cliEntry, HOOK_FILES, kitHooksIn, spellingsOf } from '../helpers/cli.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
 
@@ -277,7 +277,9 @@ test('two bots on the two harnesses come up in the real Orca, and nothing else i
     const setups = allSetups().filter((setup) => setup.path === home);
     assert.equal(setups.length, 1, `Orca should hold one workspace for ${home}, got ${JSON.stringify(setups)}`);
     assert.equal(setups[0].kind, 'folder', 'a git-kind workspace has no place to open a tab in');
-    assert.equal(setups[0].displayName, bot.display);
+    // This fleet is under the temp folder, so its projects are marked as a
+    // throwaway one's, naming the folder it is in (#401).
+    assertMarkedName(setups[0].displayName, bot.display, path.basename(bots));
 
     const opened = terminalsAt(home);
     assert.equal(opened.length, 1, `${bot.name} has its one session tab, got ${JSON.stringify(opened)}`);
