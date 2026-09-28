@@ -579,6 +579,10 @@ function frontByPs(ptyId, readMs) {
       .flatMap((worktree) => worktree.sessions ?? [])
       .find((session) => session.sessionId === ptyId)?.pid;
   } catch (error) {
+    // Orca not answering within the bound the typing gate set is not a tab
+    // `ps` cannot read: it ends the gate as "cannot tell", with no fallback to
+    // the runtime (review of PR #424).
+    if (error.code === TIMED_OUT) throw error;
     return { unreadable: `Orca would not give the pane's pid: ${error.message}` };
   }
   if (!Number.isInteger(pane) || pane <= 0) return { unreadable: 'Orca gave no pid for its pane' };

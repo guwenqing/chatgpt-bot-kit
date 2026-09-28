@@ -38,6 +38,14 @@
 // rest of the run, which in the fake takes a second or two. A gate whose calls
 // are unbounded waits the whole hang out and misses it by more than 15 s.
 //
+// A timed-out call is a "could not tell" even where the gate has another way
+// to learn the same thing (the review of PR #424). When `ps` cannot read a tab,
+// the gate asks Orca's runtime who is in front instead (ADR 0031); a
+// `diagnostics memory` that ran out is no reason to ask it, and an answer from
+// it is no reason to type. So the last tests have the fake app's runtime
+// client there and answering (`orcaApp`, as in test/front-without-ps.test.js),
+// and `diagnostics memory` hung.
+//
 // The #226 resume line is not a caller here: `up` lists a project's tabs and
 // looks at a new tab through the same Orca commands outside the gate, so a
 // hang on any of them would slow `up` wherever the gate stands.
@@ -45,7 +53,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createSandbox, typedInto } from './helpers/cli.js';
+import { createSandbox, orcaApp, typedInto } from './helpers/cli.js';
 import { addSkills, answerOf, botYamlOf, entryOf } from './helpers/skills.js';
 
 /** How late a hung Orca call answers. */
@@ -168,3 +176,40 @@ for (const hung of GATE_CALLS) {
     await assertNothingTyped(box, hung);
   });
 }
+
+// ------------------------------------------------------------- with Orca's runtime there
+
+test('message send: with `diagnostics memory` hung and Orca\'s runtime answering, the notice still gives up, types nothing, and says Orca did not answer in time', async (t) => {
+  const box = await createSandbox(t);
+  await mailFleetIn(box);
+  // The runtime answers from the fake's world: Codex in front of the reader's
+  // tab. A gate that asked it after the timeout would type.
+  await orcaApp(box);
+  await box.orca.set({ hang: { command: 'diagnostics memory', ms: HANG_MS } });
+
+  const { result, ms } = await timed(box, [...sendArgs, '--json']);
+
+  assertWithin(ms, 'runtime there');
+  assert.equal(result.code, 0, `the message went whatever became of the notice: ${result.stdout}${result.stderr}`);
+  const answer = JSON.parse(result.stdout);
+  assert.equal(answer.sent, true, `the message is in the mailbox, got: ${result.stdout}`);
+  assert.equal(answer.nudged, false, `no notice was typed, got: ${result.stdout}`);
+  assert.match(String(answer.nudgeTrouble), NOT_IN_TIME, `because Orca did not answer in time, got: ${answer.nudgeTrouble}`);
+  await assertNothingTyped(box, 'runtime there');
+});
+
+test('skills build: with `diagnostics memory` hung and Orca\'s runtime answering, the reload still gives up, types nothing, and says Orca did not answer in time', async (t) => {
+  const box = await createSandbox(t);
+  await skillsFleetIn(box);
+  await orcaApp(box);
+  await box.orca.set({ hang: { command: 'diagnostics memory', ms: HANG_MS } });
+
+  const { result, ms } = await timed(box, ['skills', 'build', '--bots', 'bots', '--bot', 'api-bot', '--json']);
+
+  assertWithin(ms, 'runtime there');
+  assert.equal(result.code, 0, `the links were made whatever became of the telling: ${result.stdout}${result.stderr}`);
+  const [daily] = entryOf(answerOf(result), 'api-bot').sessions ?? [];
+  assert.equal(daily?.state, 'unknown', `the kit could not tell, got: ${JSON.stringify(daily)}`);
+  assert.match(String(daily.trouble), NOT_IN_TIME, `because Orca did not answer in time, got: ${daily.trouble}`);
+  await assertNothingTyped(box, 'runtime there');
+});
