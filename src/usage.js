@@ -39,11 +39,12 @@
 //      the same call can be in more than one of those files, so a call counts
 //      once across all of a conversation's files together (#371).
 
-import { readFileSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 
 import { botDir, botNames, readBot } from './bot.js';
 import { readBook, sessionIdsIn } from './book.js';
-import { claudeSubagentTranscripts, codexRollout, transcriptsIn } from './conversations.js';
+import { claudeSubagentTranscripts, claudeTranscriptAnywhere, codexRollout, transcriptsIn } from './conversations.js';
+import { eachLine } from './lines.js';
 import { HARNESSES, harnessOf } from './launch.js';
 
 /** The kinds a call's tokens are reported in, the same on either harness. */
@@ -123,6 +124,20 @@ function forBot(bots, name, onlySession, window) {
 
   const claimed = sessionIdsIn(book);
 
+  // A conversation the book names is its session's wherever the harness filed
+  // it: the book says whose it is (ADR 0012). One filed under another
+  // folder, or whose record cannot be opened to say which folder it ran in, is
+  // found by its id instead, and counted or said to be unreadable (#396).
+  for (const id of claimed) {
+    if (onRecord.has(id)) continue;
+    for (const harness of harnesses) {
+      const file = harness === 'codex' ? codexRollout(id) : harness === 'claude' ? claudeTranscriptAnywhere(id) : undefined;
+      if (file === undefined) continue;
+      onRecord.set(id, { id, file, harness, subagent: false });
+      break;
+    }
+  }
+
   // Two entries can name the same conversation, one resumed after its session
   // was retired, and one entry can name it twice, now and in its history: it is
   // counted once, in the first block asked for that names it.
@@ -190,7 +205,7 @@ function counted(one, window) {
   tally.gaps.unreadable_transcripts += subagents.unreadable;
   const sources = [one.file, ...subagents.files]
     .map((file, index) => {
-      const { entries, unreadable, broken } = transcript(file);
+      const { entries, unreadable, broken } = transcript(file, countable);
       tally.gaps.unreadable_transcripts += unreadable;
       tally.gaps.broken_lines += broken;
       return { entries, subagent: index > 0 };
@@ -463,7 +478,7 @@ function originOf(entries, tally) {
   if (typeof id !== 'string' || id === '') return undefined;
 
   const file = codexRollout(id);
-  const origin = file === undefined ? { unreadable: 1 } : transcript(file);
+  const origin = file === undefined ? { unreadable: 1 } : transcript(file, countable);
   // No `info` is a note about rate limits, not a record of usage.
   const records = origin.unreadable > 0 ? [] : origin.entries
     .filter((entry) => entry.type === 'event_msg' && entry.payload?.type === 'token_count')
@@ -552,28 +567,44 @@ function count(tally, used, model, effort, when, calls = 1, subagent = false) {
 export const lines = (file) => transcript(file).entries;
 
 /**
- * The lines of a transcript that are JSON records, and how many were not. A
- * transcript that cannot be read is said to be, rather than a run that stops.
+ * The records the counting here reads: Claude Code's `assistant` and `system`
+ * lines, Codex's `session_meta`, `turn_context`, `compacted` and `event_msg`.
+ * The rest (what was said, tool calls and their output) is most of a long
+ * conversation's record and none of what it cost, so it is not held (#396).
  */
-function transcript(file) {
-  let text;
+const COUNTED = new Set(['assistant', 'system', 'session_meta', 'turn_context', 'compacted', 'event_msg']);
+const countable = (entry) => COUNTED.has(entry.type);
+
+/**
+ * The lines of a transcript that are JSON records, and how many were not; with
+ * `keep`, only the records it takes. A transcript that cannot be read is said
+ * to be, rather than a run that stops. It is read a line at a time, whatever
+ * its size, and a line too long to hold counts as one that is not a record
+ * (#396).
+ */
+function transcript(file, keep = () => true) {
+  const entries = [];
+  let broken = 0;
   try {
-    text = readFileSync(file, 'utf8');
+    eachLine(file, (line) => {
+      if (line === undefined) {
+        broken += 1;
+        return;
+      }
+      if (line.trim() === '') return;
+      let entry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        broken += 1;
+        return;
+      }
+      if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) broken += 1;
+      else if (keep(entry)) entries.push(entry);
+    });
   } catch {
     return { entries: [], unreadable: 1, broken: 0 };
   }
-  let broken = 0;
-  const entries = text.split('\n').flatMap((line) => {
-    if (line.trim() === '') return [];
-    try {
-      const entry = JSON.parse(line);
-      if (entry !== null && typeof entry === 'object' && !Array.isArray(entry)) return [entry];
-    } catch {
-      // Counted below with any other line that is not a record.
-    }
-    broken += 1;
-    return [];
-  });
   return { entries, unreadable: 0, broken };
 }
 

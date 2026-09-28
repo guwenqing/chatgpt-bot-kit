@@ -135,13 +135,15 @@ const codexTurn = ({ when, model = CODEX_MODEL, effort = 'high' }) => ({
  * day it started, named `rollout-<stamp>-<id>.jsonl`, its first line the
  * `session_meta` with the id, the folder it ran in, its time and whatever else
  * `meta` adds (`source`, `forked_from_id`, `parent_thread_id`). A line given
- * as a string is written as the text it is.
+ * as a string is written as the text it is. `archived` files it where Codex
+ * moves a conversation it has archived: `archived_sessions`, flat, by the same
+ * name (seen on this machine: no folders in it, every file named so).
  */
-async function plantRollout(box, { id, cwd, started, meta = {}, lines }) {
-  const file = path.join(
-    box.home, '.codex', 'sessions', ...started.slice(0, 10).split('-'),
-    `rollout-${started.replaceAll(':', '-').replace(/\..*$/, '')}-${id}.jsonl`,
-  );
+async function plantRollout(box, { id, cwd, started, meta = {}, lines, archived = false }) {
+  const name = `rollout-${started.replaceAll(':', '-').replace(/\..*$/, '')}-${id}.jsonl`;
+  const file = archived
+    ? path.join(box.home, '.codex', 'archived_sessions', name)
+    : path.join(box.home, '.codex', 'sessions', ...started.slice(0, 10).split('-'), name);
   const first = { timestamp: started, type: 'session_meta', payload: { id, cwd, timestamp: started, ...meta } };
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(
@@ -198,13 +200,14 @@ const childCalls = (first = at(10, 10), second = at(10, 20)) => [
   { when: second, last: { input: 50000, output: 5000 }, total: { input: 95000, output: 9500 } },
 ];
 
-/** Plant the parent: a session's conversation in `cwd`, with its five calls. */
-const plantParent = (box, cwd, day = 20) => plantRollout(box, {
+/** Plant the parent: a session's conversation in `cwd`, with its five calls, `archived` or not. */
+const plantParent = (box, cwd, day = 20, { archived = false } = {}) => plantRollout(box, {
   id: PARENT,
   cwd,
   started: on(day, 8, 55),
   meta: OWN_CONVERSATION,
   lines: [codexTurn({ when: on(day, 8, 55) }), ...parentCalls(day).map(codexCall)],
+  archived,
 });
 
 /**
@@ -970,6 +973,78 @@ test('F27 a leading record of the fork with a figure missing from its running to
     leftOut({ records_without_numbers: 2 }),
     'the damaged record and the own call after it',
   );
+});
+
+// ------------------------------------------- an origin Codex has archived (#396)
+//
+// Codex moves an archived conversation's rollout out of `sessions` into
+// `~/.codex/archived_sessions`, flat, under the same name. The live case behind
+// the architect's ruling on #396 is a book-named fork whose origin is archived.
+
+test('F28 the origin is found by its id in archived_sessions, and its records there are still not counted under the child', async (t) => {
+  // F4 with only the origin's place changed: archived, not under sessions.
+  const box = await createSandbox(t);
+  const { bots, home } = await fleet(box);
+  const elsewhere = box.path('elsewhere');
+  await mkdir(elsewhere, { recursive: true });
+  await plantParent(box, elsewhere, 19, { archived: true });
+  await plantChild(box, home, { meta: forkedFrom(PARENT), copies: beforeTheChild(1, 19) });
+  await bookSays(bots, 'api-bot', { daily: ran('019f9600-0000-7000-8000-00000000cccc') });
+
+  const answer = await usage(box);
+  const entry = entryOf(answer, 'api-bot');
+
+  assert.deepEqual(idsOf(entry.unclaimed), [CHILD], 'the parent ran elsewhere and is not the bot\'s');
+  assertOwnCallsOnly(childIn(answer));
+  assert.deepEqual(
+    leftOutOf(entry, 'unclaimed_not_counted'),
+    NOTHING_LEFT_OUT,
+    'the origin was found in archived_sessions, so the child is not reported as unreadable',
+  );
+});
+
+test('F29 a book-named fork whose origin is archived is counted under its session', async (t) => {
+  // The live case's shape: the session's own conversation is the fork.
+  const box = await createSandbox(t);
+  const { bots, home } = await fleet(box);
+  const elsewhere = box.path('elsewhere');
+  await mkdir(elsewhere, { recursive: true });
+  await plantParent(box, elsewhere, 19, { archived: true });
+  await plantChild(box, home, { meta: { ...OWN_CONVERSATION, forked_from_id: PARENT }, copies: beforeTheChild(1, 19) });
+  await bookSays(bots, 'api-bot', { daily: ran(CHILD) });
+
+  const answer = await usage(box);
+  const entry = entryOf(answer, 'api-bot');
+  const daily = sessionOf(entry, 'daily');
+
+  assertOwnCallsOnly(conversationOf(conversationsOf(daily), CHILD));
+  assert.deepEqual(leftOutOf(daily), NOTHING_LEFT_OUT, 'the origin was found, so nothing is reported as unreadable');
+  assert.deepEqual(idsOf(entry.unclaimed), []);
+});
+
+test('F30 a child whose origin is neither under sessions nor archived counts nothing and is reported as unreadable', async (t) => {
+  // Beside F28: archived_sessions is there and holds another conversation, and
+  // not this origin. As F13 and F15 have it.
+  const box = await createSandbox(t);
+  const { bots, home } = await fleet(box);
+  const elsewhere = box.path('elsewhere');
+  await mkdir(elsewhere, { recursive: true });
+  await plantRollout(box, {
+    id: GONE.replace(/dead$/, 'beef'),
+    cwd: elsewhere,
+    started: on(19, 8, 55),
+    meta: OWN_CONVERSATION,
+    lines: [codexTurn({ when: on(19, 8, 55) }), ...parentCalls(19).map(codexCall)],
+    archived: true,
+  });
+  await plantChild(box, home, { meta: { ...OWN_CONVERSATION, forked_from_id: PARENT }, copies: beforeTheChild(1, 19) });
+  await bookSays(bots, 'api-bot', { daily: ran(CHILD) });
+
+  const entry = entryOf(await usage(box), 'api-bot');
+  const daily = sessionOf(entry, 'daily');
+
+  assert.deepEqual(idsOf(conversationsOf(daily)), [], 'which records are copies cannot be told, so none is counted');
+  assert.deepEqual(leftOutOf(daily), leftOut({ unreadable_transcripts: 1 }), 'and the session says so');
 });
 
 // ------------------------------------------------- nothing else changes
