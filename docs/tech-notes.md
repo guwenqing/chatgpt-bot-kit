@@ -37,7 +37,7 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
   finds a workspace it made earlier. **verified** (live)
 - **A removed project stays in the window's sidebar until the window is rebuilt.** `setup-delete`
   sends the window nothing, so the row keeps its old name. The `project.update` call the kit makes
-  after a change (ADR 0025) makes the window re-read, and the row stays, now under "Unknown": the
+  after a change (ADR 0031) makes the window re-read, and the row stays, now under "Unknown": the
   sidebar builds its rows from the window's own list of workspaces, which a re-read does not prune
   (read in the bundle). Orca's menu item View › Force Reload (`Force Reload\t⌘⇧R` as the menu draws
   it; the name is localized, the shortcut is `app.forceReload` and the user may change it) rebuilds
@@ -208,7 +208,7 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
   under it and lined up with it (`  GPT-6-Luna medium · <path>`), and a wrapped draft or echo goes on
   in rows lined up the same way. So the kit takes the lowest pointer row on the screen, which is the
   input line whenever that is up, and counts a question only when that row is a numbered choice with
-  another numbered choice lined up beside it (ADR 0025). Claude Code's trust list does not count; what
+  another numbered choice lined up beside it (ADR 0031). Claude Code's trust list does not count; what
   keeps the nudge out of it is Orca naming no agent in that tab. **verified** (live, 2026-09-26)
   **A handle just listed can be refused as `terminal_handle_stale`, for a moment.** Seen five times
   between 2026-09-24 20:30Z and 2026-09-25 06:40Z (Orca 1.4.209), every time `obk message send`'s
@@ -261,7 +261,7 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
   `satisfied:true` for 20 s. So the kit takes a harness to be in a tab when the foreground is not its
   shell (a busy one included), and the mail nudge types only when the process in front is the one
   Orca names. When the pid or the group cannot be read it says it cannot tell and
-  types nothing (ADR 0025). `diagnostics memory` is a diagnostics command and may change.
+  types nothing (ADR 0031). `diagnostics memory` is a diagnostics command and may change.
   **verified** (live, 2026-09-24, Orca 1.4.209, macOS 26.6.2, Claude Code 2.1.281, Codex 0.156.1, #232)
 - **Orca's runtime says who is in front of a tab, from outside any sandbox: `terminal.inspectProcess`.**
   Its CLI does not offer it; Orca's own runtime client does (`call('terminal.inspectProcess', {
@@ -276,7 +276,7 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
   null`, `hasChildProcesses: false`; `less` gave `foregroundProcess: "less"`, `hasChildProcesses:
   true`; a `node` program gave `"node"`. `terminal.isRunningAgent` took more than 5 s on that `node`
   program and timed out, and it guesses from titles and output as well. The kit asks
-  `inspectProcess` where `ps` cannot read a tab (ADR 0025, #298). **verified** (live, 2026-09-26, Orca
+  `inspectProcess` where `ps` cannot read a tab (ADR 0031, #298). **verified** (live, 2026-09-26, Orca
   1.4.212, for the shell, `less` and `node`, and in #298's attended system test for an idle Claude Code,
   which was named in front).
   **On macOS it cannot see a harness that is running a command.** `ps` prints `??` for a process with
@@ -291,7 +291,7 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
   kit's answer to it is #350. **verified** (live)
 - **Orca's runtime client answers in well under a second, even on a loaded machine.** The kit runs it
   as Orca's binary with `ELECTRON_RUN_AS_NODE=1` and `src/orca-runtime.cjs`, gives the client 2 s
-  (`CLIENT_WAIT_MS`) and ends it at 3 s (`CLIENT_KILL_MS`) (ADR 0025). On 2026-09-27 (#384; Orca
+  (`CLIENT_WAIT_MS`) and ends it at 3 s (`CLIENT_KILL_MS`) (ADR 0031). On 2026-09-27 (#384; Orca
   1.4.214, macOS, 10 cores) a throwaway probe run through `scripts/test-system.js` made its own folder
   project and one plain shell tab. It ran the client exactly as the kit does, with its own bounds
   raised to 30 s so that slow calls showed rather than being cut off, and timed each call to the end
@@ -323,7 +323,26 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
   variable, so a reader should look for one whole word it knows. That answers the reading half of
   #261's open question on macOS. #318 uses the marker only to report in `obk health` which sessions
   the kit's launch line did not start, never to decide what is typed into a tab. Whether the mail
-  nudge may rest on it is still #261's to settle, and ADR 0025 still lists it as open. **verified** (live)
+  nudge may rest on it was #261's to settle, as below, and ADR 0031 records it. **verified** (live)
+  **#261 settles it: the kit types into a harness under another name when it carries the launch
+  mark.** When the program in front of a tab is not named as the agent Orca names, the kit reads
+  its environment and parent with `ps`. It types only when that process carries this tab's
+  `ORCA_TAB_ID` and an `OBK_TAB_SHELL` equal to its own parent's pid, so the tab's shell started it
+  on the kit's launch line, and only where Orca names an agent at all. A program the shell starts
+  later has no mark, since the line sets it for the harness alone and does not export it. A program
+  the harness starts has the harness as its parent. A tab Orca restored by itself has no mark, and
+  keeps the name rule (a harness under another name there stays "cannot tell"). A sender inside
+  Codex's sandbox cannot run `ps` at all (#298, #408), gets only Orca's runtime, which gives no pid,
+  and so stays "cannot tell" as in #350. Seen outside Orca first (2026-09-28): a shell starting
+  `OBK_TAB_SHELL=$$ … node …` gave a `node` whose `ps -E` carried `OBK_TAB_SHELL=<the shell's pid>`
+  with that shell as its parent. Seen live (2026-09-28, Orca 1.4.215, Claude Code 2.1.283 run as
+  the child of a `node` wrapper typed on the kit's launch-line shape, codex-cli 0.157.1 as the
+  sender, `test/system/node-harness-nudge.test.js`): `node` led the tab with the mark, Orca named
+  `claude` as the agent, an idle session was nudged and read its mail, and a busy one was typed into
+  (Orca saw no turn start, as #402 found). After it quit, `less` in its place got nothing typed;
+  Orca named no agent at that moment, so the no-agent guard is what refused there (the fake tests
+  cover `less` while an agent is still named). Not seen: a real npm install, where `node` is the
+  harness itself, and Codex through npm. **verified** (live, as said)
 - `orca terminal send [--terminal <h>] [--text <t>] [--enter] [--interrupt] [--wait-submit <s>] [--retry-request <id>]` — `accepted:true` means input accepted, not that the agent read it; never resend on silence; use `--retry-request` for an idempotent retry.
   **A carriage return or a line feed inside `--text` does not submit early.** Sent with `--enter` into a running agent, a line with `\r` or `\n` in the middle arrives as **one** message with a line break where the character was, and is answered once: Claude Code's transcript shows one user turn holding both lines, and Codex's screen shows one prompt of two lines and one answer. So the mail nudge, which carries the sender's subject as typed, cannot be split into two prompts by a subject that has one in it. **verified** (live, 2026-09-23, Orca 1.4.207, Claude Code 2.1.280 with `--model haiku`, Codex 0.155.1; #176)
   **While Codex sits on its own update offer, Orca refuses a line with `--enter` as `agent_prompt_blocked`.** Seen three times in a row on 2026-09-23 (Codex 0.155.1 offering 0.156.0); answered `2` (Skip), the next line went through. **verified** (live)

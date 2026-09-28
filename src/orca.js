@@ -1,4 +1,4 @@
-// Every call the kit makes to Orca goes through here (ADR 0025). Orca's CLI
+// Every call the kit makes to Orca goes through here (ADR 0031). Orca's CLI
 // changes often, so the kit reads `--json` and never the human text, and keeps
 // the parsing in one place.
 //
@@ -12,6 +12,9 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { SHELL_ENV } from './launch.js';
+import { TAB_ENV } from './record.js';
 
 // The Orca that works for a normal user: `/usr/local/bin/orca` is a root-only
 // symlink on this machine (tech notes, section 1). OBK_ORCA overrides it, for a
@@ -199,7 +202,7 @@ const CLIENT_KILL_MS = 3000;
  *
  * Orca's window re-reads only when its runtime says the projects changed, and
  * `setup-update` and `setup-delete` do not say so. `project.update` with no
- * changes does, and Orca's CLI does not offer it (ADR 0025). The caller prints
+ * changes does, and Orca's CLI does not offer it (ADR 0031). The caller prints
  * `RELOAD_LINE` either way. It does not take a removed project out of the
  * sidebar: `reloadWindow` does.
  */
@@ -210,7 +213,7 @@ export const tellWindow = (projectId) => askRuntime('project.update', { projectI
  * runtime's answer, or undefined when there is none to be had.
  *
  * It goes through Orca's own runtime client out of the installed app, run by
- * Orca's binary the way its `bin/orca` runs its CLI (ADR 0025). None of that is
+ * Orca's binary the way its `bin/orca` runs its CLI (ADR 0031). None of that is
  * Orca's published interface, so anything that goes wrong is a quiet
  * undefined: it never throws and is never tried twice.
  */
@@ -247,7 +250,7 @@ const RELOAD_KILL_MS = 5000;
 
 /**
  * Have Orca's window force-reload itself, after a project was removed: true
- * only when it did (#343, ADR 0025).
+ * only when it did (#343, ADR 0031).
  *
  * The window keeps a removed project in its sidebar until it is rebuilt, and
  * `tellWindow` only relabels the row "Unknown" (stablyai/orca#23224; once a
@@ -380,7 +383,7 @@ const ON_A_CHOICE = /^( *[›❯] +)\d+\. /;
  * Whether the rows of a rendered screen hold a question of the harness's own.
  *
  * Every one seen is a numbered list of choices with the harness's pointer on
- * one (tech notes, section 1; ADR 0025). The same pointer starts the harness's
+ * one (tech notes, section 1; ADR 0031). The same pointer starts the harness's
  * input line and its echo of the user's past turns, and the input line is the
  * lowest of them whenever it is on screen, so only the lowest pointer row is
  * asked about: a question counts while it stands in the input line's place.
@@ -435,9 +438,12 @@ export function tabToTypeInto(home, tabId, timeoutMs) {
   // there. The program in front has to be the agent Orca names. With no name
   // it may be a harness a few seconds into its launch; under another name it
   // may be a pager started after the harness quit, under an identity Orca has
-  // not let go of (tech notes, section 1). A harness run through a wrapper such
-  // as `node` lands here too, until #261.
-  if (seen.front === undefined || seen.agent === undefined || seen.command !== seen.agent) {
+  // not let go of (tech notes, section 1). A harness run under another name,
+  // such as `node` for an npm install, passes on the kit's own mark instead
+  // (#261).
+  // Either way Orca has to name an agent there: a harness it has not named yet
+  // may be seconds into its launch and not ready for a line.
+  if (seen.front === undefined || seen.agent === undefined || (seen.command !== seen.agent && !launchedHere(seen.pid, tabId))) {
     const why = seen.front === undefined
       ? seen.unreadable
       : `${seen.command} holds its terminal, and Orca names ${seen.agent ?? 'no agent'} in it`;
@@ -451,6 +457,25 @@ export function tabToTypeInto(home, tabId, timeoutMs) {
     return { unsure: `the kit could not tell whether a question is waiting on its screen (${seen.screenUnreadable}), so nothing was typed` };
   }
   return { handle: live.handle, agent: seen.agent };
+}
+
+/**
+ * Whether the process `pid`, in front of the tab `tabId`, is the harness the
+ * kit's launch line started there, whatever it is called (#261). The line sets
+ * `OBK_TAB_SHELL` to the tab's shell's pid, for the harness alone and not
+ * exported, so the harness carries it, with its parent that shell. A program
+ * the shell starts later, such as `less` after the harness quit (#232), has no
+ * mark. A program the harness starts carries the mark, and its parent is the
+ * harness. A tab Orca restored by itself has no mark at all. Only whole words
+ * of the environment count, and anything unread is a no.
+ */
+function launchedHere(pid, tabId) {
+  if (pid === undefined) return false;
+  const words = wordsOfProcess(pid);
+  if (words === undefined || !words.includes(`${TAB_ENV}=${tabId}`)) return false;
+  const marks = words.filter((word) => new RegExp(`^${SHELL_ENV}=[0-9]+$`).test(word));
+  const own = psLine(pid);
+  return marks.length === 1 && own !== undefined && Number(marks[0].slice(SHELL_ENV.length + 1)) === own.ppid;
 }
 
 /**
@@ -479,7 +504,7 @@ const psCli = () => process.env.OBK_PS || '/bin/ps';
  *
  * `ps` is asked first. Where it cannot read the tab, as inside Codex's
  * sandbox, where it does not start at all, Orca's runtime is asked instead
- * (#298, ADR 0025).
+ * (#298, ADR 0031).
  */
 function frontOf(handle, ptyId) {
   const read = frontByPs(ptyId);
@@ -515,7 +540,7 @@ function frontByOrca(handle) {
  * Who holds the terminal of the pane `ptyId`, as `ps` says it.
  *
  * Orca gives the pane's pid in `diagnostics memory` and nowhere else, and `ps`
- * gives that pid's terminal's foreground process group (ADR 0025).
+ * gives that pid's terminal's foreground process group (ADR 0031).
  * On macOS the pane is `login` with the shell as its child, so the shell is in
  * front when the group is the pane's own or that of a child of a `login` pane.
  * `diagnostics memory` is a diagnostics command and may change, so everything
