@@ -59,6 +59,16 @@
 // answering them is the caller's job and not the kit's (PRD 6.5), which is why
 // no test in `test/system/` does it. On this machine a first run asks:
 //
+//   - In every test but the last, only Claude Code's folder-trust list below.
+//     Their Codex sessions are given their folder's trust at launch (#240,
+//     test/helpers/codex-trust.js), so Codex asks neither of its two screens
+//     below, still runs the kit's hook, and writes nothing about the folder
+//     into the user's own ~/.codex/config.toml; a trust or hooks screen in
+//     those tabs means the launch-time trust did not take. The last test, the
+//     one that wants the hooks untrusted, has its folder trusted the same way
+//     but not its hooks, so it still meets `Hooks need review` below, and only
+//     that; it says why.
+//
 //   - Claude Code's folder-trust list. Its selection starts on `No, exit`, so
 //     it takes a down-arrow and then return, not a bare return.
 //   - Codex's directory-trust question, `1. Yes, continue`, already selected.
@@ -118,7 +128,8 @@ import test from '../helpers/system.js';
 import { setTimeout } from 'node:timers/promises';
 import { parse } from 'yaml';
 
-import { cliEntry } from '../helpers/cli.js';
+import { cliEntry, shellWord } from '../helpers/cli.js';
+import { codexTrustArgs, projectTrust } from '../helpers/codex-trust.js';
 import { waitingOn } from '../helpers/screens.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
@@ -678,6 +689,7 @@ test('a cleared session gets a new id, keeps the old one, and is told its duty a
     obkJson([
       'session', 'add', '--bots', bots, '--bot', bot.name, '--name', 'daily',
       `--prompt=${startPromptFor(bot)}`,
+      ...(bot.harness === 'codex' ? codexTrustArgs(bots) : []),
     ]);
   }
 
@@ -699,7 +711,7 @@ test('a cleared session gets a new id, keeps the old one, and is told its duty a
       `${bot.name} to report its session id`,
       HOOK_MS,
       async () => (await sessionIn(home, 'daily')).session,
-      () => ` The kit's hook has not run. On Codex that is usually the \`Hooks need review\` screen.${whatIsUp(entry.terminal)}`,
+      () => ` The kit's hook has not run. On Codex, a \`Hooks need review\` screen here means the launch-time trust did not take (#240).${whatIsUp(entry.terminal)}`,
     );
     assert.equal(typeof first, 'string');
     assert.equal(
@@ -833,6 +845,7 @@ test('a session whose tab was closed comes back with its conversation', async (t
     obkJson([
       'session', 'add', '--bots', bots, '--bot', bot.name, '--name', 'daily',
       `--prompt=${startPromptFor(bot)}`,
+      ...(bot.harness === 'codex' ? codexTrustArgs(bots) : []),
     ]);
   }
 
@@ -845,7 +858,7 @@ test('a session whose tab was closed comes back with its conversation', async (t
       `${bot.name} to report its session id`,
       HOOK_MS,
       async () => (await sessionIn(home, 'daily')).session,
-      () => ` The kit's hook has not run. On Codex that is usually the \`Hooks need review\` screen.${whatIsUp(opened.terminal)}`,
+      () => ` The kit's hook has not run. On Codex, a \`Hooks need review\` screen here means the launch-time trust did not take (#240).${whatIsUp(opened.terminal)}`,
     );
 
     // Something in this conversation and nowhere else. If the session comes
@@ -909,7 +922,12 @@ const CHILDREN = [
     harness: 'codex',
     display: 'Child Codex',
     codeword: 'BADGER-5512',
-    child: 'codex exec --skip-git-repo-check \'reply with the single word ok\'',
+    // With the bots folder's trust given on its command line, as a session's is
+    // at launch (#240): `codex exec` writes trust for the folder it runs in into
+    // the user's own ~/.codex/config.toml, and Codex makes that write only while
+    // the folder's trust is unset (worked out from Codex 0.158.0's source for
+    // #240, not seen live; the runner's check catches it if it is wrong).
+    child: (bots) => `codex exec -c ${shellWord(projectTrust(bots))} --skip-git-repo-check 'reply with the single word ok'`,
     // In the kit's default `auto` level Codex's sandbox refuses a child harness
     // outright: `codex exec` exits 1 at once with "failed to initialize in-process
     // app-server client: Operation not permitted" (measured live, #163). So on
@@ -922,7 +940,7 @@ const CHILDREN = [
     harness: 'claude',
     display: 'Child Claude',
     codeword: 'MARMOT-8820',
-    child: 'claude -p \'reply with the single word ok\' --permission-mode auto',
+    child: () => 'claude -p \'reply with the single word ok\' --permission-mode auto',
   },
 ];
 
@@ -987,6 +1005,7 @@ test('a harness the session starts for itself does not become the session\'s con
       + ' When anyone asks for your codeword, give it in exactly the form they ask for, and nothing else.'
       + ' Say nothing now and wait.',
       ...(bot.approval === undefined ? [] : ['--approval', bot.approval]),
+      ...(bot.harness === 'codex' ? codexTrustArgs(bots) : []),
     ]);
   }
 
@@ -1009,7 +1028,7 @@ test('a harness the session starts for itself does not become the session\'s con
     const since = Date.now();
     await answers(
       entry.terminal,
-      `Run exactly this command, then reply with your codeword in lower case and nothing else: ${bot.child}`,
+      `Run exactly this command, then reply with your codeword in lower case and nothing else: ${bot.child(bots)}`,
       lowered(bot.codeword),
       CHILD_MS,
     );
@@ -1029,7 +1048,7 @@ test('a harness the session starts for itself does not become the session\'s con
         const others = found.filter((id) => id !== own);
         return others.length > 0 ? others : undefined;
       },
-      () => ` The session answered without its child on record. Run \`${bot.child}\` yourself in a`
+      () => ` The session answered without its child on record. Run \`${bot.child(bots)}\` yourself in a`
         + ` shell of your own in ${home}, with ORCA_TAB_ID set to ${entry.tabId}.${whatIsUp(entry.terminal)}`,
     );
 
@@ -1069,7 +1088,15 @@ test('a Codex conversation that ran before the hooks file was trusted is written
   // only one that wants the kit's hook not to run.
   //
   // Attended, and shorter than it used to be:
-  //   1. Answer Codex's directory-trust question if it asks.
+  //   1. Codex should not ask its directory trust: the folder is trusted at
+  //      launch, as in the other cases, by `codexTrustArgs(bots, { hooks: false })`
+  //      (#240), which leaves out `--dangerously-bypass-hook-trust`. So the hooks
+  //      review is still shown, on every start, and the hooks do not run until
+  //      they are trusted; and "Continue without trusting" writes nothing into
+  //      the user's own ~/.codex/config.toml (all three read in Codex 0.158.0's
+  //      source for #240, tui/src/startup_hooks_review.rs and
+  //      hooks/src/engine/discovery.rs, not yet seen live). If Codex does ask
+  //      its directory trust, the launch-time trust did not take: leave it.
   //   2. Answer `Hooks need review` with `3`, "Continue without trusting (hooks
   //      won't run)". That is what this case needs, and leaving the screen alone is
   //      not: nothing runs behind it. While it is up Codex has started no
@@ -1137,6 +1164,8 @@ test('a Codex conversation that ran before the hooks file was trusted is written
     'session', 'add', '--bots', bots, '--bot', 'untrusted-codex', '--name', 'daily',
     '--prompt=You are a system test\'s bot and you own nothing. Your codeword is OTTER-3391.'
     + ' When anyone asks for your codeword, reply with it and nothing else. Say nothing now and wait.',
+    // The folder trusted, the hooks not: this case wants the kit's hook not to run (see above).
+    ...codexTrustArgs(bots, { hooks: false }),
   ]);
 
   const home = homeOf('untrusted-codex');
@@ -1159,7 +1188,7 @@ test('a Codex conversation that ran before the hooks file was trusted is written
       const found = await codexConversationsSince(home, Date.parse(String(launched)));
       return found.length > 0 ? found : undefined;
     },
-    () => ' Answer Codex\'s directory-trust question if it is up, and answer `Hooks need review`'
+    () => ' Answer `Hooks need review`'
       + ' with `3` — "Continue without trusting (hooks won\'t run)". Nothing runs behind that'
       + ' screen: while it is up there is no conversation and no rollout, so leaving it alone'
       + ' gives this case nothing to find. If this machine has already trusted the kit\'s hooks'

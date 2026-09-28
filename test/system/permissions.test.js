@@ -161,26 +161,28 @@
 //
 // It leaves behind what every system test does: the Run mailboxes Orca cannot
 // delete, offline entries in Claude Code's Remote Control list, the bot's
-// transcript under `~/.claude/projects/`, the Codex bot's rollouts and its
-// reviewer's under `~/.codex/sessions/`, and the trust Codex saves in
-// `~/.codex/config.toml` for the throwaway folder and its hooks.
+// transcript under `~/.claude/projects/`, and the Codex bot's rollouts and its
+// reviewer's under `~/.codex/sessions/`. Its Codex sessions are given their
+// folder's trust at launch (#240, test/helpers/codex-trust.js), so Codex no
+// longer saves trust for the throwaway folder or its hooks in the user's own
+// `~/.codex/config.toml`.
 //
 // **It is attended.** It runs once per harness, Claude first. Answer only
 // these, in the order they come:
 //
 //   1. `Bot Father daily`: Claude Code's folder trust. Leave it; nothing here
 //      needs Bot Father.
-//   2. `Pen Pal daily` (Codex): leave it on whatever it shows. Its mailbox is
-//      made before its harness starts, and the reply only has to reach that.
+//   2. `Pen Pal daily` (Codex): it should ask nothing, its trust given at
+//      launch (#240); leave it on whatever it shows. Its mailbox is made
+//      before its harness starts, and the reply only has to reach that.
 //   3. In the Claude run, `Perm Claude daily`: Claude Code's folder trust. Its
 //      selection starts on `No, exit`, so it takes a down-arrow and then
 //      return. If Claude Code then offers `Teach auto mode about your
 //      environment?`, answer `2`, "Not now".
-//   4. In the Codex run, `Perm Codex daily`: Codex's folder trust, answer `1`,
-//      "Trust and continue"; its hooks review, answer `2`, "Trust all and
-//      continue"; and if Codex offers an update, accept it: `1`, "Update
-//      now" (the owner's standing decision, #69; tech notes, first-run
-//      screens).
+//   4. In the Codex run, `Perm Codex daily` asks no folder trust and no hooks
+//      review: both are given at launch (#240). If Codex offers an update,
+//      accept it: `1`, "Update now" (the owner's standing decision, #69; tech
+//      notes, first-run screens).
 //   5. **Nothing else.** A permission question in `Perm Claude daily` or
 //      `Perm Codex daily` is what this test is looking for: leave it on the
 //      screen, and the test fails and shows it.
@@ -200,6 +202,7 @@ import { setTimeout } from 'node:timers/promises';
 import { parse } from 'yaml';
 
 import { cliEntry } from '../helpers/cli.js';
+import { codexTrustArgs } from '../helpers/codex-trust.js';
 import { questionOn } from '../helpers/screens.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 
@@ -1060,7 +1063,7 @@ const HARNESSES = [
       '--extra-arg=-c', '--extra-arg=sandbox_workspace_write.exclude_tmpdir_env_var=true',
       '--extra-arg=-c', '--extra-arg=sandbox_workspace_write.exclude_slash_tmp=true',
     ],
-    firstRun: (title) => ` Answer Codex's folder trust (1) and its hooks review (2, trust all) in ${title}, and accept an update offer (1).`,
+    firstRun: (title) => ` Accept an update offer (1) in ${title}. A folder-trust or hooks-review screen there means the launch-time trust did not take (#240).`,
 
     uncoveredStep: (file) => `Last, run exactly this command: touch ${file} . If the sandbox stops it, ask once to run that same command outside the sandbox;`
       + ' if that is refused too, do not run it again or try any other way.',
@@ -1098,7 +1101,7 @@ const HARNESSES = [
       return undefined;
     },
 
-    /** Codex's first-run screens, which the person running the test answers: folder trust, hooks review, update offer. */
+    /** Codex's first-run screens: the update offer, which the person running the test answers, and folder trust and hooks review, which the launch-time trust (#240) should keep away. */
     ownQuestion: (rows) => rows.some((row) => /Trust this folder\?|Hooks need review|Update available!/.test(row)),
   },
 ];
@@ -1284,7 +1287,7 @@ for (const harness of HARNESSES) {
       'bot', 'create', '--bots', bots, '--name', PEN_PAL.name, '--harness', 'codex',
       '--charter', `${PEN_PAL.display} exists for one system test run and owns nothing.`,
     ]);
-    obkJson(['session', 'add', '--bots', bots, '--bot', PEN_PAL.name, '--name', 'daily', `--prompt=${PEN_PAL_PROMPT}`]);
+    obkJson(['session', 'add', '--bots', bots, '--bot', PEN_PAL.name, '--name', 'daily', `--prompt=${PEN_PAL_PROMPT}`, ...codexTrustArgs(bots)]);
 
     // 1. The bot is made, and the kit shows what waits for the user's yes. The
     //    plain report is what a user reads: it holds the command to run.
@@ -1331,7 +1334,10 @@ for (const harness of HARNESSES) {
 
     // The bot's part, and the file it commits.
     await writeFile(path.join(home, COMMIT_FILE), 'A file for the permissions system test to commit.\n');
-    obkJson(['session', 'add', '--bots', bots, '--bot', harness.bot, '--name', 'daily', `--prompt=${botPrompt(kit, harness)}`, ...harness.sessionArgs]);
+    obkJson([
+      'session', 'add', '--bots', bots, '--bot', harness.bot, '--name', 'daily', `--prompt=${botPrompt(kit, harness)}`,
+      ...harness.sessionArgs, ...(harness.name === 'codex' ? codexTrustArgs(bots) : []),
+    ]);
 
     // 3. Up: the pen pal first, whose mailbox the reply goes to, then the bot.
     //    Nothing waits for a yes any more.

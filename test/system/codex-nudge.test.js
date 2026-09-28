@@ -106,10 +106,12 @@
 //
 //   1. `Bot Father daily`: Claude Code's folder trust. Nothing here waits on
 //      Bot Father or writes to it. Leave it.
-//   2. `Nudge Codex warmup`: Codex's folder trust (`1`, trust and continue),
-//      then Codex's `Hooks need review` (`2`, "Trust all and continue";
-//      without it the kit's hook never runs). This tab exists only so that
-//      the folder is trusted before the sender starts; it does nothing else.
+//   2. `Nudge Codex warmup` should ask nothing: both Codex sessions are given
+//      their folder's trust at launch (#240, test/helpers/codex-trust.js), so
+//      Codex asks neither its folder trust nor its hooks review, and writes
+//      nothing about this folder into the user's own ~/.codex/config.toml. The
+//      tab still comes up first, as it did when it carried those questions for
+//      the sender; it does nothing else.
 //   3. `Nudge Claude idle`: Claude Code's folder trust, once for the folder.
 //      Its selection starts on `No, exit`, so it takes a down-arrow and then
 //      return. `quit`, `pager` and `busy` come up in the same folder after
@@ -119,7 +121,7 @@
 //   5. Any tab, if its harness offers an update: accept it (PRD 6.5). In
 //      `Nudge Codex sender` or `Nudge Claude busy` that costs time the loop
 //      may not have; a run that misses it says so.
-//   6. `Nudge Codex sender` should ask nothing: its folder was trusted in 2.
+//   6. `Nudge Codex sender` should ask nothing, for the same reason as 2.
 //
 // Every wait says what the tab is showing when it runs out of patience, so a
 // run that was left alone names the screen that stopped it.
@@ -135,6 +137,7 @@ import { setTimeout } from 'node:timers/promises';
 import { parse } from 'yaml';
 
 import { cliEntry } from '../helpers/cli.js';
+import { codexTrustArgs } from '../helpers/codex-trust.js';
 import { waitingOn } from '../helpers/screens.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 
@@ -571,8 +574,8 @@ test('mail from a Codex session in its sandbox nudges an idle Claude receiver, a
   ]);
   // No --approval anywhere: every session is at the kit's default, `auto`,
   // which for Codex is the workspace-write sandbox.
-  obkJson(['session', 'add', '--bots', bots, '--bot', CODEX.name, '--name', 'warmup', `--prompt=${[...aBotOf(bots), 'Say nothing now and wait.'].join(' ')}`]);
-  obkJson(['session', 'add', '--bots', bots, '--bot', CODEX.name, '--name', 'sender', `--prompt=${senderPrompt(bots, codexHome)}`]);
+  obkJson(['session', 'add', '--bots', bots, '--bot', CODEX.name, '--name', 'warmup', `--prompt=${[...aBotOf(bots), 'Say nothing now and wait.'].join(' ')}`, ...codexTrustArgs(bots)]);
+  obkJson(['session', 'add', '--bots', bots, '--bot', CODEX.name, '--name', 'sender', `--prompt=${senderPrompt(bots, codexHome)}`, ...codexTrustArgs(bots)]);
   for (const session of ['idle', 'quit', 'pager', 'busy']) {
     obkJson(['session', 'add', '--bots', bots, '--bot', CLAUDE.name, '--name', session, `--prompt=${receiverPrompt(bots, session)}`]);
   }
@@ -589,8 +592,9 @@ test('mail from a Codex session in its sandbox nudges an idle Claude receiver, a
     return entry;
   };
 
-  // The Codex folder's first-run screens, answered by hand in a tab that does
-  // nothing else, so the sender comes up later with nothing to ask.
+  // A Codex tab that does nothing else, up before the sender. It used to carry
+  // the folder's first-run screens, answered by hand; with the trust given at
+  // launch (#240) it should ask nothing, and is waited for all the same.
   const warmup = bringUp(CODEX.name, 'warmup');
   await readyForMail(warmup.terminal);
 

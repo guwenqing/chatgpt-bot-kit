@@ -52,11 +52,13 @@
 // before the harness is running in it, and this test answers none of them —
 // answering them is the caller's job and not the kit's (PRD 6.5). On this
 // machine a first run asks for Claude Code's folder trust (the selection starts
-// on `No, exit`, so it takes a down-arrow and then return), Codex's directory
-// trust (`1. Yes, continue`), Codex's `Hooks need review` (`2`, "Trust all and
-// continue" — without it the kit's hook never runs) and possibly a harness
-// update offer. Every wait below says what the tab is showing when it runs out
-// of patience, so a run that was left alone names the screen that stopped it.
+// on `No, exit`, so it takes a down-arrow and then return) and possibly a
+// harness update offer. The Codex bot's session is given its folder's trust at
+// launch (#240, test/helpers/codex-trust.js), so Codex asks neither its
+// directory trust nor its hooks review, and writes nothing about this folder
+// into the user's own ~/.codex/config.toml. Every wait below says what the tab
+// is showing when it runs out of patience, so a run that was left alone names
+// the screen that stopped it.
 //
 // **Nothing here types at a bot.** Each one is given its whole part in its
 // start prompt, and the only lines that go into these tabs afterwards are the
@@ -103,6 +105,7 @@ import { setTimeout } from 'node:timers/promises';
 import { parse } from 'yaml';
 
 import { addressPattern, cliEntry } from '../helpers/cli.js';
+import { codexTrustArgs } from '../helpers/codex-trust.js';
 import { waitingOn } from '../helpers/screens.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
@@ -582,6 +585,7 @@ async function aFleet(t, label, promptFor) {
     obkJson([
       'session', 'add', '--bots', bots, '--bot', bot.name, '--name', 'daily',
       `--prompt=${promptFor(bots, bot)}`,
+      ...(bot.harness === 'codex' ? codexTrustArgs(bots) : []),
     ]);
 
     const entry = tabOf(obkJson(['up', '--bots', bots, '--bot', bot.name]), 'daily');
