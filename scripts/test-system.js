@@ -261,6 +261,21 @@ function runFolderOf(key) {
   return undefined;
 }
 
+/**
+ * The obk-system-* folders under the temp folder right now, by name. Taken
+ * before the tests run, so that a folder another session made earlier is not
+ * mistaken for this run's: only a folder that appears while the run goes on
+ * counts as its own (#240). A second system-test run started on this machine at
+ * the same time would still be counted; nothing here can tell the two apart.
+ */
+function runFoldersNow() {
+  try {
+    return new Set(readdirSync(os.tmpdir()).filter((name) => name.startsWith('obk-system-')));
+  } catch {
+    return new Set();
+  }
+}
+
 /** codex-first-run-screens' folder: it answers Codex's trust screens on purpose, and so writes them (#240). */
 const KNOWN_WRITER = 'obk-system-codex-screens-';
 
@@ -274,11 +289,15 @@ const KNOWN_WRITER = 'obk-system-codex-screens-';
  * the run's folders, are not this run's to answer for. Answers whether the run
  * left a key it must not.
  */
-function reportConfigsLeft(before) {
+function reportConfigsLeft(before, foldersBefore) {
   const after = trustKeys();
   const lines = [];
-  const added = (side) => (before[side].keys === undefined || after[side].keys === undefined ? [] : after[side].keys
-    .filter((key) => !before[side].keys.includes(key) && runFolderOf(key) !== undefined));
+  const ours = (key) => {
+    const folder = runFolderOf(key);
+    return folder !== undefined && !foldersBefore.has(folder);
+  };
+  const compared = (side) => before[side].keys !== undefined && after[side].keys !== undefined;
+  const added = (side) => (compared(side) ? after[side].keys.filter((key) => !before[side].keys.includes(key) && ours(key)) : []);
 
   for (const side of ['codex', 'claude']) {
     const why = before[side].why ?? after[side].why;
@@ -310,8 +329,11 @@ function reportConfigsLeft(before) {
       ...claude.map((key) => `  ${key}`),
     );
   }
+  // Nothing added is only a finding for a file that was compared both times.
   if (codex.length === 0 && claude.length === 0) {
-    lines.push('The harness configs gained no keys under the run\'s own folders.');
+    if (compared('codex') && compared('claude')) lines.push('The harness configs gained no keys under the run\'s own folders.');
+    else if (compared('codex')) lines.push(`Only ${after.codex.file} was compared: nothing was added there under the run's own folders.`);
+    else if (compared('claude')) lines.push(`Only ${after.claude.file} was compared: nothing was added there under the run's own folders.`);
   }
 
   process.stdout.write(`\n${lines.join('\n')}\n`);
@@ -508,6 +530,7 @@ function run() {
   // machine already had.
   const before = listRuns();
   const configsBefore = trustKeys();
+  const foldersBefore = runFoldersNow();
 
   // OBK_SYSTEM_TESTS is how a system test knows this command started it: loaded
   // any other way, it skips (test/helpers/system.js, #328).
@@ -520,7 +543,7 @@ function run() {
   // After the tests, whatever they did: a failing run leaves Runs behind just
   // as a passing one does, and the developer is owed the accounting either way.
   reportRunsLeft(before);
-  const leftKeys = reportConfigsLeft(configsBefore);
+  const leftKeys = reportConfigsLeft(configsBefore, foldersBefore);
 
   // The test runner answers 0 or 1, and a run killed by a signal answers
   // nothing at all. Anything but a clean 0 means the system tests did not pass.

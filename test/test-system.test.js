@@ -1803,11 +1803,12 @@ function tempSpellings(fixture) {
 
 /**
  * A system test file that writes the harness configs while it runs: `writes`
- * is `[{ file, text }]`, each file written whole (its folder made first), and
- * `removes` is files it takes away. It prints its marker, and fails afterwards
- * when `thenFails` says so.
+ * is `[{ file, text }]`, each file written whole (its folder made first),
+ * `removes` is files it takes away, and `makes` is folders it makes after that,
+ * a run's own throwaway folder or a folder where a config file was. It prints
+ * its marker, and fails afterwards when `thenFails` says so.
  */
-const writesConfigs = (name, { writes = [], removes = [], thenFails = false } = {}) => [
+const writesConfigs = (name, { writes = [], removes = [], makes = [], thenFails = false } = {}) => [
   "import { mkdirSync, rmSync, writeFileSync } from 'node:fs';",
   "import path from 'node:path';",
   "import test from 'node:test';",
@@ -1818,6 +1819,7 @@ const writesConfigs = (name, { writes = [], removes = [], thenFails = false } = 
   '    writeFileSync(file, text);',
   '  }',
   `  for (const file of ${JSON.stringify(removes)}) rmSync(file, { force: true, recursive: true });`,
+  `  for (const folder of ${JSON.stringify(makes)}) mkdirSync(folder, { recursive: true });`,
   `  process.stdout.write(${JSON.stringify(`${name}\n`)});`,
   ...(thenFails ? [`  throw new Error(${JSON.stringify(`${name} failed`)});`] : []),
   '});',
@@ -1848,8 +1850,9 @@ const claudeConfig = (projects) => `${JSON.stringify({
  * sandbox's HOME, or CODEX_HOME's and CLAUDE_CONFIG_DIR's when `codexHome` or
  * `claudeDir` asks for them. `build` is given the fixture's temp folder, in
  * both spellings, and answers `{ before, during, codexHome, claudeDir,
- * thenFails }`: `before` is written into those files before the run; `during`
- * is what the run's one system test writes. `env` is the
+ * thenFails }`: `before` is written into those files before the run, and its
+ * `makes` are folders made before it; `during` is what the run's one system
+ * test writes, removes and makes. `env` is the
  * environment to run with, the machine's own CODEX_HOME and CLAUDE_CONFIG_DIR
  * taken out whatever this shell has.
  */
@@ -1869,9 +1872,13 @@ async function withConfigs(t, build = () => ({})) {
   if (during.codex !== undefined) writes.push({ file: files.codex, text: during.codex });
   if (during.claude !== undefined) writes.push({ file: files.claude, text: during.claude });
   const removes = (during.removes ?? []).map((which) => files[which]);
-  await write(probe.repo, 'test/system/alpha.test.js', writesConfigs('ALPHA', { writes, removes, thenFails }));
+  // A folder the run makes: a path, or `codex` / `claude` for a folder where that config file is.
+  const makes = (during.makes ?? []).map((one) => files[one] ?? one);
+  await write(probe.repo, 'test/system/alpha.test.js', writesConfigs('ALPHA', { writes, removes, makes, thenFails }));
   if (before.codex !== undefined) await write(path.dirname(files.codex), 'config.toml', before.codex);
   if (before.claude !== undefined) await write(path.dirname(files.claude), '.claude.json', before.claude);
+  // Folders already there when the run starts: another session's throwaway folder, say.
+  for (const folder of before.makes ?? []) await mkdir(folder, { recursive: true });
 
   const { CODEX_HOME: _codex, CLAUDE_CONFIG_DIR: _claude, ...rest } = probe.env;
   const env = {
@@ -2138,5 +2145,140 @@ describe('test-system: what a run leaves in the harness configs (#240)', { concu
       lines.some((line) => /could ?n[o']t|cannot|can't|unable|unreadable|not (?:be )?read/i.test(line)),
       `a line should say config.toml could not be read, got:\n${afterTheRun(result)}`,
     );
+  });
+
+  // The review of PR #433: any <tmp>/obk-system-* folder was taken for the run's
+  // own, so a key another session's system test added mid-run, under a folder
+  // that was there before this run began, failed this run. A folder is the
+  // run's only if it was not under the temp folder when the run started; the
+  // fixtures above name folders that never exist, and so were not there before.
+  test('a key added mid-run under an obk-system folder that was there before the run is not the run\'s: not named, not failed', async (t) => {
+    let key;
+    const { fixture, env } = await withConfigs(t, ({ real }) => {
+      const theirs = `${real}/obk-system-other-session-123`;
+      key = `${theirs}/bots`;
+      return { before: { makes: [theirs] }, during: { codex: codexConfig({ projects: [key] }) } };
+    });
+
+    const result = await fixture.confirmed({ env });
+
+    assert.equal(result.code, 0, `a key under another session's folder does not fail this run:\n${everything(result)}`);
+    assertNotNamed(result, key, 'a key under a folder that was there before the run');
+  });
+
+  test('a Claude key added mid-run under an obk-system folder that was there before the run is not reported as the run\'s', async (t) => {
+    let key;
+    const { fixture, env } = await withConfigs(t, ({ real }) => {
+      const theirs = `${real}/obk-system-other-session-456`;
+      key = `${theirs}/bots/bots/bot-father`;
+      return { before: { makes: [theirs] }, during: { claude: claudeConfig([key]) } };
+    });
+
+    const result = await fixture.confirmed({ env });
+
+    assert.equal(result.code, 0, everything(result));
+    assertNotNamed(result, key, 'a Claude key under a folder that was there before the run');
+  });
+
+  test('a codex-screens key under a folder that was there before the run is not named as the run\'s known writes either', async (t) => {
+    let key;
+    const { fixture, env } = await withConfigs(t, ({ real }) => {
+      const theirs = `${real}/obk-system-codex-screens-Other9`;
+      key = `${theirs}/bots`;
+      return { before: { makes: [theirs] }, during: { codex: codexConfig({ projects: [key] }) } };
+    });
+
+    const result = await fixture.confirmed({ env });
+
+    assert.equal(result.code, 0, everything(result));
+    assertNotNamed(result, key, 'another session\'s codex-screens key');
+  });
+
+  test('a folder the run makes mid-run is the run\'s, and a Codex key under it still fails the run', async (t) => {
+    let key;
+    const { fixture, env } = await withConfigs(t, ({ real }) => {
+      const mine = `${real}/obk-system-alpha-Made1`;
+      key = `${mine}/bots`;
+      return { during: { makes: [mine], codex: codexConfig({ projects: [key] }) } };
+    });
+
+    const result = await fixture.confirmed({ env });
+
+    assert.equal(result.code, 1, `the run's own folder, made mid-run, fails it:\n${everything(result)}`);
+    assertNamed(result, key, 'a key under a folder made mid-run');
+  });
+
+  test('keys under a folder that was there before and under a new one: only the new one is named, and it fails the run', async (t) => {
+    let theirsKey;
+    let mineKey;
+    const { fixture, env } = await withConfigs(t, ({ real, bare }) => {
+      const theirs = `${real}/obk-system-other-session-789`;
+      // Known before the run by its /private spelling; its key written in the /var one.
+      theirsKey = `${bare}/obk-system-other-session-789/bots`;
+      mineKey = `${real}/obk-system-alpha-New2/bots`;
+      return {
+        before: { makes: [theirs] },
+        during: { makes: [`${real}/obk-system-alpha-New2`], codex: codexConfig({ projects: [theirsKey, mineKey] }) },
+      };
+    });
+
+    const result = await fixture.confirmed({ env });
+
+    assert.equal(result.code, 1, `the new folder's key fails the run:\n${everything(result)}`);
+    assertNamed(result, mineKey, 'the new folder\'s key');
+    assertNotNamed(result, theirsKey, 'the key under the folder that was there before, in its other spelling');
+  });
+
+  // The review of PR #433, its P3: a config that could not be read was not
+  // compared, so the run cannot say the configs gained nothing.
+  /** A line that says what the run left came to nothing: a claim about both configs unless it names Claude's record alone. */
+  const claimsBothClean = (report) => report.split('\n').filter((line) => /\b(?:gained|added|left)\b[^.]*\b(?:no|none|nothing)\b|\b(?:no|none|nothing)\b[^.]*\b(?:gained|added|left)\b/i.test(line)
+    && !/\bclaude\b/i.test(line));
+
+  /** The run's report said config.toml could not be read, and did not say the configs gained no keys. */
+  function assertNoCleanClaim(result) {
+    const report = afterTheRun(result);
+    assert.ok(
+      report.split('\n').some((line) => line.includes('config.toml') && /could ?n[o']t|cannot|can't|unable|unreadable|not (?:be )?read/i.test(line)),
+      `a line should say config.toml could not be read, got:\n${report}`,
+    );
+    assert.doesNotMatch(report, /gained no keys/i, `with config.toml not compared, the run must not say the configs gained no keys, got:\n${report}`);
+    assert.deepEqual(claimsBothClean(report), [], `no line may claim both configs came clean, got:\n${report}`);
+  }
+
+  test('a Codex config that cannot be read before and after, nothing added to Claude\'s: no claim that the configs gained no keys', async (t) => {
+    const { fixture, env, files } = await withConfigs(t);
+    // A folder where the file should be: there, and not readable as a file.
+    await mkdir(files.codex, { recursive: true });
+
+    const result = await fixture.confirmed({ env });
+
+    assert.equal(result.code, 0, everything(result));
+    assertNoCleanClaim(result);
+  });
+
+  test('a Codex config that becomes unreadable during the run, nothing added to Claude\'s: no claim that the configs gained no keys', async (t) => {
+    const { fixture, env } = await withConfigs(t, () => ({
+      before: { codex: codexConfig({}) },
+      during: { removes: ['codex'], makes: ['codex'] },
+    }));
+
+    const result = await fixture.confirmed({ env });
+
+    assert.equal(result.code, 0, everything(result));
+    assertNoCleanClaim(result);
+  });
+
+  test('both configs readable, and nothing of the run\'s added: the line that the configs gained no keys', async (t) => {
+    const { fixture, env } = await withConfigs(t, () => ({
+      before: { codex: codexConfig({ projects: ['/Users/owner/work/app'] }), claude: claudeConfig(['/Users/owner/work/app']) },
+      during: { codex: codexConfig({ projects: ['/Users/owner/work/app', '/Users/owner/work/new'] }) },
+    }));
+
+    const result = await fixture.confirmed({ env });
+
+    assert.equal(result.code, 0, everything(result));
+    const lines = afterTheRun(result).split('\n').filter((line) => /harness|config/i.test(line) && /\b(?:no|none|nothing)\b/i.test(line));
+    assert.ok(lines.length > 0, `one line should say the harness configs gained no keys under the run's folders, got:\n${afterTheRun(result)}`);
   });
 });
