@@ -305,7 +305,7 @@ function reportConfigsLeft(before) {
   }
   if (claude.length > 0) {
     lines.push(
-      `Claude Code recorded ${claude.length} of the run's folder${claude.length === 1 ? '' : 's'} in ${after.claude.file}.`,
+      `Claude Code recorded ${claude.length === 1 ? 'one of the run\'s folders' : `${claude.length} of the run's folders`} in ${after.claude.file}.`,
       'Reported only, until the owner decides what the tests do about it (#240):',
       ...claude.map((key) => `  ${key}`),
     );
