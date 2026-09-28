@@ -14,7 +14,7 @@ import { conversationsIn, hasConversation, heldAsUserTurn, transcriptsIn } from 
 import { installHook } from './hooks.js';
 import { writePermissions } from './permissions.js';
 import { addressOf, harnessOf, isAddressOf, isShortPrompt, launchCommand, mailboxStep, reachesMail, sessionTrouble, startPrompt, workDirOf } from './launch.js';
-import { asFolderProject, coordinatorOf, findProject, harnessInTab, makeMailbox, makeProject, openTab, QUESTION_ON_SCREEN, retitleTab, tabs, TERMINAL_ENV, TIMED_OUT, tellWindow, typeIntoTab, useMailbox } from './orca.js';
+import { asFolderProject, coordinatorOf, findProject, harnessInTab, makeMailbox, makeProject, openTab, QUESTION_ON_SCREEN, retitleTab, tabs, tabToTypeInto, TERMINAL_ENV, TIMED_OUT, tellWindow, typeIntoTab, useMailbox } from './orca.js';
 import { TAB_ENV } from './record.js';
 import { buildAgents, rulesStamp } from './rules.js';
 import { linkSkills } from './skills.js';
@@ -369,6 +369,14 @@ async function bringUpSession(bots, home, live, session, bot, title) {
     ? undefined
     : await heldInRecord(home, session.name, harness, launch.prompt, { launched, running: tui.running === true });
 
+  // A Codex session resumed here is not among Orca's agents until its first
+  // turn: Codex fires its SessionStart then and not at the resume, seen live on
+  // 0.157.1 (#226). So it is given one line, through the same gate as a mail
+  // notice, which the owner allowed. A fresh start's first turn is its prompt.
+  const list = harness === 'codex' && launch.resume !== undefined && tui.running === true
+    ? await typeListLine(home, made.tabId)
+    : undefined;
+
   return entry(made, {
     bot: bot.name,
     name: session.name,
@@ -382,7 +390,58 @@ async function bringUpSession(bots, home, live, session, bot, title) {
     resumed: launch.resume !== undefined,
     noConversation: which.noConversation,
     unclaimed: which.unclaimed,
+    listLine: list?.typed,
+    listLineTrouble: list?.why,
   });
+}
+
+/** The line a resumed Codex session is typed so Orca lists it, in the architect's words (#226). */
+const LIST_LINE = 'obk: this session was resumed in a new tab, and this line is only so Orca lists it. Reply "ok"; nothing else is asked.';
+
+/**
+ * How long a resumed Codex tab is given to be one the kit may type into: live,
+ * Orca named the agent 7 to 11 s after the restart (#226), and the gate waits
+ * for that name. How long each look waits on the tab, and the pause between.
+ */
+const LIST_WAIT_MS = 20000;
+const LIST_LOOK_MS = 2000;
+const LIST_ASK_MS = 500;
+
+/**
+ * Type LIST_LINE into the tab `tabId` once the gate every typed line goes
+ * through lets it: `{ typed: true }`, or `{ typed: false, why }` with the
+ * gate's last reason once LIST_WAIT_MS is up. Nothing goes into a question, a
+ * form or a menu (#329, #416), nor into a tab the kit cannot tell about.
+ */
+async function typeListLine(home, tabId) {
+  const until = Date.now() + LIST_WAIT_MS;
+  for (;;) {
+    let found;
+    try {
+      // Each look waits no longer than what is left of the wait.
+      found = tabToTypeInto(home, tabId, Math.max(1, Math.min(LIST_LOOK_MS, until - Date.now())));
+    } catch (error) {
+      return { typed: false, why: `Orca would not say whether it may be typed into: ${error.message}` };
+    }
+    // A yes that comes after the wait is too late: the wait is a cutoff, not a
+    // count of looks (review of PR #421).
+    if (found.handle !== undefined && Date.now() > until) {
+      return { typed: false, why: `the ${LIST_WAIT_MS / 1000} s wait for it ran out before the kit could tell it may be typed into` };
+    }
+    if (found.handle !== undefined) {
+      try {
+        typeIntoTab(found.handle, LIST_LINE);
+        return { typed: true };
+      } catch (error) {
+        return { typed: false, why: `Orca refused the line: ${error.message}` };
+      }
+    }
+    if (Date.now() >= until) {
+      const why = found.blocked !== undefined ? `it is waiting on ${found.blocked}` : found.unsure ?? 'no harness is running in it';
+      return { typed: false, why };
+    }
+    await pause(LIST_ASK_MS);
+  }
 }
 
 /**
@@ -714,11 +773,15 @@ const ids = (setup, change) => ({ project: setup.projectId, setup: setup.id, cha
 export const promptPath = (bots, bot, session) =>
   path.join(`${bots}.prompts`, `${encodeURIComponent(bot)}.${encodeURIComponent(session)}.txt`);
 
-function entry(tab, { bot, name, created, running = false, blockedReason, promptReceived, promptFile, resumed, noConversation, unclaimed, noMailbox = false }) {
+function entry(tab, { bot, name, created, running = false, blockedReason, promptReceived, promptFile, resumed, noConversation, unclaimed, noMailbox = false, listLine, listLineTrouble }) {
   const made = { bot, name, title: tab.title, tabId: tab.tabId, terminal: tab.handle, created, harnessStarted: running };
   // Whether this run picked the session up where it was or started a new one.
   // Only for a tab this run opened: a tab that was already there was left alone.
   if (resumed !== undefined) made.resumed = resumed;
+  // Whether a resumed Codex session was typed its one line so Orca lists it,
+  // and why not when it was not (#226).
+  if (listLine !== undefined) made.listLine = listLine;
+  if (listLineTrouble !== undefined) made.listLineTrouble = listLineTrouble;
   // The id the book held that had no conversation behind it, now in the history.
   if (noConversation !== undefined) made.noConversation = noConversation;
   // Orca's own words for what is on screen waiting to be answered, when it
