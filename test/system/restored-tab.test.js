@@ -64,10 +64,11 @@
 // Codex asks neither its directory trust nor its hooks review here: the Codex
 // session is given its folder's trust at launch (#240,
 // test/helpers/codex-trust.js), so it still runs the kit's hook and writes
-// nothing about this folder into the user's own ~/.codex/config.toml. The kit's
+// nothing about this folder into the user's own ~/.codex/config.toml; and, like
+// every system test's Codex, it runs without Codex's sleep tool (#432). The kit's
 // launch lines carry that from bot.yaml (worked out from src/launch.js, not
 // proven live). The bare `codex resume` this test types for Orca's restore
-// carries the same three arguments and nothing else of the kit's line: without
+// carries the same arguments and nothing else of the kit's line: without
 // them Codex would ask this folder's trust again, where Orca's own restore
 // resumes in a folder the user trusted long ago. A trust or hooks screen in the
 // Codex tab means the launch-time trust did not take, and is not to be answered.

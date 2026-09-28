@@ -18,14 +18,32 @@ import test from 'node:test';
 
 import { addedUnder, codexTrustArgs, projectTrust, trustKeysIn } from './helpers/codex-trust.js';
 
-test('the extra args trust the bots folder by a whole projects table, bypass the hooks review, and turn tooltips off', () => {
+test('the extra args trust the bots folder by a whole projects table, bypass the hooks review, turn tooltips off, and take the sleep tool away', () => {
   assert.deepEqual(codexTrustArgs('/private/var/folders/x/obk-system-trust-Ab1.c/bots'), [
     '--extra-arg=-c',
     '--extra-arg=projects={"/private/var/folders/x/obk-system-trust-Ab1.c/bots"={trust_level="trusted"}}',
     '--extra-arg=--dangerously-bypass-hook-trust',
     '--extra-arg=-c',
     '--extra-arg=tui.show_tooltips=false',
+    '--extra-arg=-c',
+    '--extra-arg=features.sleep_tool=false',
   ]);
+});
+
+// #432: a GPT-6 Codex told to wait calls its built-in `sleep` in its turn, and
+// the system tests' waits for an idle tab never end. So their sessions take the
+// tool away, a test-only launch argument; the kit's own launch line keeps it.
+// The one session that must keep it, codex-sleep.test.js's sleep-codex, asks
+// with `sleep: true`.
+test('with sleep: true the sleep tool is left on, and everything else is as before', () => {
+  assert.deepEqual(codexTrustArgs('/tmp/b', { sleep: true }), [
+    '--extra-arg=-c',
+    '--extra-arg=projects={"/tmp/b"={trust_level="trusted"}}',
+    '--extra-arg=--dangerously-bypass-hook-trust',
+    '--extra-arg=-c',
+    '--extra-arg=tui.show_tooltips=false',
+  ]);
+  assert.deepEqual(codexTrustArgs('/tmp/b', { sleep: false }), codexTrustArgs('/tmp/b'), 'sleep: false is the default: the tool taken away');
 });
 
 test('a path with dots, spaces, a quote and a backslash stays one TOML key in the projects table', () => {
@@ -114,7 +132,9 @@ test('with hooks: false, the folder is trusted and tooltips are off, and the hoo
     '--extra-arg=projects={"/private/var/folders/x/obk-system-untrusted-Ab1/bots"={trust_level="trusted"}}',
     '--extra-arg=-c',
     '--extra-arg=tui.show_tooltips=false',
-  ]);
+    '--extra-arg=-c',
+    '--extra-arg=features.sleep_tool=false',
+  ], 'the sleep tool is taken away all the same');
   assert.deepEqual(
     codexTrustArgs('/tmp/b', { hooks: true }),
     codexTrustArgs('/tmp/b'),

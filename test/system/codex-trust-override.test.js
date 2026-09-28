@@ -342,7 +342,7 @@ test('a Codex session launched with trust given at launch asks no trust, still r
     assert.equal(seen, undefined, `Codex showed ${seen} in ${BOT.title}: the launch-time trust did not take. Nothing was answered.${whatIsUp(handle)}`);
   };
 
-  // 1. The premise: the codex in the tab carries the three arguments.
+  // 1. The premise: the codex in the tab carries the launch-time arguments.
   const front = await until(`codex to be in front of ${BOT.title}`, READY_MS, async () => {
     noTrustScreen();
     const found = inFront(handle);

@@ -56,9 +56,12 @@
 // harness update offer. The Codex bot's session is given its folder's trust at
 // launch (#240, test/helpers/codex-trust.js), so Codex asks neither its
 // directory trust nor its hooks review, and writes nothing about this folder
-// into the user's own ~/.codex/config.toml. Every wait below says what the tab
-// is showing when it runs out of patience, so a run that was left alone names
-// the screen that stopped it.
+// into the user's own ~/.codex/config.toml. It also runs without Codex's sleep
+// tool (#432): told to "wait", a Codex on a GPT-6 model called its built-in
+// `sleep` in its turn, for hours, and the waits below for its tab to be idle
+// before anything is sent to it never ended (#240's live set). Every wait below
+// says what the tab is showing when it runs out of patience, so a run that was
+// left alone names the screen that stopped it.
 //
 // **Nothing here types at a bot.** Each one is given its whole part in its
 // start prompt, and the only lines that go into these tabs afterwards are the

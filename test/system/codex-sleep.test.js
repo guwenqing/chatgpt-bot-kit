@@ -18,8 +18,10 @@
 // is told: to read its mail when a line says it is waiting, and then print
 // MAIL: and the message, and to "Say nothing now and wait." Both sessions are
 // given their folder's trust at launch (#240, test/helpers/codex-trust.js).
-// `sleep-codex` has nothing else; `awake-codex` also has `-c
-// features.sleep_tool=false`.
+// `awake-codex` also has `-c features.sleep_tool=false`, as every other system
+// test's Codex session does since #432's ruling; `sleep-codex` keeps the tool
+// (`codexTrustArgs(bots, { sleep: true })`, the one session allowed it): it is
+// the check that a real bot, which keeps the tool, still gets its mail.
 //
 // What is ASSERTED:
 //
@@ -257,9 +259,6 @@ function inFront(handle) {
 /** The sleep calls in one conversation's rollouts, read only, as test/helpers/codex-rollout.js reads them. */
 const sleepsOf = (id) => rolloutFilesOf(CODEX_SESSIONS, id).flatMap((file) => sleepCallsIn(readFileSync(file, 'utf8')));
 
-/** The feature flag that should take Codex's sleep tool away (#432). */
-const NO_SLEEP = ['--extra-arg=-c', '--extra-arg=features.sleep_tool=false'];
-
 const SLEEPER = { name: 'sleep-codex', title: 'Sleep Codex daily', word: 'WREN-4471' };
 const AWAKE = { name: 'awake-codex', title: 'Awake Codex daily', word: 'STOAT-8826' };
 
@@ -314,13 +313,15 @@ test('a GPT-6 Codex bot told to wait sleeps in its turn; a notice to it is obser
   });
 
   obkJson(['init', '--bots', bots, '--harness', 'claude']);
-  for (const [bot, extra] of [[SLEEPER, []], [AWAKE, NO_SLEEP]]) {
+  for (const bot of [SLEEPER, AWAKE]) {
     obkJson([
       'bot', 'create', '--bots', bots, '--name', bot.name, '--harness', 'codex',
       '--charter', `${bot.name} exists for one system test run and owns nothing.`,
     ]);
-    obkJson(['session', 'add', '--bots', bots, '--bot', bot.name, '--name', 'daily', `--prompt=${promptOf(bots)}`, ...codexTrustArgs(bots), ...extra]);
   }
+  // The sleep tool left on for sleep-codex alone; taken away for awake-codex, as for every system test's Codex (#432).
+  obkJson(['session', 'add', '--bots', bots, '--bot', SLEEPER.name, '--name', 'daily', `--prompt=${promptOf(bots)}`, ...codexTrustArgs(bots, { sleep: true })]);
+  obkJson(['session', 'add', '--bots', bots, '--bot', AWAKE.name, '--name', 'daily', `--prompt=${promptOf(bots)}`, ...codexTrustArgs(bots)]);
 
   // Both up, then the premises: each tab's codex, on the right command line,
   // and the book holding each conversation (the kit's hook ran).

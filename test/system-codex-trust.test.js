@@ -18,10 +18,12 @@
 // the runner as known, #240), and codex-trust-override.test.js, which builds the
 // same arguments itself and is the proof of them.
 //
-// A call that passes `codexTrustArgs(…, { hooks: false })`, the folder trusted
-// and the hooks review not bypassed, is taken for one call only, named below:
-// session-identity's `untrusted-codex`, the case that wants the kit's hook not
-// to run. The same form anywhere else is named.
+// Two forms of it are each taken for one call only, named below, and named
+// anywhere else: `codexTrustArgs(…, { hooks: false })`, the folder trusted and
+// the hooks review not bypassed, for session-identity's `untrusted-codex`, the
+// case that wants the kit's hook not to run (#240); and `codexTrustArgs(…,
+// { sleep: true })`, Codex's sleep tool left on, for codex-sleep's sleep-codex,
+// the check that a real bot with the tool still gets its mail (#432).
 //
 // Comments are taken out before anything is read, so a call left in a comment
 // is not a call.
@@ -39,11 +41,15 @@ const systemTestsDir = path.join(repoRoot, 'test', 'system');
 const LEFT_OUT = new Set(['codex-first-run-screens.test.js', 'codex-trust-override.test.js']);
 
 /**
- * The one call that may pass `codexTrustArgs(…, { hooks: false })`, by file and
- * bot: session-identity's case of a conversation that ran before the hooks file
- * was trusted, which wants the kit's hook not to run (#240).
+ * The forms of `codexTrustArgs` each taken for one call only, by file and bot:
+ * `hooks: false` for session-identity's case of a conversation that ran before
+ * the hooks file was trusted, which wants the kit's hook not to run (#240), and
+ * `sleep: true` for codex-sleep's bot that keeps Codex's sleep tool (#432).
  */
-const HOOKS_UNTRUSTED = { file: 'session-identity.test.js', bot: "'untrusted-codex'" };
+const ONE_CALL_FORMS = [
+  { form: 'hooks: false', words: /\bhooks:\s*false\b/, file: 'session-identity.test.js', bot: "'untrusted-codex'" },
+  { form: 'sleep: true', words: /\bsleep:\s*true\b/, file: 'codex-sleep.test.js', bot: 'SLEEPER.name' },
+];
 
 /** The source with its comments taken out, strings and template literals kept as they are. */
 function withoutComments(source) {
@@ -141,8 +147,8 @@ function harnessOf(code, expression) {
 
 /**
  * Each Codex session a file makes, or could make, without `codexTrustArgs(`, or
- * with its `hooks: false` form where that is not the named call, as sentences.
- * `file` is the file's name, for the named call.
+ * with one of its one-call forms where that is not the named call, as
+ * sentences. `file` is the file's name, for the named calls.
  */
 function untrustedCodexIn(source, file) {
   const code = withoutComments(source);
@@ -158,8 +164,9 @@ function untrustedCodexIn(source, file) {
     if (harness === 'claude') continue;
     const session = after(elements, '--name');
     if (text.includes('codexTrustArgs(')) {
-      if (/\bhooks:\s*false\b/.test(text) && !(file === HOOKS_UNTRUSTED.file && bot === HOOKS_UNTRUSTED.bot)) {
-        trouble.push(`a session add for ${bot} ${session} passes codexTrustArgs with hooks: false, which only ${HOOKS_UNTRUSTED.file}'s ${HOOKS_UNTRUSTED.bot.slice(1, -1)} may`);
+      for (const one of ONE_CALL_FORMS) {
+        if (!one.words.test(text) || (file === one.file && bot === one.bot)) continue;
+        trouble.push(`a session add for ${bot} ${session} passes codexTrustArgs with ${one.form}, which only ${one.file}'s ${one.bot.replace(/^'(.*)'$/, '$1')} may`);
       }
       continue;
     }
@@ -213,6 +220,18 @@ test('hooks: false is taken for the one call named for it, and named anywhere el
   const otherBot = untrusted.replaceAll('untrusted-codex', 'some-codex');
   assert.deepEqual(untrustedCodexIn(otherBot, 'session-identity.test.js'), [
     'a session add for \'some-codex\' \'daily\' passes codexTrustArgs with hooks: false, which only session-identity.test.js\'s untrusted-codex may',
+  ], 'another bot in that file');
+});
+
+test('sleep: true is taken for the one call named for it, and named anywhere else', () => {
+  const sleeper = "obkJson(['bot', 'create', '--bots', bots, '--name', SLEEPER.name, '--harness', 'codex']);\n"
+    + "obkJson(['session', 'add', '--bots', bots, '--bot', SLEEPER.name, '--name', 'daily', ...codexTrustArgs(bots, { sleep: true })]);\n";
+  assert.deepEqual(untrustedCodexIn(sleeper, 'codex-sleep.test.js'), [], 'the named call, in its file');
+  assert.deepEqual(untrustedCodexIn(sleeper, 'messaging.test.js'), [
+    'a session add for SLEEPER.name \'daily\' passes codexTrustArgs with sleep: true, which only codex-sleep.test.js\'s SLEEPER.name may',
+  ], 'the same call in another file');
+  assert.deepEqual(untrustedCodexIn(sleeper.replaceAll('SLEEPER', 'AWAKE'), 'codex-sleep.test.js'), [
+    'a session add for AWAKE.name \'daily\' passes codexTrustArgs with sleep: true, which only codex-sleep.test.js\'s SLEEPER.name may',
   ], 'another bot in that file');
 });
 
