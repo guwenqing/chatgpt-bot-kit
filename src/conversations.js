@@ -10,9 +10,11 @@
 // directory, and every session starts at its bot home. Read only, never
 // written: these are the harness's files (tech notes, sections 2 and 3).
 
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
+
+import { eachLine, firstLine } from './lines.js';
 
 /** Claude Code's transcripts: one folder per working directory, one file per session. */
 const claudeDir = (home) => path.join(homedir(), '.claude', 'projects', slug(home));
@@ -53,12 +55,32 @@ export function hasConversation(harness, home, id) {
   return codexRollout(id) !== undefined;
 }
 
+/** Where Codex moves a rollout the user archives: one flat folder (#396). Other ways it archives are not known. */
+const codexArchive = () => path.join(homedir(), '.codex', 'archived_sessions');
+
 /**
  * Where Codex keeps the conversation `id`, whatever folder it ran in, found by
- * the file name Codex makes from the id; `undefined` when it has none.
+ * the file name Codex makes from the id: among its sessions, or else among the
+ * ones archived; `undefined` when it has none.
  */
-export const codexRollout = (id) =>
-  rollouts(codexDir()).find((file) => path.basename(file).endsWith(`-${id}.jsonl`));
+export const codexRollout = (id) => {
+  const named = (file) => path.basename(file).endsWith(`-${id}.jsonl`);
+  return rollouts(codexDir()).find(named)
+    ?? files(codexArchive()).map((name) => path.join(codexArchive(), name)).find(named);
+};
+
+/**
+ * Where Claude Code keeps the conversation `id`, whatever folder it ran in: the
+ * `<id>.jsonl` in any of its project folders; `undefined` when it has none.
+ */
+export function claudeTranscriptAnywhere(id) {
+  const projects = path.join(homedir(), '.claude', 'projects');
+  for (const folder of files(projects)) {
+    const file = path.join(projects, folder, `${id}.jsonl`);
+    if (existsSync(file)) return file;
+  }
+  return undefined;
+}
 
 /**
  * Where Claude Code keeps the conversation `id` of this bot home, whether or
@@ -115,14 +137,19 @@ export function transcriptsIn(harness, home, since) {
  * Its AGENTS.md goes in as a `user` item too, and cannot be the text asked about.
  */
 export function heldAsUserTurn(harness, file, text) {
-  let lines;
+  const wanted = text.trim();
+  let held = false;
   try {
-    lines = readFileSync(file, 'utf8').split('\n');
+    // A line at a time, whatever the record's size (#396), and no further than
+    // the turn that holds it.
+    eachLine(file, (line) => {
+      held = line !== undefined && userTexts(harness, line).some((said) => said.trim() === wanted);
+      return held;
+    });
   } catch {
     return false;
   }
-  const wanted = text.trim();
-  return lines.some((line) => userTexts(harness, line).some((said) => said.trim() === wanted));
+  return held;
 }
 
 /** The texts of one record line, when it is a turn of the user's. */
@@ -160,8 +187,7 @@ function claudeConversations(home) {
 /** When a transcript's first line says the conversation was, if it says at all. */
 function said(file) {
   try {
-    const first = readFileSync(file, 'utf8').split('\n', 1)[0];
-    const when = Date.parse(JSON.parse(first)?.timestamp ?? '');
+    const when = Date.parse(JSON.parse(firstLine(file) ?? '')?.timestamp ?? '');
     return Number.isNaN(when) ? undefined : when;
   } catch {
     return undefined;
@@ -201,8 +227,7 @@ function rollouts(dir, depth = 0) {
 /** A rollout's first line says what the conversation is: its id, folder and time. */
 function sessionMeta(file) {
   try {
-    const first = readFileSync(file, 'utf8').split('\n', 1)[0];
-    const parsed = JSON.parse(first);
+    const parsed = JSON.parse(firstLine(file) ?? '');
     return parsed?.type === 'session_meta' ? parsed.payload : undefined;
   } catch {
     return undefined;
