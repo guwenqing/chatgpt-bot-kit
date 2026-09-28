@@ -379,12 +379,16 @@ Write the regression test before the fix, at a seam where it exercises the bug
 the way it actually happened; if there is no correct seam, that is itself the
 finding.
 
-The test is the separate author's to write, as it is for any other behaviour,
-and your reproduction is what the brief is made from: `obk-tdd` has what that
-costs and how the brief goes. Two are often better than one: one at the
-interface saying what a caller should have got, and the smallest one that shows
-the fault where it lives. A test that now looks wrong goes back to its author;
-it is not edited to fit the fix.
+The test is the separate author's to write, as it is for any other behaviour:
+someone with a context of their own, such as a fresh subagent, another session
+or a person, never a fork of this conversation. Give them the requirement and
+what the correct result is, the public interface, and your reproduction as the
+worked example; not your fix, your diff or your plan. They return the tests, the
+command, and the failing output, failing because the bug is there rather than
+because of a typo. `obk-tdd` has more on the brief, if you can load it. Two are
+often better than one: one at the interface saying what a caller should have
+got, and the smallest one that shows the fault where it lives. A test that now
+looks wrong goes back to its author; it is not edited to fit the fix.
 
 Watch it fail. Fix. Watch it pass. Then run the original, unminimised scenario
 again, on the same surface the bug appeared on. A different surface, or an
