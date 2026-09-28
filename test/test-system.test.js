@@ -1760,3 +1760,383 @@ describe('test-system', { concurrency: true }, () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// What a run leaves in the harnesses' own configs (#240, the architect's
+// rulings of 2026-09-28).
+//
+// A system test's Codex session is given its folder's trust at launch, so Codex
+// writes nothing about it into the user's own ~/.codex/config.toml; Claude Code
+// writes a `projects` entry for its folder into ~/.claude.json on every start,
+// and what to do about that is the owner's call. So the runner reads, before
+// the system tests and again after, whatever their result:
+//
+//   Codex   `${CODEX_HOME || <HOME>/.codex}/config.toml`: the keys of its
+//           `[projects."…"]` and `[hooks.state."…"]` table headers, nothing else
+//   Claude  `${CLAUDE_CONFIG_DIR ? <it>/.claude.json : <HOME>/.claude.json}`: the
+//           keys of its `projects` object, nothing else
+//
+// and looks at the keys added during the run that are the run's own: a path,
+// in either spelling of a macOS temp path, whose folder directly under the temp
+// folder is named `obk-system-*` (for a hooks.state key, the path is the part
+// before the hooks file's `:<event>:…`). Such a Codex key fails the run, but
+// for one under an `obk-system-codex-screens-*` folder, the one test known to
+// write them (#240), which is named and does not change the exit code. Such a
+// Claude key is named and never changes the exit code, pending the owner. A key
+// that was there before, or one that is not the run's, is never named: the
+// owner's own sessions write both files while a run goes on.
+//
+// Here HOME and TMPDIR are the sandbox's own (helpers/cli.js), so <HOME> and the
+// temp folder are the fixture's, and CODEX_HOME and CLAUDE_CONFIG_DIR are set or
+// left out by each test. The fixture's system test files write the configs
+// mid-run, as other fixtures write the fake Orca's world.
+
+/** A value in the configs that the runner must never print: they may hold secrets. */
+const SECRET = 'sk-SECRET-7731-never-print';
+
+/** Where the sandbox's temp folder is, in both of a macOS temp path's spellings. */
+function tempSpellings(fixture) {
+  const real = fixture.env.TMPDIR;
+  const bare = real.replace(/^\/private(?=\/)/, '');
+  return { real: `/private${bare}`, bare };
+}
+
+/**
+ * A system test file that writes the harness configs while it runs: `writes`
+ * is `[{ file, text }]`, each file written whole (its folder made first), and
+ * `removes` is files it takes away. It prints its marker, and fails afterwards
+ * when `thenFails` says so.
+ */
+const writesConfigs = (name, { writes = [], removes = [], thenFails = false } = {}) => [
+  "import { mkdirSync, rmSync, writeFileSync } from 'node:fs';",
+  "import path from 'node:path';",
+  "import test from 'node:test';",
+  '',
+  `test(${JSON.stringify(name)}, () => {`,
+  `  for (const { file, text } of ${JSON.stringify(writes)}) {`,
+  '    mkdirSync(path.dirname(file), { recursive: true });',
+  '    writeFileSync(file, text);',
+  '  }',
+  `  for (const file of ${JSON.stringify(removes)}) rmSync(file, { force: true, recursive: true });`,
+  `  process.stdout.write(${JSON.stringify(`${name}\n`)});`,
+  ...(thenFails ? [`  throw new Error(${JSON.stringify(`${name} failed`)});`] : []),
+  '});',
+  '',
+].join('\n');
+
+/** A config.toml holding these trust tables, among a secret and a table the runner does not read. */
+const codexConfig = ({ projects = [], hooks = [] }) => [
+  'model = "gpt-6-luna"',
+  `api_key = "${SECRET}"`,
+  '',
+  ...projects.flatMap((key) => [`[projects.${JSON.stringify(key)}]`, 'trust_level = "trusted"', '']),
+  ...hooks.flatMap((key) => [`[hooks.state.${JSON.stringify(key)}]`, `trusted_hash = "${SECRET}"`, '']),
+  '[tui.model_availability_nux]',
+  `"${SECRET}" = 1`,
+  '',
+].join('\n');
+
+/** A .claude.json holding these projects, and a secret beside them and in each. */
+const claudeConfig = (projects) => `${JSON.stringify({
+  numStartups: 12,
+  oauthAccount: { accessToken: SECRET },
+  projects: Object.fromEntries(projects.map((key) => [key, { allowedTools: [SECRET], hasTrustDialogAccepted: true }])),
+}, null, 2)}\n`;
+
+/**
+ * A fixture repo, and where its harness configs are: the defaults under the
+ * sandbox's HOME, or CODEX_HOME's and CLAUDE_CONFIG_DIR's when `codexHome` or
+ * `claudeDir` asks for them. `build` is given the fixture's temp folder, in
+ * both spellings, and answers `{ before, during, codexHome, claudeDir,
+ * thenFails }`: `before` is written into those files before the run; `during`
+ * is what the run's one system test writes. `env` is the
+ * environment to run with, the machine's own CODEX_HOME and CLAUDE_CONFIG_DIR
+ * taken out whatever this shell has.
+ */
+async function withConfigs(t, build = () => ({})) {
+  const probe = await createRepo(t);
+  const temp = tempSpellings(probe);
+  const { before = {}, during = {}, codexHome = false, claudeDir = false, thenFails = false } = build(temp);
+  const box = path.dirname(probe.repo);
+  const home = probe.env.HOME;
+  const codexDir = codexHome ? path.join(box, 'codex-home') : path.join(home, '.codex');
+  const claudeFolder = claudeDir ? path.join(box, 'claude-config') : home;
+  const files = {
+    codex: path.join(codexDir, 'config.toml'),
+    claude: path.join(claudeFolder, '.claude.json'),
+  };
+  const writes = [];
+  if (during.codex !== undefined) writes.push({ file: files.codex, text: during.codex });
+  if (during.claude !== undefined) writes.push({ file: files.claude, text: during.claude });
+  const removes = (during.removes ?? []).map((which) => files[which]);
+  await write(probe.repo, 'test/system/alpha.test.js', writesConfigs('ALPHA', { writes, removes, thenFails }));
+  if (before.codex !== undefined) await write(path.dirname(files.codex), 'config.toml', before.codex);
+  if (before.claude !== undefined) await write(path.dirname(files.claude), '.claude.json', before.claude);
+
+  const { CODEX_HOME: _codex, CLAUDE_CONFIG_DIR: _claude, ...rest } = probe.env;
+  const env = {
+    ...rest,
+    ...(codexHome ? { CODEX_HOME: codexDir } : {}),
+    ...(claudeDir ? { CLAUDE_CONFIG_DIR: claudeFolder } : {}),
+  };
+  return { fixture: probe, files, env, temp, home };
+}
+
+/** Everything the run printed, both streams: what must never hold a secret or another key. */
+const everything = (result) => `${result.stdout}${result.stderr}`;
+
+/** The report on the harness configs, after the run, and it names the key whole. */
+function assertNamed(result, key, what) {
+  const report = afterTheRun(result);
+  assert.ok(report.includes(key), `${what}: the report should name ${key} whole, got:\n${report}`);
+}
+
+/** The key is named nowhere in what the run printed. */
+function assertNotNamed(result, key, what) {
+  assert.ok(!everything(result).includes(key), `${what}: ${key} should be named nowhere, got:\n${everything(result)}`);
+}
+
+/** Nothing secret and no key but the named ones reached the output. */
+function assertNoSecrets(result, others = []) {
+  assert.ok(!everything(result).includes(SECRET), `no value from either file should be printed, got:\n${everything(result)}`);
+  for (const key of others) assertNotNamed(result, key, 'a key that is not the run\'s');
+}
+
+describe('test-system: what a run leaves in the harness configs (#240)', { concurrency: true }, () => {
+  test('a Codex folder-trust key the run added under an obk-system folder fails a run whose tests passed, and is named', async (t) => {
+    const owner = '/Users/owner/work/app';
+    let key;
+    const { fixture, env } = await withConfigs(t, ({ real }) => {
+      key = `${real}/obk-system-alpha-Ab12/bots`;
+      return {
+        before: { codex: codexConfig({ projects: [owner] }) },
+        during: { codex: codexConfig({ projects: [owner, key] }) },
+      };
+    });
+
+    const result = await fixture.confirmed({ env });
+
+    assert.equal(result.code, 1, `the run should fail on it though its tests passed:\n${everything(result)}`);
+    assertNamed(result, key, 'a Codex projects key');
+    assertNoSecrets(result, [owner]);
+  });
+
+  test('a Codex hooks.state key the run added fails the run, and is named by its hooks file', async (t) => {
+    let hooksFile;
+    const { fixture, env } = await withConfigs(t, ({ real }) => {
+      hooksFile = `${real}/obk-system-alpha-Cd34/bots/bots/coder/.codex/hooks.json`;
+      return {
+        before: { codex: codexConfig({}) },
+        during: { codex: codexConfig({ hooks: [`${hooksFile}:SessionStart:0:0`] }) },
+      };
+    });
+
+    const result = await fixture.confirmed({ env });
+
+    assert.equal(result.code, 1, `the run should fail on it though its tests passed:\n${everything(result)}`);
+    assertNamed(result, hooksFile, 'a Codex hooks.state key');
+    assertNoSecrets(result);
+  });
+
+  test('a run key in the /var spelling of the temp folder is the run\'s too', async (t) => {
+    let key;
+    const { fixture, env } = await withConfigs(t, ({ bare }) => {
+      key = `${bare}/obk-system-alpha-Ef56/bots`;
+      return { during: { codex: codexConfig({ projects: [key] }) } };
+    });
+
+    const result = await fixture.confirmed({ env });
+
+    assert.equal(result.code, 1, `the run should fail on it:\n${everything(result)}`);
+    assertNamed(result, key, 'the /var spelling');
+  });
+
+  test('a Codex key under an obk-system-codex-screens folder is named as that test\'s known writes, and the exit code stays the tests\'', async (t) => {
+    let key;
+    let hooksFile;
+    const { fixture, env } = await withConfigs(t, ({ real }) => {
+      key = `${real}/obk-system-codex-screens-Gh78/bots`;
+      hooksFile = `${real}/obk-system-codex-screens-Gh78/bots/bots/screens-codex/.codex/hooks.json`;
+      return { during: { codex: codexConfig({ projects: [key], hooks: [`${hooksFile}:SessionStart:0:0`] }) } };
+    });
+
+    const result = await fixture.confirmed({ env });
+
+    assert.equal(result.code, 0, `the known writes do not fail a run whose tests passed:\n${everything(result)}`);
+    assertNamed(result, key, 'a codex-screens projects key');
+    assertNamed(result, hooksFile, 'a codex-screens hooks.state key');
+    assert.match(unwrapped(afterTheRun(result)), /#240/, `it should say these are the test's known writes (#240), got:\n${afterTheRun(result)}`);
+    assertNoSecrets(result);
+  });
+
+  test('a Claude projects key the run added is named as a report, and never changes the exit code', async (t) => {
+    const owner = '/Users/owner/work/other';
+    let key;
+    const { fixture, env } = await withConfigs(t, ({ real }) => {
+      key = `${real}/obk-system-alpha-Ij90/bots/bots/bot-father`;
+      return {
+        before: { claude: claudeConfig([owner]) },
+        during: { claude: claudeConfig([owner, key]) },
+      };
+    });
+
+    const result = await fixture.confirmed({ env });
+
+    assert.equal(result.code, 0, `a Claude key is reported, not failed:\n${everything(result)}`);
+    assertNamed(result, key, 'a Claude projects key');
+    assertNoSecrets(result, [owner]);
+  });
+
+  // Holds before the runner reads the configs at all, and is here so that it
+  // goes on holding once it does: the check's quiet side.
+  test('a key that was there before is never named, even the run\'s own kind, and neither is an added key that is not the run\'s', async (t) => {
+    let quiet;
+    const { fixture, env } = await withConfigs(t, ({ real }) => {
+      const earlier = `${real}/obk-system-alpha-Kl12/bots`;
+      const earlierHooks = `${real}/obk-system-alpha-Kl12/bots/bots/x/.codex/hooks.json:SessionStart:0:0`;
+      const notTheRuns = [
+        '/Users/owner/work/new-app',
+        `${real}/obk-other-Mn34/bots`,
+        `${real}/work/obk-system-alpha-Op56/bots`,
+        '/Users/owner/obk-system-alpha-Qr78/bots',
+      ];
+      quiet = [earlier, earlierHooks, ...notTheRuns];
+      return {
+        before: {
+          codex: codexConfig({ projects: [earlier], hooks: [earlierHooks] }),
+          claude: claudeConfig([earlier]),
+        },
+        during: {
+          codex: codexConfig({ projects: [earlier, ...notTheRuns], hooks: [earlierHooks] }),
+          claude: claudeConfig([earlier, ...notTheRuns]),
+        },
+      };
+    });
+
+    const result = await fixture.confirmed({ env });
+
+    assert.equal(result.code, 0, `nothing of the run's own was added:\n${everything(result)}`);
+    for (const key of quiet) assertNotNamed(result, key, 'not added by the run, or not the run\'s');
+    assertNoSecrets(result);
+  });
+
+  for (const thenFails of [false, true]) {
+    test(`the report comes whatever the tests did, and a Claude key does not change the exit code (${thenFails ? 'tests failed' : 'tests passed'})`, async (t) => {
+      let key;
+      const { fixture, env } = await withConfigs(t, ({ real }) => {
+        key = `${real}/obk-system-alpha-St90/bots`;
+        return { during: { claude: claudeConfig([key]) }, thenFails };
+      });
+
+      const result = await fixture.confirmed({ env });
+
+      assert.equal(result.code, thenFails ? 1 : 0, everything(result));
+      assertNamed(result, key, 'the report after the run, whatever its result');
+    });
+  }
+
+  test('a failing run with a Codex key added still names it, and exits 1', async (t) => {
+    let key;
+    const { fixture, env } = await withConfigs(t, ({ real }) => {
+      key = `${real}/obk-system-alpha-Uv12/bots`;
+      return { during: { codex: codexConfig({ projects: [key] }) }, thenFails: true };
+    });
+
+    const result = await fixture.confirmed({ env });
+
+    assert.equal(result.code, 1, everything(result));
+    assertNamed(result, key, 'a Codex key after failing tests');
+  });
+
+  test('CODEX_HOME and CLAUDE_CONFIG_DIR say where the configs are, and the defaults under HOME are then not read', async (t) => {
+    let codexKey;
+    let claudeKey;
+    let ignored;
+    const { fixture, env, home } = await withConfigs(t, ({ real }) => {
+      codexKey = `${real}/obk-system-alpha-Wx34/bots`;
+      claudeKey = `${real}/obk-system-alpha-Yz56/bots`;
+      ignored = [`${real}/obk-system-alpha-Ignored1/bots`, `${real}/obk-system-alpha-Ignored2/bots`];
+      return {
+        codexHome: true,
+        claudeDir: true,
+        during: { codex: codexConfig({ projects: [codexKey] }), claude: claudeConfig([claudeKey]) },
+      };
+    });
+    // The same kind of key in the files at the defaults, which are not the ones in use.
+    await write(fixture.repo, 'test/system/beta.test.js', writesConfigs('BETA', {
+      writes: [
+        { file: path.join(home, '.codex', 'config.toml'), text: codexConfig({ projects: [ignored[0]] }) },
+        { file: path.join(home, '.claude.json'), text: claudeConfig([ignored[1]]) },
+      ],
+    }));
+
+    const result = await fixture.confirmed({ env });
+
+    assert.equal(result.code, 1, `the Codex key in CODEX_HOME fails the run:\n${everything(result)}`);
+    const report = afterTheRun(result, 'BETA');
+    assert.ok(report.includes(codexKey), `CODEX_HOME's config.toml is read, got:\n${report}`);
+    assert.ok(report.includes(claudeKey), `CLAUDE_CONFIG_DIR's .claude.json is read, got:\n${report}`);
+    assertNotNamed(result, ignored[0], 'the default config.toml, with CODEX_HOME set');
+    assertNotNamed(result, ignored[1], 'the default .claude.json, with CLAUDE_CONFIG_DIR set');
+  });
+
+  test('no config files at all, before or after, is no keys: no crash, and a short line that nothing was added', async (t) => {
+    const { fixture, env } = await withConfigs(t);
+
+    const result = await fixture.confirmed({ env });
+
+    assert.equal(result.code, 0, everything(result));
+    const lines = afterTheRun(result).split('\n').filter((line) => /harness|config/i.test(line) && /\b(?:no|none|nothing)\b/i.test(line));
+    assert.ok(lines.length > 0, `one line should say the harness configs gained no keys under the run's folders, got:\n${afterTheRun(result)}`);
+  });
+
+  test('a config that appears during the run is read after it, and one that goes is no keys, with no crash', async (t) => {
+    let key;
+    const { fixture, env } = await withConfigs(t, ({ real }) => {
+      key = `${real}/obk-system-alpha-Ab90/bots`;
+      return {
+        before: { claude: claudeConfig([`${real}/obk-system-alpha-Gone1/bots`]) },
+        during: { codex: codexConfig({ projects: [key] }), removes: ['claude'] },
+      };
+    });
+
+    const result = await fixture.confirmed({ env });
+
+    assert.equal(result.code, 1, `the Codex key in a config.toml made during the run fails it:\n${everything(result)}`);
+    assertNamed(result, key, 'a key in a file that was not there before');
+  });
+
+  for (const [which, broken] of [
+    ['.claude.json that is not JSON', { claude: `{ "projects": { "${SECRET}": ` }],
+    ['.claude.json whose projects is not an object', { claude: `${JSON.stringify({ projects: [SECRET] })}\n` }],
+  ]) {
+    test(`an unreadable config says so in one line, and is not a failure: a ${which}`, async (t) => {
+      const { fixture, env } = await withConfigs(t, () => ({ before: broken, during: broken }));
+
+      const result = await fixture.confirmed({ env });
+
+      assert.equal(result.code, 0, everything(result));
+      const lines = afterTheRun(result).split('\n').filter((line) => line.includes('.claude.json'));
+      assert.ok(
+        lines.some((line) => /could ?n[o']t|cannot|can't|unable|unreadable|not (?:be )?read|invalid|not json/i.test(line)),
+        `a line should say the .claude.json could not be read, got:\n${afterTheRun(result)}`,
+      );
+      assertNoSecrets(result);
+    });
+  }
+
+  test('a config.toml that cannot be read says so in one line, and is not a failure', async (t) => {
+    const { fixture, env, files } = await withConfigs(t);
+    // A folder where the file should be: there, and not readable as a file.
+    await mkdir(files.codex, { recursive: true });
+
+    const result = await fixture.confirmed({ env });
+
+    assert.equal(result.code, 0, everything(result));
+    const lines = afterTheRun(result).split('\n').filter((line) => line.includes('config.toml'));
+    assert.ok(
+      lines.some((line) => /could ?n[o']t|cannot|can't|unable|unreadable|not (?:be )?read/i.test(line)),
+      `a line should say config.toml could not be read, got:\n${afterTheRun(result)}`,
+    );
+  });
+});

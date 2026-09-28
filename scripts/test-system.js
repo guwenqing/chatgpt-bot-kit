@@ -15,7 +15,7 @@
 // tests, and does not answer as though it had.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -175,6 +175,147 @@ function reportRunsLeft(before) {
     'brought a session up on this machine while they ran is in this list too.',
     '',
   ].join('\n'));
+}
+
+/** Codex's own config: CODEX_HOME's, or ~/.codex's (tech notes, section 3). */
+const codexConfigFile = () => path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'config.toml');
+
+/** Claude Code's user-level record, where it keeps a folder's trust: CLAUDE_CONFIG_DIR's, or the home folder's. */
+const claudeConfigFile = () => path.join(process.env.CLAUDE_CONFIG_DIR || os.homedir(), '.claude.json');
+
+/** A config.toml table header naming a folder's trust or a hook's: `[projects."…"]` or `[hooks.state."…"]`. */
+const TRUST_HEADER = /^[ \t]*\[(projects|hooks\.state)\.("(?:[^"\\]|\\.)*"|'[^']*')\][ \t]*(?:#.*)?$/;
+
+/** A quoted TOML key, read back to the path it names. */
+function tomlKey(quoted) {
+  if (quoted.startsWith('\'')) return quoted.slice(1, -1);
+  try {
+    return JSON.parse(quoted);
+  } catch {
+    return quoted.slice(1, -1);
+  }
+}
+
+/**
+ * The trust keys in the two harness configs: Codex's `projects` and
+ * `hooks.state` table headers, and the keys of Claude Code's `projects`. Only
+ * the keys are read out, never a value: these files hold the owner's
+ * credentials. A missing file has no keys; one that cannot be read is
+ * `undefined`, with why, and why never quotes the file.
+ */
+function trustKeys() {
+  const codex = { file: codexConfigFile() };
+  if (existsSync(codex.file)) {
+    try {
+      codex.keys = readFileSync(codex.file, 'utf8').split('\n').flatMap((line) => {
+        const header = TRUST_HEADER.exec(line);
+        return header === null ? [] : [tomlKey(header[2])];
+      });
+    } catch (error) {
+      codex.why = error.code ?? 'it could not be read';
+    }
+  } else {
+    codex.keys = [];
+  }
+
+  const claude = { file: claudeConfigFile() };
+  if (existsSync(claude.file)) {
+    let record;
+    try {
+      record = JSON.parse(readFileSync(claude.file, 'utf8'));
+    } catch (error) {
+      // Not the parser's message: it quotes the text it choked on.
+      claude.why = error instanceof SyntaxError ? 'it is not JSON' : (error.code ?? 'it could not be read');
+    }
+    if (claude.why === undefined) {
+      const projects = record?.projects;
+      if (projects === undefined) claude.keys = [];
+      else if (projects === null || typeof projects !== 'object' || Array.isArray(projects)) claude.why = 'its projects is not an object';
+      else claude.keys = Object.keys(projects);
+    }
+  } else {
+    claude.keys = [];
+  }
+
+  return { codex, claude };
+}
+
+/**
+ * The folder of this run's under the temp folder that `key` names, or
+ * undefined: a system test makes its bots folder as `<tmp>/obk-system-<name>-…`,
+ * and macOS spells the temp folder both with `/private` in front and without.
+ */
+function runFolderOf(key) {
+  let real;
+  try {
+    real = realpathSync(os.tmpdir());
+  } catch {
+    real = os.tmpdir();
+  }
+  const bare = real.replace(/^\/private(?=\/)/, '');
+  for (const tmp of new Set([real, bare, `/private${bare}`, os.tmpdir()])) {
+    if (!key.startsWith(`${tmp}/`)) continue;
+    const folder = key.slice(tmp.length + 1).split('/')[0];
+    if (folder.startsWith('obk-system-')) return folder;
+  }
+  return undefined;
+}
+
+/** codex-first-run-screens' folder: it answers Codex's trust screens on purpose, and so writes them (#240). */
+const KNOWN_WRITER = 'obk-system-codex-screens-';
+
+/**
+ * What the run left in the harness configs under its own throwaway folders
+ * (#240). A system test must leave nothing in the owner's Codex config, so an
+ * added key there fails the run; codex-first-run-screens' own are its known
+ * writes, named and not failed on. Claude Code writes a folder into its record
+ * whenever a session starts there, and what to do about that is the owner's
+ * call, so those are only named. Keys that were there before, and keys outside
+ * the run's folders, are not this run's to answer for. Answers whether the run
+ * left a key it must not.
+ */
+function reportConfigsLeft(before) {
+  const after = trustKeys();
+  const lines = [];
+  const added = (side) => (before[side].keys === undefined || after[side].keys === undefined ? [] : after[side].keys
+    .filter((key) => !before[side].keys.includes(key) && runFolderOf(key) !== undefined));
+
+  for (const side of ['codex', 'claude']) {
+    const why = before[side].why ?? after[side].why;
+    if (why !== undefined) lines.push(`Could not read ${after[side].file} (${why}), so what the run left there was not compared.`);
+  }
+
+  const codex = added('codex');
+  const known = codex.filter((key) => runFolderOf(key).startsWith(KNOWN_WRITER));
+  const left = codex.filter((key) => !known.includes(key));
+  const claude = added('claude');
+
+  if (left.length > 0) {
+    lines.push(
+      `The run left ${left.length} trust key${left.length === 1 ? '' : 's'} in ${after.codex.file} under its own folders,`,
+      'which a system test must not do (#240). They are the owner\'s to clear:',
+      ...left.map((key) => `  ${key}`),
+    );
+  }
+  if (known.length > 0) {
+    lines.push(
+      `codex-first-run-screens answers Codex's trust screens on purpose, and left its known writes in ${after.codex.file} (#240):`,
+      ...known.map((key) => `  ${key}`),
+    );
+  }
+  if (claude.length > 0) {
+    lines.push(
+      `Claude Code recorded ${claude.length} of the run's folder${claude.length === 1 ? '' : 's'} in ${after.claude.file}.`,
+      'Reported only, until the owner decides what the tests do about it (#240):',
+      ...claude.map((key) => `  ${key}`),
+    );
+  }
+  if (codex.length === 0 && claude.length === 0) {
+    lines.push('The harness configs gained no keys under the run\'s own folders.');
+  }
+
+  process.stdout.write(`\n${lines.join('\n')}\n`);
+  return left.length > 0;
 }
 
 /**
@@ -366,6 +507,7 @@ function run() {
   // Asked before the tests, so that what they add can be told from what the
   // machine already had.
   const before = listRuns();
+  const configsBefore = trustKeys();
 
   // OBK_SYSTEM_TESTS is how a system test knows this command started it: loaded
   // any other way, it skips (test/helpers/system.js, #328).
@@ -378,12 +520,13 @@ function run() {
   // After the tests, whatever they did: a failing run leaves Runs behind just
   // as a passing one does, and the developer is owed the accounting either way.
   reportRunsLeft(before);
+  const leftKeys = reportConfigsLeft(configsBefore);
 
   // The test runner answers 0 or 1, and a run killed by a signal answers
   // nothing at all. Anything but a clean 0 means the system tests did not pass.
-  // What the accounting above found never changes this: it is a report, not a
-  // check.
-  return result.status === 0 ? 0 : 1;
+  // The Runs accounting never changes this: it is a report, not a check. A
+  // trust key left in the owner's Codex config does: that is a check (#240).
+  return result.status === 0 && !leftKeys ? 0 : 1;
 }
 
 process.exitCode = run();
