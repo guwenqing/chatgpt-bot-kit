@@ -12,12 +12,29 @@
 // code, and is kept as code. So is what they run in the body of a heredoc whose
 // end word is unquoted (`<<EOF`), which the shell expands; a quoted end word
 // (`<<'EOF'`, `<<"EOF"`, `<<\EOF`) keeps the body literal (review of PR #430).
+// Such a body is read whole, since a substitution in it can span lines.
+//
+// It is not a shell parser. A `)` that is not in quotes but still does not
+// close a `$( )` ends it early here: one in a comment, a `case` pattern's, or
+// one in the body of a heredoc opened inside the substitution.
 
-/** The text up to the matching `)` of a `$(` whose `(` is at `from` in `text`, and where it ends. */
+/**
+ * The text up to the matching `)` of a `$(` whose `(` is at `from` in `text`,
+ * and where it ends. A paren inside quotes, or after a `\`, is not counted.
+ */
 function substitution(text, from) {
   let depth = 0;
   for (let end = from; end < text.length; end += 1) {
-    if (text[end] === '(') depth += 1;
+    if (text[end] === '\\') {
+      end += 1;
+    } else if (text[end] === '\'') {
+      const close = text.indexOf('\'', end + 1);
+      end = close < 0 ? text.length : close;
+    } else if (text[end] === '"') {
+      let close = end + 1;
+      while (close < text.length && text[close] !== '"') close += text[close] === '\\' ? 2 : 1;
+      end = close;
+    } else if (text[end] === '(') depth += 1;
     else if (text[end] === ')') {
       depth -= 1;
       if (depth === 0) return { body: text.slice(from + 1, end), end: end + 1 };
@@ -125,15 +142,18 @@ export function codeOf(command) {
       out += '\n';
       at += 1;
       // Each heredoc's body, in the order they were opened, up to its end word:
-      // text, but for what an expanding one runs through `$( )` and backticks.
+      // text, but for what an expanding one runs through `$( )` and backticks,
+      // read over the whole body at once, since one can span lines.
       for (const { strip, end, expands } of heredocs.splice(0)) {
+        const body = [];
         while (at < command.length) {
           const next = command.indexOf('\n', at);
           const line = command.slice(at, next < 0 ? command.length : next);
           at = next < 0 ? command.length : next + 1;
           if ((strip ? line.replace(/^\t+/, '') : line) === end) break;
-          if (expands) out += substitutionsIn(line);
+          body.push(line);
         }
+        if (expands) out += substitutionsIn(body.join('\n'));
       }
       continue;
     }

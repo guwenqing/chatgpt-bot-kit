@@ -95,3 +95,29 @@ test('the code the path check reads holds what an unquoted heredoc runs, and not
   assert.ok(!codeOf(`cat <<'EOF'\n$(${machine} health)\nEOF`).includes(machine), "a <<'EOF' body: not in the code");
   assert.ok(!codeOf(`cat <<EOF\nran ${machine} health\nEOF`).includes(machine), 'plain text in a <<EOF body: not in the code');
 });
+
+// The delta review of PR #430: a substitution in an expanding heredoc's body
+// can span lines, and the shell runs it whole. Checked under /bin/sh with a fake
+// `obk`: the first case below ran `obk health`.
+test('a $( ) or backticks that span lines of an unquoted heredoc\'s body are read whole; the same under a quoted end word are text', () => {
+  const multilineDollar = 'cat <<EOF\n$(\nobk health\n)\nEOF';
+  const multilineBacktick = 'cat <<EOF\n`\nobk health\n`\nEOF';
+  assert.equal(startsBareObk(multilineDollar), true, `$( ) across lines: ${JSON.stringify(multilineDollar)}`);
+  assert.equal(startsBareObk(multilineBacktick), true, `backticks across lines: ${JSON.stringify(multilineBacktick)}`);
+  assert.equal(startsBareObk("cat <<'EOF'\n$(\nobk health\n)\nEOF"), false, "$( ) across lines under <<'EOF'");
+  assert.equal(startsBareObk("cat <<'EOF'\n`\nobk health\n`\nEOF"), false, "backticks across lines under <<'EOF'");
+
+  const machine = '/opt/homebrew/bin/obk';
+  assert.ok(codeOf(`cat <<EOF\n$(\n${machine} health\n)\nEOF`).includes(machine), 'the machine\'s obk run across lines of a <<EOF body is in the code');
+  assert.ok(!codeOf(`cat <<'EOF'\n$(\n${machine} health\n)\nEOF`).includes(machine), "and under <<'EOF' it is not");
+});
+
+test('a ) inside quotes within a $( ) does not end it early', () => {
+  for (const [label, command] of [
+    ['in an unquoted heredoc body', 'cat <<EOF\n$(echo ")"; obk health)\nEOF'],
+    ['inside double quotes', 'echo "$(printf \')\'; obk health)"'],
+    ['in plain code', 'x=$(echo ")"; obk health)'],
+  ]) {
+    assert.equal(startsBareObk(command), true, `${label}: ${JSON.stringify(command)}`);
+  }
+});
