@@ -38,7 +38,9 @@
 //   - By the harness's own record of what it ran: every shell command in
 //     reader-bot's Claude Code transcript (`~/.claude/projects/<folder>/<id>.jsonl`,
 //     read only, this test's own conversation). None may start a bare `obk`, or
-//     name the machine's `obk` by its path. They are all printed as diagnostics.
+//     name the machine's `obk` by its path, in its code: text in quotes, a
+//     heredoc's body and a comment run nothing and are not read for it
+//     (test/helpers/shell-command.js). They are all printed as diagnostics.
 //   - And the machine's `obk` is untouched: its file and its package.json are
 //     read (`stat`, one file each) before and after, and must be the same.
 //
@@ -110,6 +112,7 @@ import { parse } from 'yaml';
 
 import { cliEntry, repoRoot, spellingsOf } from '../helpers/cli.js';
 import { questionOn, waitingOn } from '../helpers/screens.js';
+import { codeOf, startsBareObk } from '../helpers/shell-command.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
 
@@ -354,8 +357,6 @@ const shellCommandsIn = (lines) => lines
   .filter((item) => item?.type === 'tool_use' && item.name === 'Bash' && typeof item.input?.command === 'string')
   .map((item) => item.input.command);
 
-/** Whether a shell command starts a bare `obk` anywhere a command word stands: not `"${OBK_CLI:-obk}"`. */
-const startsBareObk = (command) => /(?:^|[\s;&|(`])obk(?=\s|$)/.test(command.replaceAll('"${OBK_CLI:-obk}"', '').replaceAll('${OBK_CLI:-obk}', ''));
 
 // ------------------------------------------------------------- the bots
 
@@ -502,7 +503,7 @@ test('a Claude bot that follows the obk-bot-building skill reaches the CLI that 
   assert.deepEqual(commands.filter(startsBareObk), [], 'no command reader-bot ran starts a bare obk');
   if (machineBefore !== undefined) {
     assert.deepEqual(
-      commands.filter((command) => command.includes(machineBefore.at) || command.includes(machineBefore.real)),
+      commands.filter((command) => [machineBefore.at, machineBefore.real].some((one) => codeOf(command).includes(one))),
       [],
       'and none names the machine\'s obk by its path',
     );
