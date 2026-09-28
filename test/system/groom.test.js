@@ -82,6 +82,9 @@
 //   2. The grooming tab, the same list: answer it the same way, if it asks.
 //   3. Either tab, if Claude Code offers an update: accept it (PRD 6.5).
 //   4. `Bot Father ops` is a plain shell. If zsh asks to update itself, `n`.
+//   5. Either Claude tab, after a turn: Claude Code 2.1.283's form "Teach auto
+//      mode about your environment?". Esc cancels it. The test types nothing
+//      into a tab while it is up, since a return presses Continue (#416).
 //
 // After that nobody needs to be there: the restart comes up in a folder that is
 // already trusted. The keys, measured live and written down in
@@ -109,6 +112,7 @@ import { setTimeout } from 'node:timers/promises';
 import { parse } from 'yaml';
 
 import { cliEntry } from '../helpers/cli.js';
+import { waitingOn } from '../helpers/screens.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
 
 /**
@@ -363,8 +367,12 @@ function whatIsUp(handle) {
 
 /**
  * Wait until the tab will take a question: a TUI is up, and the tab is not
- * waiting on a screen of its own. The wait is long because a person may be
- * answering one. `hint` says what that screen is likely to be, when it is known.
+ * waiting on a screen of its own, whether Orca names it or only the screen
+ * shows it (helpers/screens.js, `waitingOn`): Claude Code 2.1.283's form to
+ * teach auto mode comes up after a first turn with no reason from Orca, and a
+ * return on it presses Continue (#416). The wait is long because a person may
+ * be answering one. `hint` says what that screen is likely to be, when it is
+ * known.
  */
 async function readyForAQuestion(handle, within = READY_MS, hint = '') {
   await until(
@@ -373,9 +381,10 @@ async function readyForAQuestion(handle, within = READY_MS, hint = '') {
     async () => {
       const answer = orca(['terminal', 'wait', '--terminal', handle, '--for', 'tui-idle', '--timeout-ms', '5000']);
       if (answer.ok !== true) return undefined;
-      return answer.result?.wait?.blockedReason === undefined ? true : undefined;
+      if (answer.result?.wait?.blockedReason !== undefined) return undefined;
+      return waitingOn(orca, handle) === undefined ? true : undefined;
     },
-    () => `${hint}${whatIsUp(handle)}`,
+    () => `${hint}${waitingOn(orca, handle) ?? ''}${whatIsUp(handle)}`,
   );
 }
 

@@ -199,7 +199,7 @@ waiting for:
 | Codex's `/new`: `Where should the new conversation run?` | `\r` | return: its selection starts on **Current checkout** (bot home) | Codex 0.157.1 |
 | Codex's update offer, `1. Update now` | `\r` | return: its selection starts on **Update now**, which accepts it | Codex 0.156.1; 0.157.1 has had no newer release to offer |
 | `[oh-my-zsh] Would you like to update?` | `n` | they update their own shell | oh-my-zsh bf77e35 |
-| Claude Code's `Teach auto mode about your environment?` | `\x1b` | Esc, which is **Not now**: it would write settings of theirs | Not yet proven: Esc is Not now in Claude Code 2.1.283's code; last seen live on 2.1.278, answered with 2. Not now |
+| Claude Code's `Teach auto mode about your environment?` | `\x1b` | Esc, which cancels it. On 2.1.283 it is a form, not a list: `How you use Claude here`, `Also scan shell history`, `Also scan your other repos`, `Continue`, and `Enter to continue · Esc to cancel`. **Never send a return**: Enter is **Continue**, which starts a scan of the project, recent Claude sessions and, by default, the machine's shell history | Not yet proven: Esc cancels in Claude Code 2.1.283's code, not yet seen live (#370); the form was seen live on 2.1.283 (#416); 2.1.278 showed a numbered list, answered with 2. Not now |
 
 Each key counts on where the selection starts, as it did on the version named.
 Read the screen in front of you before you send: if the selection is somewhere

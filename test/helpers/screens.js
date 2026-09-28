@@ -28,6 +28,14 @@
 // that rule. Nothing is lost there: Orca names no agent in that tab and its
 // `tui-idle` wait times out (both seen live, for minutes), so the kit's gate
 // types nothing into it and the system tests' waits never pass it.
+//
+// Nor is Claude Code 2.1.283's "Teach auto mode about your environment?", a
+// form with no numbers whose Enter is Continue (#416). So the system tests'
+// look below also counts a form or menu by the keys its foot row offers
+// ("Enter to continue", "Enter to confirm", "Esc to cancel", and Codex's
+// "enter select" and the like) on the lowest pointer row or below it,
+// where the input line would be: the same words higher up are history. That
+// takes in the trust list too, which the kit need not see.
 
 /**
  * Claude Code 2.1.283 at its idle input line, showing its placeholder: a
@@ -253,8 +261,9 @@ export const CODEX_HOOKS_REVIEW_ON_TWO = [
  * Claude Code 2.1.283's folder-trust list, its selection on `No, exit`, its
  * choices unnumbered: a capture, the whole `tail` of a kit-made tab. Above it,
  * the launch line the kit typed, wrapped where the screen is 120 columns wide,
- * and the mailbox step's answer. Not a question by the rule at the top; see
- * CLAUDE_TRUST_AS_ORCA_SAW_IT for why nothing is typed into it all the same.
+ * and the mailbox step's answer. Not a question by the numbered rule at the
+ * top; see CLAUDE_TRUST_AS_ORCA_SAW_IT for why the kit types nothing into it
+ * all the same. The system tests' look counts it by its foot row.
  */
 export const CLAUDE_TRUST = [
   '➜  bot-father git:(main) ✗ <kit clone>/src/cli.js ses',
@@ -298,6 +307,48 @@ export const CLAUDE_TEACH_AUTO = [
 ];
 
 /**
+ * Claude Code 2.1.283's "Teach auto mode about your environment?", a form with
+ * no numbers, its selection on "Also scan shell history", drawn under a rule of
+ * `▔` right after the session's first turn: a capture, the whole `tail` of a
+ * kit-made tab in #261's live test, 2026-09-28, in auto mode. Enter on it is
+ * Continue, which starts a scan of the project, recent Claude sessions and, as
+ * it stands, the shell history (#416). `<tmp>` stands for the system temp
+ * folder, in full on the wrapped rows and in Claude Code's own shortening on
+ * the third; the rows were not wrapped again.
+ */
+export const CLAUDE_TEACH_FORM = [
+  ' ▐▛███▛█   Claude Code v2.1.283',
+  '▝▜██████▀  Opus 5.5 with xhigh effort · Claude Max',
+  ' ▝▝   ▝▝   <tmp>/obk-system-node-nudge-XX7Vtx/bots/node-nudge · /rc',
+  '❯ You are a system test\'s bot and you own nothing. Your bots folder is',
+  '  <tmp>/obk-system-node-nudge-XX7Vtx. Do nothing that is not written',
+  '  here: read no file and write nothing. Reply now with READY-3917 and nothing else. When a line arrives saying fleet',
+  '  mail is waiting, run exactly the command that line names to read it, and then print MAIL: followed by the text of the',
+  '  message. When you are asked to write something out, do exactly that. Otherwise say nothing and wait.',
+  '⏺ READY-3917',
+  '✻ Churned for 1s · done 5:42 AM',
+  '▔'.repeat(120),
+  '   Teach auto mode about your environment?',
+  '   Claude Code reads this project, your recent Claude sessions, and optionally your shell history and other',
+  '   repositories. Claude analyzes this data and customizes auto mode to make better decisions.',
+  '     How you use Claude here     Mixed',
+  '   ❯ Also scan shell history     true',
+  '     Also scan your other repos  false',
+  '     Continue',
+  '   ←/→ to change usage · Enter to continue · Esc to cancel',
+];
+
+/**
+ * The same form with its selection moved down to Continue, the row a return
+ * takes: a reconstruction, CLAUDE_TEACH_FORM with the pointer moved.
+ */
+export const CLAUDE_TEACH_FORM_ON_CONTINUE = CLAUDE_TEACH_FORM.map((row) => {
+  if (row === '   ❯ Also scan shell history     true') return '     Also scan shell history     true';
+  if (row === '     Continue') return '   ❯ Continue';
+  return row;
+});
+
+/**
  * Not a question: the model's answer holds an ordinary numbered list, with no
  * pointer on it, and the empty input line is below. A reconstruction on the
  * captured input line.
@@ -328,6 +379,24 @@ export const QUESTION_IN_HISTORY = [
   ...CLAUDE_INPUT_LINE,
 ];
 
+/**
+ * Not a question: the teach form's own words, title, pointer and foot row, are
+ * history, quoted by the model the way a bot working on issue #416 has them on
+ * its screen, with the input line back below. A reconstruction on the
+ * captured input line.
+ */
+export const FORM_IN_HISTORY = [
+  '❯ What did Claude Code show after the first turn?',
+  '⏺ Its form to teach auto mode, as issue #416 quotes it:',
+  '     Teach auto mode about your environment?',
+  '     How you use Claude here     Mixed',
+  '     ❯ Also scan shell history     true',
+  '       Continue',
+  '     ←/→ to change usage · Enter to continue · Esc to cancel',
+  '  Enter on it is Continue, which starts the scan.',
+  ...CLAUDE_INPUT_LINE,
+];
+
 /** A row the pointer starts, whatever follows it: a choice, the input line, or an echoed turn. */
 const POINTER_ROW = /^ *[›❯]/;
 
@@ -338,24 +407,42 @@ const ON_A_NUMBER = /^( *[›❯] +)\d+\. +\S/;
 const numberedAt = (row, at) => row !== undefined && row.slice(0, at).trim() === '' && /^\d+\. +\S/.test(row.slice(at));
 
 /**
+ * The keys a form or menu offers on its foot row, a return among them:
+ * Claude Code 2.1.283's "←/→ to change usage · Enter to continue · Esc to
+ * cancel" and "Enter to confirm · Esc to cancel", Codex 0.157.1's "enter
+ * continue · esc skip", "enter confirm · esc skip" and "enter select · esc
+ * back", all captured above.
+ */
+const FOOT_ROW = /\benter (?:to )?(?:continue|confirm|select)\b|\besc to cancel\b/i;
+
+/** A rule Claude Code draws a form under, or one of its input box's: `─` or `▔` right across. */
+const RULE_ROW = /^ *[─▔]{8,}/;
+
+/**
  * The question a screen is asking, as the rows that make it up, or undefined
- * when it asks none, by the rule at the top of this file. This is the system
- * tests' own look, not the kit's. A screen it wrongly takes for a question
- * makes a test wait and then fail showing the screen; one it missed would have
- * the test type into the question.
+ * when it asks none, by the rules at the top of this file: a numbered choice
+ * list, or a form by its foot row. This is the system tests' own look, not the
+ * kit's. A screen it wrongly takes for a question makes a test wait and then
+ * fail showing the screen; one it missed would have the test type into the
+ * question.
  */
 export function questionOn(rows) {
   const at = rows.findLastIndex((row) => POINTER_ROW.test(row));
-  if (at < 0) return undefined;
-  const pointer = ON_A_NUMBER.exec(rows[at]);
-  if (pointer === null) return undefined;
-  const column = pointer[1].length;
-  if (!numberedAt(rows[at - 1], column) && !numberedAt(rows[at + 1], column)) return undefined;
-
-  let first = at;
-  while (first > 0 && numberedAt(rows[first - 1], column)) first -= 1;
   const drawn = rows.findLastIndex((row) => row.trim() !== '');
-  return rows.slice(Math.max(0, first - 3), drawn + 1);
+  const pointer = at < 0 ? null : ON_A_NUMBER.exec(rows[at]);
+  if (pointer !== null) {
+    const column = pointer[1].length;
+    if (numberedAt(rows[at - 1], column) || numberedAt(rows[at + 1], column)) {
+      let first = at;
+      while (first > 0 && numberedAt(rows[first - 1], column)) first -= 1;
+      return rows.slice(Math.max(0, first - 3), drawn + 1);
+    }
+  }
+
+  const from = Math.max(0, at);
+  if (!rows.slice(from).some((row) => FOOT_ROW.test(row))) return undefined;
+  const rule = rows.slice(0, from).findLastIndex((row) => RULE_ROW.test(row));
+  return rows.slice(rule + 1, drawn + 1);
 }
 
 /**

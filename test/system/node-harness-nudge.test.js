@@ -116,10 +116,11 @@
 // Nothing typed into a Claude tab here answers any of these. Before each line
 // with a return that goes to Claude Code (/exit twice and the long request)
 // the test reads the screen, and it types only at Claude's plain input prompt:
-// its lowest `❯` row between the input box's two rules, no numbered question,
-// and none of "Enter to continue", "Enter to confirm", "Esc to cancel", "←/→"
-// or "Do you want". Anything else fails the test with the screen, and nothing
-// is typed.
+// its lowest `❯` row between the input box's two rules, and no question, form
+// or menu by the suite's shared look (helpers/screens.js, `questionOn`: a
+// numbered list, or a foot row offering "Enter to continue", "Enter to
+// confirm" or "Esc to cancel"). Anything else fails the test with the screen,
+// and nothing is typed.
 //
 // Every wait says what the tab is showing when it runs out of patience, so a
 // run that was left alone names the screen that stopped it.
@@ -329,23 +330,16 @@ function sendLine(handle, text) {
   );
 }
 
-/**
- * What on a Claude Code screen says a form or a menu is up, one of which a
- * return would answer. Seen live on Claude Code 2.1.283: its "Teach auto mode
- * about your environment?" form, drawn after a first turn, with no numbered
- * list, ends "←/→ to change usage · Enter to continue · Esc to cancel"; its
- * folder trust ends "Enter to confirm · Esc to cancel".
- */
-const FORM_SIGNS = [/Enter to continue/, /Enter to confirm/, /Esc to cancel/, /←\/→/, /Do you want/];
-
 /** A row of Claude Code's input box's rules: nothing but `─`, a name set into it aside. */
 const RULE_ROW = /^\s*─{8,}/;
 
 /**
  * Why a Claude tab is not at its plain input prompt, or undefined when it is:
- * the screen can be read, shows none of FORM_SIGNS and no numbered question,
- * and its lowest `❯` row is the input line, between the input box's two rules.
- * A `❯` anywhere below that is a list's pointer.
+ * the screen can be read, shows no question, form or menu (helpers/screens.js,
+ * `questionOn`: Claude Code 2.1.283's "Teach auto mode about your
+ * environment?" form, drawn after a first turn, is one, #416), and its lowest
+ * `❯` row is the input line, between the input box's two rules. A `❯`
+ * anywhere below that is a list's pointer.
  */
 function notAtPrompt(handle) {
   const answer = orca(['terminal', 'read', '--terminal', handle, '--screen']);
@@ -355,9 +349,7 @@ function notAtPrompt(handle) {
   }
   const rows = shown.tail;
   const screen = `\n    ${rows.join('\n    ')}`;
-  const sign = FORM_SIGNS.find((pattern) => rows.some((row) => pattern.test(row)));
-  if (sign !== undefined) return `a form or menu is up (${sign}):${screen}`;
-  if (questionOn(rows) !== undefined) return `a numbered question is up:${screen}`;
+  if (questionOn(rows) !== undefined) return `a question, form or menu is up:${screen}`;
   const at = rows.findLastIndex((row) => row.trimStart().startsWith('❯'));
   if (at < 0) return `no input line is on it:${screen}`;
   if (!RULE_ROW.test(rows[at - 1] ?? '') || !RULE_ROW.test(rows[at + 1] ?? '')) {

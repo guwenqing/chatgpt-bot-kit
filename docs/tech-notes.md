@@ -429,6 +429,18 @@ Nothing in the kit's code, tests or skills stands in his way.
   and at least 5 auto-mode denials, and not within 7 days of a Not now; Don't show again ends it for
   good. On this machine the last Not now was 2026-09-21T09:26Z, so no run before 2026-09-28T09:27Z
   can show it. Proving Esc live waits for that (#370).
+  **On 2.1.283 it is a form, not a numbered list, and Enter on it is Continue (#416).** Seen live
+  (2026-09-28, about 09:42Z, Claude Code 2.1.283 in auto mode, a throwaway tab of #261's live test):
+  it came right after the session's first turn finished, not at startup, and read `Teach auto mode
+  about your environment?`, a line on reading this project, recent sessions and optionally the shell
+  history and other repos, then `How you use Claude here  Mixed`, `❯ Also scan shell history  true`,
+  `Also scan your other repos  false`, `Continue`, and `←/→ to change usage · Enter to continue · Esc
+  to cancel`. No numbers, so a check for numbered choices does not see it. The test's `/exit` with
+  a return most likely pressed Continue: by 09:47Z `~/.claude.json` had lost `autoModeEnvSetup`, which
+  in 2.1.283's code only the accept path clears (read by the architect); no scan was found in the
+  transcripts or settings. So nothing may send this form a return, and the kit's screen check refuses
+  it by its own words (#416). Esc cancelling it stays read in code, not seen live (#370). **verified**
+  (live, the form and its words; the Continue, worked out from the code)
 - Anything else: type nothing and raise it with the user, naming the bot, the tab and what is on screen.
 
 The kit's own code does not change user-level settings on its own initiative.
