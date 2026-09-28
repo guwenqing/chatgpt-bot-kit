@@ -11,7 +11,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { startsBareObk } from './helpers/shell-command.js';
+import { codeOf, startsBareObk } from './helpers/shell-command.js';
 
 /** The command from the live run, with the session link cut down: `obk` only in the message's text. */
 const LIVE_COMMIT = 'cd /private/var/folders/s5/x/T/obk-system-skill-cli-3GiLZ7 && git add -- bots/target-bot/bot.yaml bots/target-bot/AGENTS.md'
@@ -61,4 +61,37 @@ test('a bare obk is caught wherever a command word stands', () => {
   ]) {
     assert.equal(startsBareObk(command), true, `${label}: ${JSON.stringify(command)}`);
   }
+});
+
+// The review of PR #430: an unquoted heredoc (`<<EOF`, `<<-EOF`) expands `$( )`
+// and backticks in its body, so the shell runs what they hold, while a quoted
+// end word (`<<'EOF'`, `<<"EOF"`, `<<\EOF`) keeps the body literal. Plain text in
+// either body still runs nothing.
+test('what an unquoted heredoc\'s body runs through $( ) or backticks is a command; a quoted heredoc\'s body is text', () => {
+  for (const [label, command] of [
+    ['$( ) in a <<EOF body', 'cat <<EOF\n$(obk health)\nEOF'],
+    ['backticks in a <<EOF body', 'cat <<EOF\nfleet: `obk health`\nEOF'],
+    ['$( ) in a <<-EOF body', 'cat <<-EOF\n\tfleet: $(obk health --json)\n\tEOF'],
+    ['$( ) in a body, with a command after the heredoc', 'cat > report.txt <<EOF\nversion $(obk --version)\nEOF\necho done'],
+  ]) {
+    assert.equal(startsBareObk(command), true, `${label}: ${JSON.stringify(command)}`);
+  }
+  for (const [label, command] of [
+    ["$( ) in a <<'EOF' body", "cat <<'EOF'\n$(obk health)\nEOF"],
+    ['$( ) in a <<"EOF" body', 'cat <<"EOF"\n$(obk health)\nEOF'],
+    ['$( ) in a <<\\EOF body', 'cat <<\\EOF\n$(obk health)\nEOF'],
+    ["backticks in a <<'EOF' body", "cat <<'EOF'\n`obk health`\nEOF"],
+    ['backticks in a <<"EOF" body', 'cat <<"EOF"\n`obk health`\nEOF'],
+    ['plain text in a <<EOF body', 'cat <<EOF\nobk rules build --bot target-bot\nEOF'],
+    ['an escaped $( in a <<EOF body', 'cat <<EOF\n\\$(obk health)\nEOF'],
+  ]) {
+    assert.equal(startsBareObk(command), false, `${label}: ${JSON.stringify(command)}`);
+  }
+});
+
+test('the code the path check reads holds what an unquoted heredoc runs, and not a quoted heredoc\'s text', () => {
+  const machine = '/opt/homebrew/bin/obk';
+  assert.ok(codeOf(`cat <<EOF\n$(${machine} health)\nEOF`).includes(machine), 'run from a <<EOF body: in the code');
+  assert.ok(!codeOf(`cat <<'EOF'\n$(${machine} health)\nEOF`).includes(machine), "a <<'EOF' body: not in the code");
+  assert.ok(!codeOf(`cat <<EOF\nran ${machine} health\nEOF`).includes(machine), 'plain text in a <<EOF body: not in the code');
 });

@@ -9,26 +9,48 @@
 // space in it is kept as the word it is (`"obk" health` runs `obk`, and
 // `"${OBK_CLI:-obk}"` stays the kit's word); one with a space in it is text and
 // stands as one word, `_`. What `$( )` and backticks run inside double quotes is
-// code, and is kept as code.
+// code, and is kept as code. So is what they run in the body of a heredoc whose
+// end word is unquoted (`<<EOF`), which the shell expands; a quoted end word
+// (`<<'EOF'`, `<<"EOF"`, `<<\EOF`) keeps the body literal (review of PR #430).
 
-/** The code of a shell command: quoted text, heredoc bodies and comments taken out, as above. */
+/** The text up to the matching `)` of a `$(` whose `(` is at `from` in `text`, and where it ends. */
+function substitution(text, from) {
+  let depth = 0;
+  for (let end = from; end < text.length; end += 1) {
+    if (text[end] === '(') depth += 1;
+    else if (text[end] === ')') {
+      depth -= 1;
+      if (depth === 0) return { body: text.slice(from + 1, end), end: end + 1 };
+    }
+  }
+  return { body: text.slice(from + 1), end: text.length };
+}
+
+/** The code the `$( )` and backticks in a piece of expanded text run, each set apart by `;`. A `\` keeps the next character literal. */
+function substitutionsIn(text) {
+  let code = '';
+  for (let at = 0; at < text.length; at += 1) {
+    if (text[at] === '\\') {
+      at += 1;
+    } else if (text.startsWith('$(', at)) {
+      const inner = substitution(text, at + 1);
+      code += `;${codeOf(inner.body)};`;
+      at = inner.end - 1;
+    } else if (text[at] === '`') {
+      const close = text.indexOf('`', at + 1);
+      const stop = close < 0 ? text.length : close;
+      code += `;${codeOf(text.slice(at + 1, stop))};`;
+      at = stop;
+    }
+  }
+  return code;
+}
+
+/** The code of a shell command: quoted text, literal heredoc bodies and comments taken out, as above. */
 export function codeOf(command) {
   let out = '';
   let at = 0;
   const heredocs = [];
-
-  /** The text up to the matching `)` of a `$(` whose `(` is at `from`, and where it ends. */
-  const substitution = (from) => {
-    let depth = 0;
-    for (let end = from; end < command.length; end += 1) {
-      if (command[end] === '(') depth += 1;
-      else if (command[end] === ')') {
-        depth -= 1;
-        if (depth === 0) return { body: command.slice(from + 1, end), end: end + 1 };
-      }
-    }
-    return { body: command.slice(from + 1), end: command.length };
-  };
 
   /** A quoted piece as it stands in the code: the word itself, or `_` for text. */
   const word = (text) => (/\s/.test(text) ? '_' : text);
@@ -59,7 +81,7 @@ export function codeOf(command) {
           text += command.slice(end, end + 2);
           end += 2;
         } else if (command.startsWith('$(', end)) {
-          const inner = substitution(end + 1);
+          const inner = substitution(command, end + 1);
           code += `;${codeOf(inner.body)};`;
           text += 'x';
           end = inner.end;
@@ -87,7 +109,12 @@ export function codeOf(command) {
     if (command.startsWith('<<', at) && command[at + 2] !== '<') {
       const found = /^<<(-?)[ \t]*(?:'([^']*)'|"([^"]*)"|([^\s;&|<>()]+))/.exec(command.slice(at));
       if (found !== null) {
-        heredocs.push({ strip: found[1] === '-', end: found[2] ?? found[3] ?? found[4] });
+        const bare = found[4];
+        heredocs.push({
+          strip: found[1] === '-',
+          end: bare === undefined ? found[2] ?? found[3] : bare.replaceAll('\\', ''),
+          expands: bare !== undefined && !bare.includes('\\'),
+        });
         out += ' ';
         at += found[0].length;
         continue;
@@ -97,13 +124,15 @@ export function codeOf(command) {
     if (here === '\n' && heredocs.length > 0) {
       out += '\n';
       at += 1;
-      // Each heredoc's body, in the order they were opened, up to its end word.
-      for (const { strip, end } of heredocs.splice(0)) {
+      // Each heredoc's body, in the order they were opened, up to its end word:
+      // text, but for what an expanding one runs through `$( )` and backticks.
+      for (const { strip, end, expands } of heredocs.splice(0)) {
         while (at < command.length) {
           const next = command.indexOf('\n', at);
           const line = command.slice(at, next < 0 ? command.length : next);
           at = next < 0 ? command.length : next + 1;
           if ((strip ? line.replace(/^\t+/, '') : line) === end) break;
+          if (expands) out += substitutionsIn(line);
         }
       }
       continue;
