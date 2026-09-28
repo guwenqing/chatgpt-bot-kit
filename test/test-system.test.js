@@ -19,6 +19,7 @@
 // here makes a Run appear mid-run without anything real being brought up.
 
 import assert from 'node:assert/strict';
+import { realpathSync } from 'node:fs';
 import { chmod, copyFile, mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -1794,11 +1795,24 @@ describe('test-system', { concurrency: true }, () => {
 /** A value in the configs that the runner must never print: they may hold secrets. */
 const SECRET = 'sk-SECRET-7731-never-print';
 
-/** Where the sandbox's temp folder is, in both of a macOS temp path's spellings. */
+/**
+ * Where the sandbox's temp folder is: `real` and `bare`, both of a macOS temp
+ * path's spellings, for keys to name; `dir`, the folder as it is, where a
+ * folder can be made on any system; and `other`, the other spelling of `dir`
+ * when it names the same folder (macOS's `/private/var` and `/var`), or
+ * undefined where it does not (Linux, whose temp folder has no `/private` form).
+ */
 function tempSpellings(fixture) {
-  const real = fixture.env.TMPDIR;
-  const bare = real.replace(/^\/private(?=\/)/, '');
-  return { real: `/private${bare}`, bare };
+  const dir = fixture.env.TMPDIR;
+  const bare = dir.replace(/^\/private(?=\/)/, '');
+  const candidate = dir.startsWith('/private/') ? bare : `/private${dir}`;
+  let other;
+  try {
+    if (realpathSync(candidate) === realpathSync(dir)) other = candidate;
+  } catch {
+    other = undefined;
+  }
+  return { real: `/private${bare}`, bare, dir, other };
 }
 
 /**
@@ -2154,8 +2168,8 @@ describe('test-system: what a run leaves in the harness configs (#240)', { concu
   // fixtures above name folders that never exist, and so were not there before.
   test('a key added mid-run under an obk-system folder that was there before the run is not the run\'s: not named, not failed', async (t) => {
     let key;
-    const { fixture, env } = await withConfigs(t, ({ real }) => {
-      const theirs = `${real}/obk-system-other-session-123`;
+    const { fixture, env } = await withConfigs(t, ({ dir }) => {
+      const theirs = `${dir}/obk-system-other-session-123`;
       key = `${theirs}/bots`;
       return { before: { makes: [theirs] }, during: { codex: codexConfig({ projects: [key] }) } };
     });
@@ -2168,8 +2182,8 @@ describe('test-system: what a run leaves in the harness configs (#240)', { concu
 
   test('a Claude key added mid-run under an obk-system folder that was there before the run is not reported as the run\'s', async (t) => {
     let key;
-    const { fixture, env } = await withConfigs(t, ({ real }) => {
-      const theirs = `${real}/obk-system-other-session-456`;
+    const { fixture, env } = await withConfigs(t, ({ dir }) => {
+      const theirs = `${dir}/obk-system-other-session-456`;
       key = `${theirs}/bots/bots/bot-father`;
       return { before: { makes: [theirs] }, during: { claude: claudeConfig([key]) } };
     });
@@ -2182,8 +2196,8 @@ describe('test-system: what a run leaves in the harness configs (#240)', { concu
 
   test('a codex-screens key under a folder that was there before the run is not named as the run\'s known writes either', async (t) => {
     let key;
-    const { fixture, env } = await withConfigs(t, ({ real }) => {
-      const theirs = `${real}/obk-system-codex-screens-Other9`;
+    const { fixture, env } = await withConfigs(t, ({ dir }) => {
+      const theirs = `${dir}/obk-system-codex-screens-Other9`;
       key = `${theirs}/bots`;
       return { before: { makes: [theirs] }, during: { codex: codexConfig({ projects: [key] }) } };
     });
@@ -2196,8 +2210,8 @@ describe('test-system: what a run leaves in the harness configs (#240)', { concu
 
   test('a folder the run makes mid-run is the run\'s, and a Codex key under it still fails the run', async (t) => {
     let key;
-    const { fixture, env } = await withConfigs(t, ({ real }) => {
-      const mine = `${real}/obk-system-alpha-Made1`;
+    const { fixture, env } = await withConfigs(t, ({ dir }) => {
+      const mine = `${dir}/obk-system-alpha-Made1`;
       key = `${mine}/bots`;
       return { during: { makes: [mine], codex: codexConfig({ projects: [key] }) } };
     });
@@ -2211,14 +2225,18 @@ describe('test-system: what a run leaves in the harness configs (#240)', { concu
   test('keys under a folder that was there before and under a new one: only the new one is named, and it fails the run', async (t) => {
     let theirsKey;
     let mineKey;
-    const { fixture, env } = await withConfigs(t, ({ real, bare }) => {
-      const theirs = `${real}/obk-system-other-session-789`;
-      // Known before the run by its /private spelling; its key written in the /var one.
-      theirsKey = `${bare}/obk-system-other-session-789/bots`;
-      mineKey = `${real}/obk-system-alpha-New2/bots`;
+    const { fixture, env } = await withConfigs(t, ({ dir, other }) => {
+      // Both folders made where the temp folder is. The key under the one that
+      // was there before is written in the temp folder's other spelling where
+      // it has one naming the same folder (macOS: made as /private/var…, named
+      // as /var…), so the runner has to know the folder by either; where it has
+      // none (Linux), in the one spelling there is.
+      const theirs = `${dir}/obk-system-other-session-789`;
+      theirsKey = `${other ?? dir}/obk-system-other-session-789/bots`;
+      mineKey = `${dir}/obk-system-alpha-New2/bots`;
       return {
         before: { makes: [theirs] },
-        during: { makes: [`${real}/obk-system-alpha-New2`], codex: codexConfig({ projects: [theirsKey, mineKey] }) },
+        during: { makes: [`${dir}/obk-system-alpha-New2`], codex: codexConfig({ projects: [theirsKey, mineKey] }) },
       };
     });
 
@@ -2226,7 +2244,7 @@ describe('test-system: what a run leaves in the harness configs (#240)', { concu
 
     assert.equal(result.code, 1, `the new folder's key fails the run:\n${everything(result)}`);
     assertNamed(result, mineKey, 'the new folder\'s key');
-    assertNotNamed(result, theirsKey, 'the key under the folder that was there before, in its other spelling');
+    assertNotNamed(result, theirsKey, 'the key under the folder that was there before, in its other spelling where it has one');
   });
 
   // The review of PR #433, its P3: a config that could not be read was not
