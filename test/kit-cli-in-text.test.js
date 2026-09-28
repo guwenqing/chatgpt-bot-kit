@@ -9,7 +9,7 @@
 //     writes the building CLI's path where a unit says `"${OBK_CLI:-obk}"`
 //     (#344), and a bare `obk` it leaves as it is;
 //   - a shipped skill (skills/*/SKILL.md) is a linked file, the same on every
-//     machine (ADR 0004), and cannot carry a path. One with a backticked
+//     machine (ADR 0014), and cannot carry a path. One with a backticked
 //     `obk …` command carries a note instead: where the skill says `obk`, run
 //     `"${OBK_CLI:-obk}"`, the kit that started your tab. The note is found by
 //     what it says, not by its exact words: a paragraph that names
