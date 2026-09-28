@@ -563,13 +563,24 @@ function psLine(pid) {
 /**
  * Close one tab, by the handle Orca issued for it.
  *
- * The only place in the kit that takes anything away, and it takes away one
- * tab: `--terminal <handle> --tab`. Orca's other form, `--worktree <sel> --all`,
+ * With `closeTerminal` below, the only place in the kit that takes anything
+ * away, and each takes away one tab: `--terminal <handle> --tab`. Orca's other
+ * form, `--worktree <sel> --all`,
  * closes every tab of a project with its layouts and resume records, which are
  * the user's work and not the kit's to end (tech notes, section 1).
  */
 export const closeTab = (handle) =>
   orca(['terminal', 'close', '--terminal', handle, '--tab']).close;
+
+/**
+ * Close one terminal without `--tab`: for a tab of one pane, as every tab the
+ * kit opens is, Orca then closes that tab by its id and stops its process (read
+ * in the 1.4.215 bundle). Only for a tab `--tab` could not find (#405): Orca
+ * looks a `--tab` close up in a tab snapshot of its own, which a tab it still
+ * lists can be missing from after a restart, and answers `tab_not_found`.
+ */
+export const closeTerminal = (handle) =>
+  orca(['terminal', 'close', '--terminal', handle]).close;
 
 /**
  * Type `text` into a tab and press return.

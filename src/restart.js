@@ -34,7 +34,7 @@ import { setTimeout as pause } from 'node:timers/promises';
 import { bookFile, readBook } from './book.js';
 import { botDir, readBot } from './bot.js';
 import { ownCli, shellWord } from './launch.js';
-import { closeTab, findProject, frontOfTab, tabs } from './orca.js';
+import { closeTab, closeTerminal, findProject, frontOfTab, orcaCli, tabs } from './orca.js';
 import { botsNamed, bringUp, prepareBots, sessionsOf } from './up.js';
 
 /**
@@ -118,7 +118,7 @@ export async function closeTabs(home, going, bots, name) {
   const closed = [];
   for (const { name: session, tab } of going) {
     try {
-      closeTab(tab.handle);
+      closeWhole(tab.handle, bots, name);
     } catch (error) {
       // A tab that would not close still holds its session, so nothing is
       // opened after this: two harnesses on one conversation is worse than a
@@ -131,6 +131,31 @@ export async function closeTabs(home, going, bots, name) {
   await gone(home, closed, bots, name);
   return closed;
 }
+
+/**
+ * Close one session's tab. Orca finds a `--tab` close in a tab snapshot of its
+ * own, which a tab it still lists can be missing from after a restart, and then
+ * answers `tab_not_found` (#405, read in the 1.4.215 bundle). The same terminal
+ * closed without `--tab` closes its one-pane tab by id, so that is done instead,
+ * and `gone` checks the tab went as it does after any close. Every other
+ * refusal stops the restart as it did.
+ */
+function closeWhole(handle, bots, bot) {
+  try {
+    closeTab(handle);
+  } catch (error) {
+    if (!notFound(error)) throw error;
+    try {
+      closeTerminal(handle);
+    } catch (again) {
+      throw new Error(`${error.message}, and then ${again.message}. Close it by hand and bring the session back: ${shellWord(orcaCli())} terminal close --terminal ${shellWord(handle)}  then  ${shellWord(ownCli())} up --bots ${shellWord(bots)} --bot ${bot}`);
+    }
+  }
+}
+
+/** Whether Orca's refusal is `tab_not_found`, as its code or as its whole message. */
+const notFound = (error) =>
+  error.code === 'tab_not_found' || /(?:^|[^\w])tab_not_found$/.test(error.message);
 
 /** How long Orca is given to stop listing a tab it has closed, and how often it is asked. */
 const SETTLED_MS = 5000;

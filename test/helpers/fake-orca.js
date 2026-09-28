@@ -205,6 +205,17 @@
 //               from the fake's world once the count runs out. It goes on
 //               answering `rename`, `wait` and `send` while it lags, because to
 //               anything that found it in a listing it is a tab like any other.
+//   refuseClose  on one terminal, not on the state: { tab, pane }, each a
+//               { code, message } refusal. `terminal close --terminal <its
+//               handle> --tab` is answered ok:false with `tab`, and the same
+//               close without `--tab` with `pane`; either left out closes the
+//               tab as ever. A refused close changes nothing, so the tab stays
+//               listed. Seen live on Orca 1.4.214 after a machine restart
+//               (#405): `close --tab` refused `tab_not_found` for a terminal
+//               `terminal list` listed with that tab id and `orphaned: false`,
+//               and the close without `--tab` worked. In 1.4.215's code the
+//               refusal likely comes as code `runtime_error` with message
+//               `tab_not_found` (read, not seen live). Orca never lists it.
 //   hang        { command, ms, applied } — that command is answered as it would
 //               have been, `ms` later (a minute if left out): an Orca that is
 //               slow to answer, or has stopped answering. What cuts it short
@@ -310,7 +321,8 @@
 //
 // The first is answered: the terminal leaves the fake's world, a tab at a time,
 // because a tab here holds one terminal — at once, or after `closeLag` more
-// listings when a test asked for a listing that lags. The second is not
+// listings when a test asked for a listing that lags, or refused, when the
+// terminal carries a `refuseClose` for that form. The second is not
 // answered at all —
 // the fake falls over with a message, because it closes tabs the kit does not
 // own and the kit must never call it. A handle the fake does not have is
@@ -576,7 +588,7 @@ if (command === 'project setup-delete') {
  * a test gave it, which only `terminal read` shows, and what a send into it is
  * seen to do, which only `terminal send` answers.
  */
-const asReported = ({ typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, submit: _submit, ...rest }) => (rest.orphaned === true
+const asReported = ({ typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, submit: _submit, refuseClose: _refuseClose, ...rest }) => (rest.orphaned === true
   ? { ...rest, ...identity(), tabId: `pty:${rest.ptyId}`, leafId: `pty:${rest.ptyId}`, orphaned: true }
   : { ...rest, ...identity(), orphaned: false });
 
@@ -673,6 +685,10 @@ if (command === 'terminal close') {
   const terminal = (state.terminals ?? []).find((entry) => entry.handle === flag('--terminal'));
   if (!terminal) fail('terminal_not_found', `no terminal with handle ${flag('--terminal')}`);
 
+  // A close Orca refuses for this tab alone, in the form the test named (#405).
+  const refusal = terminal.refuseClose?.[args.includes('--tab') ? 'tab' : 'pane'];
+  if (refusal !== undefined) fail(refusal.code, refusal.message);
+
   // A tab here holds one terminal, so the terminal goes either way; whether the
   // kit asked for the whole tab is in calls.log for a test to read. The answer
   // is the one the real call gave when it was measured (tech notes, section 1).
@@ -705,7 +721,7 @@ if (command === 'terminal close') {
 if (command === 'terminal show') {
   const terminal = (state.terminals ?? []).find((entry) => entry.handle === flag('--terminal'));
   if (!terminal) fail('terminal_not_found', `no terminal with handle ${flag('--terminal')}`);
-  const { typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, submit: _submit, ...rest } = terminal;
+  const { typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, submit: _submit, refuseClose: _refuseClose, ...rest } = terminal;
   ok({ terminal: { ...rest, ...identity(), orphaned: terminal.orphaned === true } });
 }
 

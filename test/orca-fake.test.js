@@ -999,3 +999,55 @@ test('the fake can refuse a handle as stale for a while, and hand it out anew at
   assert.equal(JSON.parse(wait('term_90').stdout).ok, true, 'which works');
   assert.equal(JSON.parse(wait(handle).stdout).error.code, 'terminal_not_found', 'and the old one names nothing any more');
 });
+
+test('the fake can refuse one tab\'s close with --tab, keep listing it, and close it without --tab', async (t) => {
+  // Seen live on 1.4.214 after a machine restart (#405): `terminal close
+  // --terminal <h> --tab` refused `tab_not_found` for a tab `terminal list`
+  // still listed, and the same close without `--tab` worked.
+  const box = await createSandbox(t);
+  const home = box.path('bots', 'bots', 'bot-father');
+  answer(ask(box, ['repo', 'add', '--path', home, '--json']));
+  const setup = (await box.orca.setups())[0];
+  answer(ask(box, ['project', 'setup-update', '--setup', setup.id, '--kind', 'folder', '--json']));
+  const create = () => answer(ask(box, ['terminal', 'create', '--worktree', `path:${home}`, '--title', 'Daily', '--json'])).result.terminal;
+  const stuck = create();
+  const other = create();
+  const list = () => answer(ask(box, ['terminal', 'list', '--worktree', `path:${home}`, '--json'])).result.terminals;
+  const close = (handle, ...rest) => ask(box, ['terminal', 'close', '--terminal', handle, ...rest, '--json']);
+
+  await box.orca.set({
+    terminals: (await box.orca.terminals()).map((one) => (one.handle === stuck.handle
+      ? { ...one, refuseClose: { tab: { code: 'runtime_error', message: 'tab_not_found' } } }
+      : one)),
+  });
+
+  const refused = close(stuck.handle, '--tab');
+  assert.equal(refused.status, 1);
+  assert.deepEqual(
+    [JSON.parse(refused.stdout).ok, JSON.parse(refused.stdout).error.code, JSON.parse(refused.stdout).error.message],
+    [false, 'runtime_error', 'tab_not_found'],
+    'the close with --tab is refused in the words the test gave',
+  );
+  const listed = list();
+  assert.deepEqual(listed.map((one) => one.handle), [stuck.handle, other.handle], 'and the tab is still listed');
+  assert.equal(listed[0].tabId, stuck.tabId, 'by its own tab id');
+  assert.equal('refuseClose' in listed[0], false, 'Orca never lists what the test told it');
+
+  assert.equal(JSON.parse(close(other.handle, '--tab').stdout).ok, true, 'another tab closes with --tab as ever');
+  const plain = JSON.parse(close(stuck.handle).stdout);
+  assert.equal(plain.ok, true, 'the close without --tab goes through');
+  assert.equal(plain.result.close.handle, stuck.handle);
+  assert.deepEqual(list(), [], 'and the tab is gone');
+
+  // Both forms refused: nothing closes.
+  const again = create();
+  await box.orca.set({
+    terminals: (await box.orca.terminals()).map((one) => ({
+      ...one,
+      refuseClose: { tab: { code: 'tab_not_found', message: 'no such tab' }, pane: { code: 'runtime_error', message: 'the pane will not close' } },
+    })),
+  });
+  assert.equal(JSON.parse(close(again.handle, '--tab').stdout).error.code, 'tab_not_found');
+  assert.equal(JSON.parse(close(again.handle).stdout).error.message, 'the pane will not close');
+  assert.deepEqual(list().map((one) => one.handle), [again.handle], 'a tab whose closes were both refused is still there');
+});
