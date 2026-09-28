@@ -64,7 +64,10 @@
 //     test/helpers/codex-trust.js), so Codex asks neither of its two screens
 //     below, still runs the kit's hook, and writes nothing about the folder
 //     into the user's own ~/.codex/config.toml; a trust or hooks screen in
-//     those tabs means the launch-time trust did not take. The last test, the
+//     those tabs means the launch-time trust did not take. They also run
+//     without Codex's sleep tool (#432): told to "wait", a Codex on a GPT-6
+//     model sleeps in its turn, and the waits here for its turn to end would
+//     not end. The last test, the
 //     one that wants the hooks untrusted, has its folder trusted the same way
 //     but not its hooks, so it still meets `Hooks need review` below, and only
 //     that; it says why.

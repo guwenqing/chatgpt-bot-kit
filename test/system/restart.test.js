@@ -86,8 +86,9 @@
 //      session is given its folder's trust at launch (#240,
 //      test/helpers/codex-trust.js), so Codex asks neither its directory trust
 //      nor its hooks review, still runs the kit's hook, and writes nothing
-//      about this folder into the user's own ~/.codex/config.toml. Each restart
-//      resumes it with the same three arguments, which the kit keeps in
+//      about this folder into the user's own ~/.codex/config.toml; and, like
+//      every system test's Codex, it runs without Codex's sleep tool (#432).
+//      Each restart resumes it with the same arguments, which the kit keeps in
 //      bot.yaml and puts on every launch line: worked out from src/launch.js,
 //      not proven live before this test, which says in a diagnostic whether
 //      each resumed codex carried them. A trust or hooks screen there means the

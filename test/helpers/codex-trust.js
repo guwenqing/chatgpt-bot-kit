@@ -1,7 +1,8 @@
 // A system test's Codex session starts trusted by launch-time overrides, so
 // Codex writes no folder trust and no hooks trust into the user's own
-// ~/.codex/config.toml (#240, option (c)); and the reader a test checks that
-// file with, before and after. See test/codex-trust.test.js.
+// ~/.codex/config.toml (#240, option (c)), and without Codex's sleep tool
+// (#432); and the reader a test checks that file with, before and after. See
+// test/codex-trust.test.js.
 
 /** A TOML basic string: the same escapes JSON uses, which TOML reads alike. */
 const tomlString = (text) => JSON.stringify(text);
@@ -16,9 +17,10 @@ const tomlString = (text) => JSON.stringify(text);
 export const projectTrust = (folder) => `projects={${tomlString(folder)}={trust_level="trusted"}}`;
 
 /**
- * The `session add` arguments that start a Codex session in the bots folder at
- * `botsRealpath` with no folder-trust question and no hooks review, and with
- * nothing of its own written into config.toml at startup:
+ * The `session add` arguments every Codex session a system test makes is
+ * launched with: it starts in the bots folder at `botsRealpath` with no
+ * folder-trust question and no hooks review, with nothing of its own written
+ * into config.toml at startup, and without Codex's sleep tool:
  *
  *   -c projects={"<folder>"={trust_level="trusted"}}   the folder's trust, as a
  *                                  whole table in one -c; the dotted key form
@@ -27,6 +29,13 @@ export const projectTrust = (folder) => `projects={${tomlString(folder)}={trust_
  *                                  the hooks still run
  *   -c tui.show_tooltips=false     no model-availability notice counted in the
  *                                  file at startup
+ *   -c features.sleep_tool=false   not a trust setting: a test-only launch
+ *                                  argument (#432). A Codex on a GPT-6 model
+ *                                  told to wait calls its built-in `sleep` in
+ *                                  its turn, for an hour or more, and the tests'
+ *                                  waits for an idle tab never end. The kit's
+ *                                  own launch line keeps the tool: the notice it
+ *                                  types ends such a sleep (seen live, #432)
  *
  * Codex looks for trust at the session's folder and then at its git root, the
  * realpath first, so the bots folder's realpath covers every bot in it.
@@ -35,11 +44,18 @@ export const projectTrust = (folder) => `projects={${tomlString(folder)}={trust_
  * untrusted: the folder is still trusted, so the review is shown and the hooks
  * do not run until they are trusted, and "Continue without trusting" writes
  * nothing (read in Codex 0.158.0's source for #240, not seen live).
+ *
+ * `sleep: true` leaves the sleep tool on, for the one session that checks a
+ * real bot with it still gets its mail: codex-sleep.test.js's sleep-codex.
+ *
+ * The name says trust because trust is what it began as (#240); it is the
+ * whole of what a system test's Codex session is launched with.
  */
-export const codexTrustArgs = (botsRealpath, { hooks = true } = {}) => [
+export const codexTrustArgs = (botsRealpath, { hooks = true, sleep = false } = {}) => [
   '-c', projectTrust(botsRealpath),
   ...(hooks ? ['--dangerously-bypass-hook-trust'] : []),
   '-c', 'tui.show_tooltips=false',
+  ...(sleep ? [] : ['-c', 'features.sleep_tool=false']),
 ].map((arg) => `--extra-arg=${arg}`);
 
 /** A table header this reads: `[projects."…"]` or `[hooks.state."…"]`, the key double- or single-quoted. */
