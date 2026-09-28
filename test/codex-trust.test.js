@@ -16,7 +16,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { addedUnder, codexTrustArgs, trustKeysIn } from './helpers/codex-trust.js';
+import { addedUnder, codexTrustArgs, projectTrust, trustKeysIn } from './helpers/codex-trust.js';
 
 test('the extra args trust the bots folder by a whole projects table, bypass the hooks review, and turn tooltips off', () => {
   assert.deepEqual(codexTrustArgs('/private/var/folders/x/obk-system-trust-Ab1.c/bots'), [
@@ -101,4 +101,28 @@ test('the keys added under a folder, in either spelling of a macOS temp path, an
     'a folder whose name only begins the same holds none of them',
   );
   assert.deepEqual(addedUnder(after, after, '/private/var/folders/s5/T/obk-system-trust-Ab1'), { projects: [], hooks: [] }, 'and nothing added is nothing');
+});
+
+// The one case that wants the kit's hook not to run (session-identity's
+// "a Codex conversation that ran before the hooks file was trusted"): the
+// folder is trusted at launch, the hooks are not, and the person attending
+// answers the hooks review with "Continue without trusting", which Codex 0.158.0
+// writes nothing for (read in its source for #240, not seen live).
+test('with hooks: false, the folder is trusted and tooltips are off, and the hooks review is not bypassed', () => {
+  assert.deepEqual(codexTrustArgs('/private/var/folders/x/obk-system-untrusted-Ab1/bots', { hooks: false }), [
+    '--extra-arg=-c',
+    '--extra-arg=projects={"/private/var/folders/x/obk-system-untrusted-Ab1/bots"={trust_level="trusted"}}',
+    '--extra-arg=-c',
+    '--extra-arg=tui.show_tooltips=false',
+  ]);
+  assert.deepEqual(
+    codexTrustArgs('/tmp/b', { hooks: true }),
+    codexTrustArgs('/tmp/b'),
+    'hooks: true is the default: the review bypassed',
+  );
+});
+
+test('the folder trust alone, as one -c value, for a codex run the kit does not launch', () => {
+  assert.equal(projectTrust('/tmp/a b.c/it\'s'), 'projects={"/tmp/a b.c/it\'s"={trust_level="trusted"}}');
+  assert.equal(`--extra-arg=${projectTrust('/tmp/b')}`, codexTrustArgs('/tmp/b')[1], 'the same value codexTrustArgs passes');
 });

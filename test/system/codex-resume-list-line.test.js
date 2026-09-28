@@ -76,10 +76,13 @@
 //
 //   1. `Bot Father daily`: Claude Code's folder trust. Nothing here waits on
 //      Bot Father. Leave it.
-//   2. `List Codex main` (bot `list-codex`), at the first start: Codex's folder
-//      trust (`1`, "Trust and continue"), then `Hooks need review` (`2`,
-//      "Trust all and continue"; one hook, the kit's; with anything else the
-//      book never learns the conversation and the test stops there).
+//   2. `List Codex main` (bot `list-codex`) should ask nothing. Its session is
+//      given its folder's trust at launch (#240, test/helpers/codex-trust.js),
+//      so Codex asks neither its folder trust nor its hooks review, still runs
+//      the kit's hook, and writes nothing about this folder into the user's own
+//      ~/.codex/config.toml. Each resume carries the same arguments, which the
+//      kit keeps in bot.yaml and puts on every launch line (worked out from
+//      src/launch.js, not proven live).
 //   3. Any tab, if its harness offers an update: accept it (PRD 6.5).
 //
 // Each resume opens a new tab with the same title, `List Codex main`. A
@@ -100,6 +103,7 @@ import { setTimeout } from 'node:timers/promises';
 import { parse } from 'yaml';
 
 import { cliEntry } from '../helpers/cli.js';
+import { codexTrustArgs } from '../helpers/codex-trust.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
 
@@ -377,7 +381,7 @@ test('a Codex session resumed by up, restart and unpause is among Orca\'s agents
     'bot', 'create', '--bots', bots, '--name', BOT.name, '--harness', 'codex',
     '--charter', `${BOT.name} exists for one system test run and owns nothing.`,
   ]);
-  obkJson(['session', 'add', '--bots', bots, '--bot', BOT.name, '--name', SESSION, `--prompt=${startPrompt}`]);
+  obkJson(['session', 'add', '--bots', bots, '--bot', BOT.name, '--name', SESSION, `--prompt=${startPrompt}`, ...codexTrustArgs(bots)]);
 
   // 0. A fresh start, and its one turn: the book holds the conversation and
   // Codex has it on record, which is what a resume picks up.
@@ -387,7 +391,7 @@ test('a Codex session resumed by up, restart and unpause is among Orca\'s agents
     `${BOT.title} to report its session id to the book`,
     READY_MS,
     async () => (await sessionIn(home, SESSION)).session,
-    () => ` The kit's hook has not run. On Codex that is usually the \`Hooks need review\` screen: answer it with 2.${whatIsUp(started.terminal)}`,
+    () => ` The kit's hook has not run. A \`Hooks need review\` screen here means the launch-time trust did not take (#240).${whatIsUp(started.terminal)}`,
   );
   await until(
     `the start turn to answer ${READY.toLowerCase()}`,

@@ -17,6 +17,16 @@
 // the tab's shell. `first` is resumed before `second`, so if a shared server is
 // started, `first`'s Codex starts it and `second`'s uses it.
 //
+// Every Codex here is given its folder's trust at launch (#240,
+// test/helpers/codex-trust.js), so Codex asks neither its folder trust nor its
+// hooks review and writes nothing about this folder into the user's own
+// ~/.codex/config.toml. The kit's launch lines carry it from bot.yaml, a restart
+// included (worked out from src/launch.js, not proven live). The bare resume
+// carries the same three arguments and nothing else of the kit's line: without
+// them Codex would ask this folder's trust again, where Orca's own restore
+// resumes in a folder the user trusted long ago. What this test is about, the
+// missing `OBK_TAB_SHELL` and `--no-daemon`, is the same either way.
+//
 // What it shows, for one Codex bot with two sessions:
 //
 //   1. Brought back that way, `second` is asked to run tab-bound kit commands:
@@ -103,11 +113,10 @@
 // both, and commands run by the model twice. Ten minutes or more.
 //
 // **It is attended.** Bot Father's daily may ask Claude Code's folder trust;
-// nothing here waits on it, so it can be left. On a first run, in `Daemon
-// Codex first`: Codex's
-// directory trust (`1`, "Yes, continue") and `Hooks need review` (`2`, "Trust
-// all and continue"; with anything else the kit's hook never runs). `second`
-// comes up in the same folder and should ask nothing. The resumed Codex runs on
+// nothing here waits on it, so it can be left. The Codex tabs, `Daemon Codex
+// first` and `second`, should ask no folder trust and no hooks review (see
+// above); a trust or hooks screen there means the launch-time trust did not
+// take, and is not to be answered. The resumed Codex runs on
 // this machine's own Codex settings, as a restore does; if it asks before it
 // runs a command, allow it. If a harness offers an update, accept it (PRD 6.5).
 
@@ -122,6 +131,7 @@ import { setTimeout } from 'node:timers/promises';
 import { parse } from 'yaml';
 
 import { cliEntry, shellWord, spellingsOf } from '../helpers/cli.js';
+import { codexTrustArgs } from '../helpers/codex-trust.js';
 import { waitingOn } from '../helpers/screens.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
@@ -613,7 +623,7 @@ test('a Codex session brought back without the kit\'s line is refused its tab-bo
     '--charter', `${BOT.display} exists for one system test run and owns nothing.`,
   ]);
   for (const session of SESSIONS) {
-    obkJson(['session', 'add', '--bots', bots, '--bot', BOT.name, '--name', session, `--prompt=${startPrompt}`]);
+    obkJson(['session', 'add', '--bots', bots, '--bot', BOT.name, '--name', session, `--prompt=${startPrompt}`, ...codexTrustArgs(bots)]);
   }
 
   // 0. The kit starts each session, its hook tells the book its id, and one
@@ -628,7 +638,7 @@ test('a Codex session brought back without the kit\'s line is refused its tab-bo
       `${session} to report its session id`,
       READY_MS,
       async () => (await sessionIn(home, session)).session,
-      () => ` The kit's hook has not run. On Codex that is usually the \`Hooks need review\` screen: answer it with 2.${whatIsUp(entry.terminal)}`,
+      () => ` The kit's hook has not run. A \`Hooks need review\` screen here means the launch-time trust did not take (#240).${whatIsUp(entry.terminal)}`,
     );
     await answers(entry.terminal, 'What is your codeword? Reply with the codeword in lower case and nothing else.', BOT.codeword.toLowerCase());
     const launched = inFront(entry.terminal);
@@ -646,7 +656,9 @@ test('a Codex session brought back without the kit\'s line is refused its tab-bo
     const entry = tabs[session];
     await askIn(entry.terminal, '/quit');
     await until(`codex in ${entry.title} to quit to the tab's shell`, QUIT_MS, async () => (isShell(inFront(entry.terminal)?.name) ? true : undefined), () => whatIsUp(entry.terminal));
-    const resume = `codex resume ${ids[session]}`;
+    // The bare resume, with the launch-time trust and nothing else of the kit's line (see the header).
+    const trust = codexTrustArgs(bots).map((arg) => shellWord(arg.slice('--extra-arg='.length))).join(' ');
+    const resume = `codex resume ${trust} ${ids[session]}`;
     typeInto(entry.terminal, resume);
     let restored = await until(
       `codex to be back in front of ${entry.title} after \`${resume}\``,

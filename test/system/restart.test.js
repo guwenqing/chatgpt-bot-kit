@@ -82,16 +82,22 @@
 //   4. `Bot Father daily` will be sitting on its own trust question. Leave it:
 //      nothing is asked of Bot Father here, and a screen nobody talks to costs
 //      this test nothing.
-//   5. In the Codex case, `Restart Codex daily`: Codex's directory trust, `1.
-//      Yes, continue`, already selected; then `Hooks need review`, answered
-//      `2`, "Trust all and continue" — without it the kit's hook never runs and
-//      the book never learns the session's id. After each restart the tab is
-//      the same folder and should come straight up; if it asks again, answer
-//      it the same way. `Bot Father daily` is as in 4.
+//   5. In the Codex case, `Restart Codex daily` should ask nothing. Its
+//      session is given its folder's trust at launch (#240,
+//      test/helpers/codex-trust.js), so Codex asks neither its directory trust
+//      nor its hooks review, still runs the kit's hook, and writes nothing
+//      about this folder into the user's own ~/.codex/config.toml. Each restart
+//      resumes it with the same three arguments, which the kit keeps in
+//      bot.yaml and puts on every launch line: worked out from src/launch.js,
+//      not proven live before this test, which says in a diagnostic whether
+//      each resumed codex carried them. A trust or hooks screen there means the
+//      launch-time trust did not take, and is not to be answered. `Bot Father
+//      daily` is as in 4.
 //
 // The keys, measured live and written down in `session-identity.test.js`:
-// Claude Code's folder trust takes `\x1b[B\r` — down, then return — Codex's
-// directory trust `1\r` and its `Hooks need review` `2\r`, each sent as one
+// Claude Code's folder trust takes `\x1b[B\r` — down, then return — and, where
+// Codex still asks them (not here, #240), its directory trust `1\r` and its
+// `Hooks need review` `2\r`, each sent as one
 // payload with its own return and no `--enter`, because a menu takes a return as
 // the key it is waiting for. A question put to the agent itself is the other
 // case and needs `--enter`: see `askIn`. Nothing here sends any of them; which
@@ -107,6 +113,7 @@ import { setTimeout } from 'node:timers/promises';
 import { parse } from 'yaml';
 
 import { cliEntry } from '../helpers/cli.js';
+import { codexTrustArgs } from '../helpers/codex-trust.js';
 import { waitingOn } from '../helpers/screens.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
@@ -763,7 +770,7 @@ test('#330: a Codex session restarted again and again comes back each time, on t
   ]);
   obkJson([
     'session', 'add', '--bots', bots, '--bot', CODEX_BOT.name, '--name', 'daily',
-    `--prompt=${CODEX_START_PROMPT}`,
+    `--prompt=${CODEX_START_PROMPT}`, ...codexTrustArgs(bots),
   ]);
 
   const opened = tabOf(obkJson(['up', '--bots', bots, '--bot', CODEX_BOT.name]), 'daily');
@@ -775,14 +782,14 @@ test('#330: a Codex session restarted again and again comes back each time, on t
     + `\`orca terminal read --terminal ${opened.terminal} --screen\``,
   );
 
-  // The id the book learns from the kit's hook. On Codex the hook runs only
-  // once `Hooks need review` is answered, and a person is answering it, so this
-  // waits with their patience rather than the hook's.
+  // The id the book learns from the kit's hook. It used to wait on a person
+  // answering `Hooks need review`; with the trust given at launch (#240) it
+  // should come without one, and the wait keeps its old patience all the same.
   const id = await until(
     `${CODEX_BOT.name} to report its session id`,
     READY_MS,
     async () => (await sessionIn(home, 'daily')).session,
-    () => ` The kit's hook has not run. On Codex that is usually the \`Hooks need review\` screen: answer it with 2.${whatIsUp(opened.terminal)}`,
+    () => ` The kit's hook has not run. A \`Hooks need review\` screen here means the launch-time trust did not take (#240).${whatIsUp(opened.terminal)}`,
   );
 
   // The fresh start carried `--no-daemon` too, straight after the approval
@@ -860,6 +867,8 @@ test('#330: a Codex session restarted again and again comes back each time, on t
     assertTabRunsCodex157(front.pid, which);
     const argv = argvOf(front.pid);
     const said = argv.join(' ');
+    // Whether the resume kept the launch-time trust from bot.yaml (#240): worked out, and recorded here.
+    t.diagnostic(`${which}: the resumed codex ${argv.includes('--dangerously-bypass-hook-trust') ? 'carries' : 'does not carry'} the launch-time trust`);
     assert.equal(path.basename(argv[0]), 'codex', `${which}: the harness is codex, got: ${said}`);
     assert.equal(argv[1], 'resume', `${which}: it is a resume, got: ${said}`);
     assert.equal(argv.filter((word) => word === '--no-daemon').length, 1, `${which}: it carries --no-daemon once, got: ${said}`);

@@ -26,6 +26,12 @@
 //
 // It keeps to one Claude bot and one Codex bot. Each one starts a real harness
 // on the owner's machine, and two is enough to check both mappings.
+//
+// The Codex session is given its folder's trust at launch (#240,
+// test/helpers/codex-trust.js), so Codex asks neither its folder trust nor its
+// hooks review, and writes nothing about this folder into the user's own
+// ~/.codex/config.toml. Claude Code's folder trust, in `Bot Father daily` and
+// `Claude Bot daily`, is still the person attending's to answer.
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -38,6 +44,7 @@ import { setTimeout } from 'node:timers/promises';
 import { parse } from 'yaml';
 
 import { assertMarkedName, cliEntry, HOOK_FILES, kitHooksIn, spellingsOf } from '../helpers/cli.js';
+import { codexTrustArgs } from '../helpers/codex-trust.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
 
@@ -246,6 +253,7 @@ test('two bots on the two harnesses come up in the real Orca, and nothing else i
     obkJson([
       'session', 'add', '--bots', bots, '--bot', bot.name, '--name', 'daily',
       '--prompt', promptOf(bot.display, cliNoteOf(homeOf(bot.name))), '--work-dir', 'work/notes',
+      ...(bot.harness === 'codex' ? codexTrustArgs(bots) : []),
     ]);
   }
 
@@ -255,8 +263,11 @@ test('two bots on the two harnesses come up in the real Orca, and nothing else i
     const config = parse(await readFile(path.join(home, 'bot.yaml'), 'utf8'));
     assert.equal(config.name, bot.name);
     assert.equal(config.harness, bot.harness);
+    // The Codex session carries the launch-time trust it was added with (#240):
+    // a new input, so the entry holds it too, and the check is no looser.
+    const extra = bot.harness === 'codex' ? { extra_args: codexTrustArgs(bots).map((arg) => arg.slice('--extra-arg='.length)) } : {};
     assert.deepEqual(config.sessions, [
-      { name: 'daily', approval: 'auto', prompt: config.sessions[0].prompt, work_dir: 'work/notes' },
+      { name: 'daily', approval: 'auto', prompt: config.sessions[0].prompt, work_dir: 'work/notes', ...extra },
     ]);
     assert.equal(config.sessions[0].prompt.trim(), promptOf(bot.display, cliNoteOf(home)));
 

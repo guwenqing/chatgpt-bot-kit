@@ -98,11 +98,13 @@
 //      Its selection starts on `No, exit`, so it takes a down-arrow and then
 //      return.
 //   3. `Node Nudge sender`, a Codex tab in the same folder
-//      (`<tmp>/obk-system-node-nudge-*/bots/node-nudge`, bot `node-nudge`):
-//      Codex's folder trust (`1`, trust and continue), then Codex's `Hooks
-//      need review` (`2`, "Trust all and continue"). Nothing here waits on
-//      them: the sender's mailbox is made by its launch line before Codex
-//      starts, and the test sends for it.
+//      (`<tmp>/obk-system-node-nudge-*/bots/node-nudge`, bot `node-nudge`),
+//      should ask nothing: its session is given its folder's trust at launch
+//      (#240, test/helpers/codex-trust.js), so Codex asks neither its folder
+//      trust nor its hooks review, and writes nothing about this folder into
+//      the user's own ~/.codex/config.toml. Nothing here waits on it anyway:
+//      the sender's mailbox is made by its launch line before Codex starts,
+//      and the test sends for it.
 //   4. `Node Nudge target`, after its first turn, and again under the wrapper:
 //      Claude Code's form "Teach auto mode about your environment?" ("←/→ to
 //      change usage · Enter to continue · Esc to cancel"). Seen live on 2.1.283
@@ -138,6 +140,7 @@ import { setTimeout } from 'node:timers/promises';
 import { parse } from 'yaml';
 
 import { cliEntry, shellWord } from '../helpers/cli.js';
+import { codexTrustArgs } from '../helpers/codex-trust.js';
 import { questionOn, waitingOn } from '../helpers/screens.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 
@@ -532,7 +535,7 @@ test('a Claude Code running as node on the kit\'s launch line is nudged idle and
   // between them goes through Orca, where the kit types the nudge, and not by
   // Claude's own messaging (PRD 6.9).
   obkJson(['session', 'add', '--bots', bots, '--bot', BOT.name, '--name', 'target', `--prompt=${promptOf(bots, 'target')}`]);
-  obkJson(['session', 'add', '--bots', bots, '--bot', BOT.name, '--name', 'sender', '--harness', 'codex', `--prompt=${promptOf(bots, 'sender')}`]);
+  obkJson(['session', 'add', '--bots', bots, '--bot', BOT.name, '--name', 'sender', '--harness', 'codex', `--prompt=${promptOf(bots, 'sender')}`, ...codexTrustArgs(bots)]);
 
   /** Bring one session up, alone, and hand back its tab's entry. */
   const bringUp = (session) => {

@@ -7,6 +7,15 @@
 const tomlString = (text) => JSON.stringify(text);
 
 /**
+ * The folder's trust as one `-c` value: a whole `projects` table, the folder a
+ * TOML basic string. The dotted key form splits on every `.` and does not work.
+ * For a `codex` run the kit does not launch, such as `codex exec`, whose own
+ * trust write Codex makes only while the folder's trust is unset (worked out
+ * from Codex 0.158.0's source for #240, not seen live).
+ */
+export const projectTrust = (folder) => `projects={${tomlString(folder)}={trust_level="trusted"}}`;
+
+/**
  * The `session add` arguments that start a Codex session in the bots folder at
  * `botsRealpath` with no folder-trust question and no hooks review, and with
  * nothing of its own written into config.toml at startup:
@@ -21,10 +30,15 @@ const tomlString = (text) => JSON.stringify(text);
  *
  * Codex looks for trust at the session's folder and then at its git root, the
  * realpath first, so the bots folder's realpath covers every bot in it.
+ *
+ * `hooks: false` leaves the bypass out, for the one case that wants the hooks
+ * untrusted: the folder is still trusted, so the review is shown and the hooks
+ * do not run until they are trusted, and "Continue without trusting" writes
+ * nothing (read in Codex 0.158.0's source for #240, not seen live).
  */
-export const codexTrustArgs = (botsRealpath) => [
-  '-c', `projects={${tomlString(botsRealpath)}={trust_level="trusted"}}`,
-  '--dangerously-bypass-hook-trust',
+export const codexTrustArgs = (botsRealpath, { hooks = true } = {}) => [
+  '-c', projectTrust(botsRealpath),
+  ...(hooks ? ['--dangerously-bypass-hook-trust'] : []),
   '-c', 'tui.show_tooltips=false',
 ].map((arg) => `--extra-arg=${arg}`);
 

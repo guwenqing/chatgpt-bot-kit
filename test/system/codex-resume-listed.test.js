@@ -86,10 +86,17 @@
 //
 //   1. `Bot Father daily`: Claude Code's folder trust. Nothing here waits on
 //      Bot Father or writes to it. Leave it.
-//   2. `Resume Codex main` (bot `resume-codex`): Codex's folder trust (`1`,
-//      "Trust and continue"), then `Hooks need review` (`2`, "Trust all and
-//      continue"; two hooks, the kit's and this test's logger; with anything
-//      else neither runs and the test fails its premise).
+//   2. `Resume Codex main` (bot `resume-codex`) should ask nothing. Its session
+//      is given its folder's trust at launch (#240, test/helpers/codex-trust.js):
+//      `-c projects=…` and `--dangerously-bypass-hook-trust`, so Codex asks
+//      neither its folder trust nor its hooks review, runs both hooks (the
+//      kit's and this test's logger), and writes nothing about this folder into
+//      the user's own ~/.codex/config.toml. A restart resumes it with the same
+//      arguments, which the kit keeps in bot.yaml and puts on every launch line
+//      (worked out from src/launch.js, not proven live). The first runs of this
+//      repro, for #226, trusted the hooks through the review instead; whether
+//      the bypass changes when Codex fires SessionStart on a resume is not
+//      known, so a reading here that differs from #226's says so.
 //   3. `Resume Claude main` (bot `resume-claude`): Claude Code's folder trust.
 //      Its selection starts on `No, exit`, so it takes a down-arrow and then
 //      return.
@@ -117,6 +124,7 @@ import { setTimeout } from 'node:timers/promises';
 import { parse } from 'yaml';
 
 import { cliEntry, shellWord } from '../helpers/cli.js';
+import { codexTrustArgs } from '../helpers/codex-trust.js';
 import { waitingOn } from '../helpers/screens.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
@@ -551,7 +559,10 @@ test('a resumed Codex session, with a resumed Claude one as the control: is it a
       'bot', 'create', '--bots', bots, '--name', bot.name, '--harness', bot.harness,
       '--charter', `${bot.name} exists for one system test run and owns nothing.`,
     ]);
-    obkJson(['session', 'add', '--bots', bots, '--bot', bot.name, '--name', SESSION, `--prompt=${promptOf(bot.ready)}`]);
+    obkJson([
+      'session', 'add', '--bots', bots, '--bot', bot.name, '--name', SESSION, `--prompt=${promptOf(bot.ready)}`,
+      ...(bot.harness === 'codex' ? codexTrustArgs(bots) : []),
+    ]);
     await addLogger(homeOf(bot.name), bot.harness, loggerCommand);
   }
 
@@ -567,7 +578,7 @@ test('a resumed Codex session, with a resumed Claude one as the control: is it a
       `${bot.name} ${SESSION} to report its session id to the book`,
       READY_MS,
       async () => (await sessionIn(home, SESSION)).session,
-      () => ` The kit's hook has not run. On Codex that is usually the \`Hooks need review\` screen: answer it with 2.${whatIsUp(entry.terminal)}`,
+      () => ` The kit's hook has not run. On Codex, a \`Hooks need review\` screen here means the launch-time trust did not take (#240).${whatIsUp(entry.terminal)}`,
     );
     await until(
       `${bot.name}'s start turn to answer ${bot.ready.toLowerCase()}`,

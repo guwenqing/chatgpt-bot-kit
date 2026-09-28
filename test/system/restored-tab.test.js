@@ -60,10 +60,17 @@
 //   - Claude Code's folder-trust list, for Bot Father's daily and for the Claude
 //     bot: its selection starts on `No, exit`, so down-arrow then return
 //     (`\x1b[B\r`). Bot Father's can be left alone; nothing here waits on it.
-//   - Codex's directory-trust question: `1` (`1\r`), "Yes, continue".
-//   - Codex's `Hooks need review`: `2` (`2\r`), "Trust all and continue". It has
-//     to be `2`: with `3` the kit's hook never runs, the book never learns the
-//     session's id, and the first wait runs out saying so.
+//
+// Codex asks neither its directory trust nor its hooks review here: the Codex
+// session is given its folder's trust at launch (#240,
+// test/helpers/codex-trust.js), so it still runs the kit's hook and writes
+// nothing about this folder into the user's own ~/.codex/config.toml. The kit's
+// launch lines carry that from bot.yaml (worked out from src/launch.js, not
+// proven live). The bare `codex resume` this test types for Orca's restore
+// carries the same three arguments and nothing else of the kit's line: without
+// them Codex would ask this folder's trust again, where Orca's own restore
+// resumes in a folder the user trusted long ago. A trust or hooks screen in the
+// Codex tab means the launch-time trust did not take, and is not to be answered.
 //
 // The resumes, the clears and the stranger's `claude` run in folders already
 // trusted by then, so they are expected to ask nothing more; this test has not
@@ -89,7 +96,8 @@ import test from '../helpers/system.js';
 import { setTimeout } from 'node:timers/promises';
 import { parse } from 'yaml';
 
-import { cliEntry, spellingsOf } from '../helpers/cli.js';
+import { cliEntry, shellWord, spellingsOf } from '../helpers/cli.js';
+import { codexTrustArgs } from '../helpers/codex-trust.js';
 import { waitingOn } from '../helpers/screens.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
@@ -455,7 +463,8 @@ const BOTS = [
     display: 'Restored Codex',
     codeword: 'BEAVER-3187',
     quits: '/quit',
-    resumes: (id) => `codex resume ${id}`,
+    // With the launch-time trust, and nothing else of the kit's line (see the header).
+    resumes: (id, bots) => `codex resume ${codexTrustArgs(bots).map((arg) => shellWord(arg.slice('--extra-arg='.length))).join(' ')} ${id}`,
     clears: '/new',
     ended: 'startup',
   },
@@ -520,7 +529,10 @@ test('a session Orca brought back without the kit\'s launch line is named by hea
       'bot', 'create', '--bots', bots, '--name', bot.name, '--harness', bot.harness,
       '--charter', `${bot.display} exists for one system test run and owns nothing.`,
     ]);
-    obkJson(['session', 'add', '--bots', bots, '--bot', bot.name, '--name', 'daily', `--prompt=${startPromptFor(bot)}`]);
+    obkJson([
+      'session', 'add', '--bots', bots, '--bot', bot.name, '--name', 'daily', `--prompt=${startPromptFor(bot)}`,
+      ...(bot.harness === 'codex' ? codexTrustArgs(bots) : []),
+    ]);
   }
 
   const tabs = {};
@@ -536,13 +548,13 @@ test('a session Orca brought back without the kit\'s launch line is named by hea
       `no ${bot.harness} came up in ${entry.title}: look at it with \`orca terminal read --terminal ${entry.terminal} --screen\``,
     );
     tabs[bot.name] = entry;
-    // With a person answering the first-run screens in front of it, so with
-    // their patience rather than the hook's.
+    // With a person answering Claude Code's first-run screen in front of it,
+    // so with their patience rather than the hook's.
     const first = await until(
       `${bot.name} to report its session id`,
       READY_MS,
       async () => (await sessionIn(home, 'daily')).session,
-      () => ` The kit's hook has not run. On Codex that is usually the \`Hooks need review\` screen: answer it with 2.${whatIsUp(entry.terminal)}`,
+      () => ` The kit's hook has not run. On Codex, a \`Hooks need review\` screen here means the launch-time trust did not take (#240).${whatIsUp(entry.terminal)}`,
     );
     firsts[bot.name] = first;
 
@@ -581,9 +593,9 @@ test('a session Orca brought back without the kit\'s launch line is named by hea
       async () => (isShell(inFront(entry.terminal)?.name) ? true : undefined),
       () => whatIsUp(entry.terminal),
     );
-    typeInto(entry.terminal, bot.resumes(first));
+    typeInto(entry.terminal, bot.resumes(first, bots));
     const restored = await until(
-      `${bot.harness} to be back in front of ${entry.title} after \`${bot.resumes(first)}\``,
+      `${bot.harness} to be back in front of ${entry.title} after \`${bot.resumes(first, bots)}\``,
       READY_MS,
       async () => {
         const front = inFront(entry.terminal);
