@@ -324,6 +324,25 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
   #261's open question on macOS. #318 uses the marker only to report in `obk health` which sessions
   the kit's launch line did not start, never to decide what is typed into a tab. Whether the mail
   nudge may rest on it is still #261's to settle, and ADR 0025 still lists it as open. **verified** (live)
+  **#261 settles it: the kit types into a harness under another name when it carries the launch
+  mark.** When the program in front of a tab is not named as the agent Orca names, the kit reads
+  its environment and parent with `ps`. It types only when that process carries this tab's
+  `ORCA_TAB_ID` and an `OBK_TAB_SHELL` equal to its own parent's pid, so the tab's shell started it
+  on the kit's launch line, and only where Orca names an agent at all. A program the shell starts
+  later has no mark, since the line sets it for the harness alone and does not export it. A program
+  the harness starts has the harness as its parent. A tab Orca restored by itself has no mark, and
+  keeps the name rule (a harness under another name there stays "cannot tell"). A sender inside
+  Codex's sandbox cannot run `ps` at all (#298, #408), gets only Orca's runtime, which gives no pid,
+  and so stays "cannot tell" as in #350. Seen outside Orca first (2026-09-28): a shell starting
+  `OBK_TAB_SHELL=$$ … node …` gave a `node` whose `ps -E` carried `OBK_TAB_SHELL=<the shell's pid>`
+  with that shell as its parent. Seen live (2026-09-28, Orca 1.4.215, Claude Code 2.1.283 run as
+  the child of a `node` wrapper typed on the kit's launch-line shape, codex-cli 0.157.1 as the
+  sender, `test/system/node-harness-nudge.test.js`): `node` led the tab with the mark, Orca named
+  `claude` as the agent, an idle session was nudged and read its mail, and a busy one was typed into
+  (Orca saw no turn start, as #402 found). After it quit, `less` in its place got nothing typed;
+  Orca named no agent at that moment, so the no-agent guard is what refused there (the fake tests
+  cover `less` while an agent is still named). Not seen: a real npm install, where `node` is the
+  harness itself, and Codex through npm. **verified** (live, as said)
 - `orca terminal send [--terminal <h>] [--text <t>] [--enter] [--interrupt] [--wait-submit <s>] [--retry-request <id>]` — `accepted:true` means input accepted, not that the agent read it; never resend on silence; use `--retry-request` for an idempotent retry.
   **A carriage return or a line feed inside `--text` does not submit early.** Sent with `--enter` into a running agent, a line with `\r` or `\n` in the middle arrives as **one** message with a line break where the character was, and is answered once: Claude Code's transcript shows one user turn holding both lines, and Codex's screen shows one prompt of two lines and one answer. So the mail nudge, which carries the sender's subject as typed, cannot be split into two prompts by a subject that has one in it. **verified** (live, 2026-09-23, Orca 1.4.207, Claude Code 2.1.280 with `--model haiku`, Codex 0.155.1; #176)
   **While Codex sits on its own update offer, Orca refuses a line with `--enter` as `agent_prompt_blocked`.** Seen three times in a row on 2026-09-23 (Codex 0.155.1 offering 0.156.0); answered `2` (Skip), the next line went through. **verified** (live)
