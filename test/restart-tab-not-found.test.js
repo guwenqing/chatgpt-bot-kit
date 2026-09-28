@@ -1,5 +1,6 @@
-// `obk restart` when Orca refuses `terminal close --terminal <h> --tab` with
-// tab_not_found for a tab it still lists (#405).
+// `obk restart` (and in T3 `obk pause` and `obk retire`, which close a
+// session's tab the same way) when Orca refuses `terminal close --terminal <h>
+// --tab` with tab_not_found for a tab it still lists (#405).
 //
 // Seen live on Orca 1.4.214, after a machine restart: `obk restart --session
 // prep` stopped on `Orca refused terminal close --terminal term_… --tab:
@@ -13,17 +14,24 @@
 // of one pane, which is every tab the kit opens, the close without `--tab`
 // closes the whole tab.
 //
-// The contract, from the issue and the architect's ruling on it:
+// The contract, from the issue and the architect's rulings on it and on its
+// pull request (#413):
 //
-//   T1 A `--tab` close refused with tab_not_found, in its message or its code,
-//      for a tab Orca lists: the kit closes the same terminal again without
-//      `--tab`, waits as ever until the listing drops the tab, and goes on:
-//      a new tab, resuming the book's conversation. Only that session's tab is
-//      closed, and never with `--worktree … --all`.
-//   T2 Every other refusal stops the restart as today, a refusal whose words
-//      merely contain the letters inside another word included.
-//   T3 Both closes refused: the restart stops with nothing opened, and says
-//      both refusals and the command to run by hand.
+//   T1 A `--tab` close refused with tab_not_found for a tab Orca lists, and
+//      only in one of two forms, error code `tab_not_found`, or code
+//      `runtime_error` with a message that is exactly `tab_not_found`: the kit
+//      closes the same terminal again without `--tab`, waits as ever until the
+//      listing drops the tab, and goes on: a new tab, resuming the book's
+//      conversation. Only that session's tab is closed, and never with
+//      `--worktree … --all`.
+//   T2 Every other refusal stops the restart as today, with one close and
+//      nothing opened: a message that only carries the token, at its end or
+//      inside a longer message, and the letters inside another word, included.
+//   T3 Both closes refused, in any command that closes a session's tab
+//      (restart, pause, retire): it stops with nothing opened, names both
+//      refusals and the exact close to run by hand, and says to run the same
+//      command again, which, once that close is done, goes through. It never
+//      tells the user to run `up` in place of a pause or a retire.
 //   T4 The tab still listed when the wait after the plain close runs out: the
 //      restart stops as for any close the listing never catches up with.
 //
@@ -31,11 +39,16 @@
 // (helpers/fake-orca.js): the trigger state itself was not produced live.
 
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import test from 'node:test';
+import { parse } from 'yaml';
 
 import {
   assertCleanFailure,
   bareLaunch,
+  bookOf,
   botHomeOf,
   conversationOnRecord,
   createSandbox,
@@ -209,6 +222,9 @@ test('T1 after the close without --tab the kit waits for the listing to drop the
 
 const OTHER_REFUSALS = [
   ['a refusal of its own', { code: 'runtime_error', message: 'the tab will not close' }],
+  ['a message that only ends in the token', { code: 'runtime_error', message: 'not tab_not_found' }],
+  ['a longer message that carries the token', { code: 'runtime_error', message: 'refused for a different reason: tab_not_found' }],
+  ['the token behind a prefix', { code: 'runtime_error', message: 'Error: tab_not_found' }],
   ['a message with the letters inside a longer word before them', { code: 'runtime_error', message: 'subtab_not_found' }],
   ['a message with the letters inside a longer word after them', { code: 'runtime_error', message: 'tab_not_founded' }],
   ['a code with the letters inside a longer word', { code: 'subtab_not_found', message: 'orca said no' }],
@@ -237,42 +253,171 @@ for (const [kind, refusal] of OTHER_REFUSALS) {
 }
 
 // ---------------------------------------------------------------------------
-// T3 — both closes refused: stopped, with both refusals and the command by hand.
+// T3 — both closes refused, in any command that closes a session's tab:
+// stopped, with both refusals, the close by hand, and the same command again.
 // ---------------------------------------------------------------------------
 
-test('T3 a close without --tab refused too stops the restart with nothing opened, and says both refusals and the command to run by hand', async (t) => {
-  const box = await createSandbox(t);
+/** One word of a printed command that names a program by its path: quoted or bare, ending in `/<end>`. */
+const pathWord = (end) => `(?:'[^']*/${end}'|[^\\s']*/${end})`;
+
+/**
+ * The close the user ran by hand live. The Orca CLI is named by the path the
+ * kit runs it from, never a bare `orca`, which is root-only on this machine
+ * (tech notes); here that path is the fake's.
+ */
+const closeByHand = (handle) => new RegExp(`${pathWord('orca')} terminal close --terminal ${handle}(?![\\w-])(?! --tab)`);
+
+/**
+ * The same command again, by what it says rather than its words: the kit by its
+ * own path (here ending in `obk`) and the command, with the same bot and
+ * session further along that line.
+ */
+function assertSaysAgain(stderr, command) {
+  const again = new RegExp(`${pathWord('obk')} ${command}(?![\\w-])[^\\n]*`).exec(stderr)?.[0];
+  assert.ok(again !== undefined, `the message should say to run ${command} again, got: ${stderr}`);
+  assert.match(again, new RegExp(`--bot ${BOT}(?![\\w-])`), `the same ${command}: of ${BOT}, got: ${again}`);
+  assert.match(again, /--session daily(?![\w-])/, `the same ${command}: of daily, got: ${again}`);
+}
+
+/** Whether a message tells the user to run `up`. */
+const saysUp = (text) => /\bup --bots\b/.test(text);
+
+/** Run one of the commands that close a session's tab, on daily alone. */
+const closing = (box, command) => box.run([command, '--bots', 'bots', '--bot', BOT, '--session', 'daily']);
+
+/** The bot's own bot.yaml, as written. */
+const botYaml = async (bots) => parse(await readFile(path.join(botHomeOf(bots, BOT), 'bot.yaml'), 'utf8'));
+
+/** The book, as written. */
+const book = async (bots) => parse(await readFile(bookOf(bots, BOT), 'utf8'));
+
+/**
+ * A bot with daily and review up on their conversations, daily's tab refusing
+ * both closes, and `command` run on daily. Asserts what every such command must
+ * do: stop cleanly, close nothing but daily's two refused attempts, open nothing,
+ * and say both refusals, the close by hand and the same command again.
+ */
+async function refusedTwice(box, command) {
   const { bots, before } = await stuckSession(box, {
     tab: { code: 'runtime_error', message: 'tab_not_found' },
     pane: { code: 'runtime_error', message: 'the pane will not close' },
+    sessions: ['daily', 'review'],
   });
   const terminals = await box.orca.terminals();
   const from = (await box.orca.calls()).length;
 
-  const result = await restart(box);
+  const result = await closing(box, command);
 
   assertCleanFailure(result);
   assert.ok(result.stderr.includes('tab_not_found'), `the first refusal, got: ${result.stderr}`);
   assert.ok(result.stderr.includes('the pane will not close'), `and the second, got: ${result.stderr}`);
-  // The two steps the user ran by hand live. The Orca CLI is named by the path
-  // the kit runs it from, never a bare `orca`, which is root-only on this
-  // machine (tech notes); here that path is the fake's. The kit names itself
-  // by its own path, which here ends in `obk`. The rest of the wording is free.
-  const word = (end) => `(?:'[^']*/${end}'|[^\\s']*/${end})`;
-  const closeByHand = new RegExp(`${word('orca')} terminal close --terminal ${before.handle}(?![\\w-])(?! --tab)`);
-  assert.match(result.stderr, closeByHand, `and the close without --tab to run by hand, got: ${result.stderr}`);
-  const upByHand = new RegExp(`${word('obk')} up --bots (?:'[^']*'|\\S+) --bot ${BOT}(?![\\w-])`);
-  assert.match(result.stderr, upByHand, `and the kit's up for the bot after it, got: ${result.stderr}`);
+  assert.match(result.stderr, closeByHand(before.handle), `and the close without --tab to run by hand, got: ${result.stderr}`);
+  assertSaysAgain(result.stderr, command);
 
   const calls = await since(box, from);
   const closed = closes(calls);
-  assert.equal(closed.length, 2, `the --tab close and the plain one, both refused: ${shown(closed)}`);
-  assert.ok(closed[0].args.includes('--tab') && !closed[1].args.includes('--tab'), shown(closed));
+  assert.deepEqual(
+    closed.map((call) => [orcaFlag(call, '--terminal'), call.args.includes('--tab')]),
+    [[before.handle, true], [before.handle, false]],
+    `daily's --tab close and its plain one, both refused, and no other: ${shown(closed)}`,
+  );
   assert.deepEqual(creates(calls), [], 'nothing is opened beside a tab that is still there');
   assert.deepEqual(await box.orca.terminals(), terminals, 'every tab is as it was');
+  return { bots, before, result };
+}
+
+/** The close by hand, once Orca takes it, as it did live: the fake is asked for it with the --json it needs to act. */
+async function closedByHand(box, handle) {
+  await box.orca.set({
+    terminals: (await box.orca.terminals()).map(({ refuseClose: _refuseClose, ...one }) => one),
+  });
+  const done = spawnSync(box.orca.cli, ['terminal', 'close', '--terminal', handle, '--json'], { cwd: box.cwd, env: box.env, encoding: 'utf8' });
+  assert.equal(JSON.parse(done.stdout).ok, true, `the close by hand should go through: ${done.stdout}${done.stderr}`);
+}
+
+test('T3 restart: both closes refused stops it with nothing opened, says both refusals, the close by hand and to restart again, and the session is where it was', async (t) => {
+  const box = await createSandbox(t);
+  const { bots, before } = await refusedTwice(box, 'restart');
+
   const entry = await sessionIn(bots, BOT, 'daily');
-  assert.equal(entry.tab, before.tabId, 'and the book unchanged');
+  assert.equal(entry.tab, before.tabId, 'the book unchanged');
   assert.equal(entry.session, 'sess-daily');
+});
+
+test('T3 pause: both closes refused stops it with nothing opened, says to pause again and not to run up, and daily is left paused in bot.yaml', async (t) => {
+  const box = await createSandbox(t);
+  const { bots, result } = await refusedTwice(box, 'pause');
+
+  assert.ok(!saysUp(result.stderr), `a pause is not finished by an up, which would start the session again, got: ${result.stderr}`);
+  const daily = (await botYaml(bots)).sessions.find((one) => one.name === 'daily');
+  assert.equal(daily?.paused, true, `daily is left paused in bot.yaml, as today, got: ${JSON.stringify(daily)}`);
+  assert.equal((await sessionIn(bots, BOT, 'daily')).session, 'sess-daily', 'and the book keeps its conversation');
+});
+
+test('T3 retire: both closes refused stops it with nothing opened, says to retire again and not to run up, and the conversation is still in the book', async (t) => {
+  const box = await createSandbox(t);
+  const { bots, result } = await refusedTwice(box, 'retire');
+
+  assert.ok(!saysUp(result.stderr), `a retire is not finished by an up, which would start the session again, got: ${result.stderr}`);
+  assert.equal((await sessionIn(bots, BOT, 'daily')).session, 'sess-daily', 'the conversation is not lost');
+});
+
+test('T3 restart run again after the close by hand brings the session back in a new tab on its conversation', async (t) => {
+  const box = await createSandbox(t);
+  const { bots, before } = await refusedTwice(box, 'restart');
+  await closedByHand(box, before.handle);
+  const from = (await box.orca.calls()).length;
+
+  const again = await closing(box, 'restart');
+
+  assert.equal(again.code, 0, again.stderr);
+  const calls = await since(box, from);
+  assert.deepEqual(closes(calls), [], `no tab is left to close: ${shown(closes(calls))}`);
+  assert.equal(creates(calls).length, 1, 'and one is opened for the session');
+  const after = await liveTab(box, bots, 'daily');
+  assert.notEqual(after.tabId, before.tabId);
+  assert.deepEqual(typedInto(after.terminal).map(tokenless), [resumeLine(box, 'sess-daily')], 'resuming the conversation the book held');
+});
+
+test('T3 pause run again after the close by hand completes: daily paused, no tab, its conversation kept, review untouched', async (t) => {
+  const box = await createSandbox(t);
+  const { bots, before } = await refusedTwice(box, 'pause');
+  const review = await liveTab(box, bots, 'review');
+  await closedByHand(box, before.handle);
+  const from = (await box.orca.calls()).length;
+
+  const again = await closing(box, 'pause');
+
+  assert.equal(again.code, 0, again.stderr);
+  const calls = await since(box, from);
+  assert.deepEqual(closes(calls), [], `no tab is left to close: ${shown(closes(calls))}`);
+  assert.deepEqual(creates(calls), [], 'and a pause opens nothing');
+  assert.deepEqual((await tabsOfBot(box, bots, BOT)).map((one) => one.handle), [review.handle], 'daily has no tab, review keeps its own');
+  assert.equal((await botYaml(bots)).sessions.find((one) => one.name === 'daily')?.paused, true);
+  assert.equal((await sessionIn(bots, BOT, 'daily')).session, 'sess-daily');
+});
+
+test('T3 retire run again after the close by hand goes on: daily off bot.yaml, its conversation under retired:, review untouched', async (t) => {
+  const box = await createSandbox(t);
+  const { bots, before } = await refusedTwice(box, 'retire');
+  const review = await liveTab(box, bots, 'review');
+  await closedByHand(box, before.handle);
+  const from = (await box.orca.calls()).length;
+
+  const again = await closing(box, 'retire');
+
+  assert.equal(again.code, 0, again.stderr);
+  const calls = await since(box, from);
+  assert.deepEqual(closes(calls), [], `no tab is left to close: ${shown(closes(calls))}`);
+  assert.deepEqual(creates(calls), []);
+  assert.deepEqual((await botYaml(bots)).sessions.map((one) => one.name), ['review'], 'daily is off bot.yaml');
+  const written = await book(bots);
+  assert.equal(written.sessions?.daily, undefined, 'and off the book\'s live list');
+  assert.ok(
+    (written.retired ?? []).some((one) => one?.name === 'daily' && JSON.stringify(one).includes('sess-daily')),
+    `its conversation is kept under retired:, got: ${JSON.stringify(written.retired)}`,
+  );
+  assert.deepEqual((await tabsOfBot(box, bots, BOT)).map((one) => one.handle), [review.handle], 'review keeps its tab');
 });
 
 // ---------------------------------------------------------------------------

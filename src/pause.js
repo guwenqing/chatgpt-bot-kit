@@ -14,7 +14,7 @@ import { realpathSync } from 'node:fs';
 
 import { botDir, markPaused, readBot } from './bot.js';
 import { DAILY_SESSION } from './init.js';
-import { closeTabs, tabsToClose } from './restart.js';
+import { closeTabs, commandLine, tabsToClose } from './restart.js';
 import { BOT_FATHER, botsNamed, bringUp, sessionsOf } from './up.js';
 
 /**
@@ -30,7 +30,7 @@ export async function pauseSessions(bots, { bot, session }) {
   // they were.
   const going = tabsToClose(bots, bot, home, sessions);
   const changed = markPaused(bots, bot, session, true);
-  const closed = await closeTabs(home, going, bots, bot);
+  const closed = await closeTabs(home, going, bots, bot, commandLine('pause', bots, bot, session));
   return { bot, session, changed, closed };
 }
 

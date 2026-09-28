@@ -40,10 +40,14 @@ export function orca(args, { timeoutMs } = {}) {
 /** What an error carries when Orca was given a time and did not answer in it. */
 export const TIMED_OUT = 'orca_timed_out';
 
-/** Orca's refusal as an error, with its code on it, so a caller can tell a stale handle from the rest (#294). */
+/**
+ * Orca's refusal as an error, with its code on it, so a caller can tell a stale
+ * handle from the rest (#294), and its own message as `reason`, so a caller
+ * that goes by the message reads Orca's words rather than the kit's (#405).
+ */
 const refusal = (args, answer) => Object.assign(
   new Error(`Orca refused ${args.join(' ')}: ${answer.error?.message ?? 'no reason given'}`),
-  { code: answer.error?.code },
+  { code: answer.error?.code, reason: answer.error?.message },
 );
 
 /** One Orca command, and the whole envelope back, refusals included. */
