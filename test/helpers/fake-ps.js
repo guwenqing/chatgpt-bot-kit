@@ -52,6 +52,12 @@
 //                       was ok and satisfied
 //       'other-harness' login, shell, and in front the harness the tab was
 //                       not launched with: `claude` in a Codex tab
+//       'node-harness'  login, shell, and in front the harness the tab was
+//                       launched with, installed through npm, so it runs as
+//                       `node` (#261): the shell's child, as `harness` is
+//       'node-child'    login, shell, the harness the tab was launched with,
+//                       and in front a `node` program the harness started:
+//                       the harness's child, not the shell's (#261)
 //       'no-pid'        Orca's diagnostics list no pane for the tab
 //       'ps-fails'      the pane's pid cannot be read: stderr, exit 1
 //       'garbage'       the pane's pid reads back as text that is no ps line
@@ -77,12 +83,22 @@
 //
 //   - the pane and its shell: the variables Orca puts in every tab, ORCA_TAB_ID
 //     among them, and none of the kit's.
-//   - the program the shell started (the harness, or whatever is there in its
-//     place), by `environment` on its terminal:
+//   - a program the user ran from the shell after the harness quit (`less`,
+//     'program') or the harness the tab was not launched with
+//     ('other-harness'): the shell's variables, Orca's, and none of the kit's,
+//     which the launch line gave the harness alone (#261).
+//   - a program the harness started ('node-child'): everything the harness
+//     carries, the kit's `OBK_TAB_SHELL` included, though its parent is the
+//     harness and not that shell (#261).
+//   - the program the shell started (the harness, as `claude`, `codex` or
+//     `node`), by `environment` on its terminal:
 //       left out     what the tab's first typed line gave it, as the tab's shell
 //                    would: Orca's variables, and with the kit's launch line
 //                    `OBK_TAB_SHELL` (the pid of the shell it ran in) and
 //                    `OBK_CLI`
+//       'launched-other-tab'  as left out, the kit's variables and all, with
+//                    ORCA_TAB_ID naming another tab, whose id begins with
+//                    this tab's own (#261)
 //       'orca'       Orca resumed it by itself, as after a cold restore: `claude
 //                    --resume <id>` or `codex resume <id>`, Orca's variables with
 //                    ORCA_AGENT_LAUNCH_TOKEN, and none of the kit's
@@ -106,7 +122,9 @@
 // for the harness, which was read in Orca's code: a shell at its prompt is
 // verdict `live` with `processName` and `foregroundProcess` null and no child;
 // `less` is `foregroundProcess: "less"`, `processName` null, with children;
-// a recognised harness is named in both. A front that only `ps` or Orca's
+// a recognised harness is named in both; a `node` program, the harness
+// installed through npm among them, is `foregroundProcess: "node"`,
+// `processName` null, as front-without-ps.test.js has it. A front that only `ps` or Orca's
 // diagnostics cannot read ('ps-fails', 'garbage', 'gone', 'no-tpgid',
 // 'no-pid') is a tab holding the harness it was launched with, which the
 // runtime sees.
@@ -198,6 +216,19 @@ function processesOf(state, terminal, dir) {
         row(shell, pane, harness, '-/bin/zsh'),
         row(harness, shell, harness, other),
       ];
+    case 'node-harness':
+      return [
+        row(pane, orca, harness, '/usr/bin/login'),
+        row(shell, pane, harness, '-/bin/zsh'),
+        row(harness, shell, harness, 'node'),
+      ];
+    case 'node-child':
+      return [
+        row(pane, orca, harness + 1, '/usr/bin/login'),
+        row(shell, pane, harness + 1, '-/bin/zsh'),
+        row(harness, shell, harness + 1, program),
+        row(harness + 1, harness, harness + 1, 'node'),
+      ];
     case 'ps-fails':
       return [];
     default:
@@ -230,6 +261,9 @@ export function runtimeViewOf(state, terminal, dir) {
       return live('less', null, true);
     case 'other-harness':
       return live(other, other, true);
+    case 'node-harness':
+    case 'node-child':
+      return live('node', null, true);
     default:
       return live(program, program, true);
   }
@@ -237,6 +271,18 @@ export function runtimeViewOf(state, terminal, dir) {
 
 /** A conversation id of the shape both harnesses use, for a harness Orca resumed. */
 const RESUMED = '0199b2c0-0318-4444-8888-cccccccccccc';
+
+/**
+ * The script `node` runs for a harness installed through npm, as ps shows it:
+ * the shape of a global npm install, not a path read off a machine.
+ */
+const NPM_CLI = {
+  claude: '/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/cli.js',
+  codex: '/opt/homebrew/lib/node_modules/@openai/codex/bin/codex.js',
+};
+
+/** The script of a `node` program a harness started, a tool server say. Made up. */
+const NODE_CHILD = '/Users/someone/.npm/_npx/0a1b2c3d/node_modules/.bin/some-tool-server';
 
 /** What every process of the user's carries, whoever started it. */
 const USERS = ['TERM=xterm-256color', 'SHELL=/bin/zsh', 'HOME=/Users/someone', 'LANG=en_US.UTF-8', 'PATH=/usr/bin:/bin:/usr/sbin:/sbin'];
@@ -256,13 +302,20 @@ const orcaVariables = (terminal, tabId = terminal.tabId) => [
  * its variables, or undefined when the read fails. Only the program the shell
  * started carries anything of the kit's; see the list at the top.
  */
-function environmentOf(state, terminal, row) {
+function environmentOf(state, terminal, row, dir) {
   const harness = panePid(state, terminal) + 2;
+  if (row.pid === harness + 1) {
+    // A program the harness started carries what the harness carries, under a
+    // command of its own.
+    const parent = processesOf(state, terminal, dir).find((one) => one.pid === harness);
+    return environmentOf(state, terminal, parent, dir)?.replace(/^.*?(?= TERM=)/, `node ${NODE_CHILD}`);
+  }
   if (row.pid !== harness) return [row.comm, ...USERS.slice(0, 2), ...orcaVariables(terminal), ...USERS.slice(2)].join(' ');
 
-  const program = row.comm;
+  const launched = launchedIn(terminal) ?? 'claude';
+  const program = row.comm === 'node' ? `node ${NPM_CLI[launched]}` : row.comm;
   const typed = terminal.typed?.[0]?.text ?? '';
-  const resumed = program === 'codex' ? `codex resume ${RESUMED}` : `${program} --resume ${RESUMED}`;
+  const resumed = (row.comm === 'node' ? launched : row.comm) === 'codex' ? `${program} resume ${RESUMED}` : `${program} --resume ${RESUMED}`;
   switch (terminal.environment) {
     case 'ps-fails':
       return undefined;
@@ -278,15 +331,26 @@ function environmentOf(state, terminal, row) {
         ...USERS.slice(2),
       ].join(' ');
     default: {
-      // The arguments the line gave the program, as ps shows them: unquoted.
-      const at = typed.search(new RegExp(`(?:^|\\s)${program}(?=\\s|$)`));
-      const command = at < 0 ? program : typed.slice(at).trim().replaceAll("'\\''", "'").replaceAll("'", '');
+      const front = foregroundOf(state, terminal, dir);
+      if (front === 'program' || front === 'other-harness') {
+        // Typed at the shell's prompt by hand: the shell's variables, and none
+        // of the kit's, which its launch line gave the harness alone.
+        const command = front === 'program' ? 'less /etc/hosts' : row.comm;
+        return [command, ...USERS.slice(0, 2), ...orcaVariables(terminal), ...USERS.slice(2)].join(' ');
+      }
+      // The arguments the line gave the harness, as ps shows them: unquoted,
+      // behind `node` and its script when npm installed it.
+      const word = row.comm === 'node' ? launched : row.comm;
+      const at = typed.search(new RegExp(`(?:^|\\s)${word}(?=\\s|$)`));
+      const given = at < 0 ? word : typed.slice(at).trim().replaceAll("'\\''", "'").replaceAll("'", '');
+      const command = `${program}${given.slice(word.length)}`;
       const cli = /(?:^|\s)OBK_CLI=('(?:[^']|'\\'')*'|\S+)/.exec(typed)?.[1];
       const kits = [
         ...(typed.includes('OBK_TAB_SHELL=$$') ? [`OBK_TAB_SHELL=${row.ppid}`] : []),
         ...(cli === undefined ? [] : [`OBK_CLI=${cli.replaceAll("'\\''", "'").replace(/^'(.*)'$/, '$1')}`]),
       ];
-      return [command, ...USERS.slice(0, 2), ...orcaVariables(terminal), ...kits, ...USERS.slice(2)].join(' ');
+      const tabId = terminal.environment === 'launched-other-tab' ? `${terminal.tabId}0` : terminal.tabId;
+      return [command, ...USERS.slice(0, 2), ...orcaVariables(terminal, tabId), ...kits, ...USERS.slice(2)].join(' ');
     }
   }
 }
@@ -326,7 +390,7 @@ export function runPs() {
     }
     const found = processesOf(state, terminal, dir).find((one) => one.pid === pid);
     if (found !== undefined && environment) {
-      const line = environmentOf(state, terminal, found);
+      const line = environmentOf(state, terminal, found, dir);
       if (line === undefined) {
         process.stderr.write(`ps: cannot read the environment of process ${pid}\n`);
         process.exit(1);

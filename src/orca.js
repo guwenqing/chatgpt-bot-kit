@@ -13,6 +13,9 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { SHELL_ENV } from './launch.js';
+import { TAB_ENV } from './record.js';
+
 // The Orca that works for a normal user: `/usr/local/bin/orca` is a root-only
 // symlink on this machine (tech notes, section 1). OBK_ORCA overrides it, for a
 // machine that keeps Orca somewhere else.
@@ -435,9 +438,11 @@ export function tabToTypeInto(home, tabId, timeoutMs) {
   // there. The program in front has to be the agent Orca names. With no name
   // it may be a harness a few seconds into its launch; under another name it
   // may be a pager started after the harness quit, under an identity Orca has
-  // not let go of (tech notes, section 1). A harness run through a wrapper such
-  // as `node` lands here too, until #261.
-  if (seen.front === undefined || seen.agent === undefined || seen.command !== seen.agent) {
+  // not let go of (tech notes, section 1). A harness run under another name,
+  // such as `node` for an npm install, passes on the kit's own mark instead
+  // (#261).
+  const named = seen.agent !== undefined && seen.command === seen.agent;
+  if (seen.front === undefined || (!named && !launchedHere(seen.pid, tabId))) {
     const why = seen.front === undefined
       ? seen.unreadable
       : `${seen.command} holds its terminal, and Orca names ${seen.agent ?? 'no agent'} in it`;
@@ -451,6 +456,25 @@ export function tabToTypeInto(home, tabId, timeoutMs) {
     return { unsure: `the kit could not tell whether a question is waiting on its screen (${seen.screenUnreadable}), so nothing was typed` };
   }
   return { handle: live.handle, agent: seen.agent };
+}
+
+/**
+ * Whether the process `pid`, in front of the tab `tabId`, is the harness the
+ * kit's launch line started there, whatever it is called (#261). The line sets
+ * `OBK_TAB_SHELL` to the tab's shell's pid, for the harness alone and not
+ * exported, so the harness carries it, with its parent that shell. A program
+ * the shell starts later, such as `less` after the harness quit (#232), has no
+ * mark. A program the harness starts carries the mark, and its parent is the
+ * harness. A tab Orca restored by itself has no mark at all. Only whole words
+ * of the environment count, and anything unread is a no.
+ */
+function launchedHere(pid, tabId) {
+  if (pid === undefined) return false;
+  const words = wordsOfProcess(pid);
+  if (words === undefined || !words.includes(`${TAB_ENV}=${tabId}`)) return false;
+  const marks = words.filter((word) => new RegExp(`^${SHELL_ENV}=[0-9]+$`).test(word));
+  const own = psLine(pid);
+  return marks.length === 1 && own !== undefined && Number(marks[0].slice(SHELL_ENV.length + 1)) === own.ppid;
 }
 
 /**
