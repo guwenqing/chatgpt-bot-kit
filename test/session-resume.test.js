@@ -72,6 +72,9 @@ import {
 
 const PROMPT = 'Read your AGENTS.md and keep the queue moving.';
 
+/** The one line the kit types after a Codex resume, so Orca lists the session (#226), as ruled. */
+const LIST_LINE = 'obk: this session was resumed in a new tab, and this line is only so Orca lists it. Reply "ok"; nothing else is asked.';
+
 /** A bots folder with one bot on `harness`, one session with `settings`, brought up once. */
 async function started(box, harness, settings = ['--prompt', PROMPT]) {
   assert.equal((await box.run(['init', '--bots', 'bots', '--harness', 'claude'])).code, 0);
@@ -197,7 +200,9 @@ test('codex resumes the session the book holds, and is not told its duty again',
 
   const again = await up(box);
 
-  assert.equal(again.typed.length, 1, `one send per tab the kit opens, got: ${JSON.stringify(again.typed)}`);
+  // The launch line, and after it exactly the line that gets the session
+  // listed in Orca (#226): nothing else, and no duty.
+  assert.deepEqual(again.typed.slice(1), [LIST_LINE], `the launch line and then the list line alone, got: ${JSON.stringify(again.typed)}`);
   const line = again.typed[0];
   assert.ok(line.startsWith(launchLine(box, 'codex resume ', { bot: 'api-bot', session: 'daily' })), `Codex resumes through the subcommand, got: ${line}`);
   assert.ok(!line.includes(PROMPT), `the session already has its duty, got: ${line}`);

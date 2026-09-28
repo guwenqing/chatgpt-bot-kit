@@ -1574,9 +1574,19 @@ function harnessLines(tab, bots) {
       ...ANSWER_IT,
     ];
 
-  lines.push(...promptLines(tab));
+  lines.push(...promptLines(tab), ...listLines(tab));
   if (tab.unclaimed !== undefined) lines.push(...unclaimedLines(tab, bots));
   return lines;
+}
+
+/**
+ * Whether a resumed Codex session was typed its one line so Orca lists it among
+ * its agents, which it does only from a session's first turn (#226).
+ */
+function listLines(tab) {
+  if (tab.listLine === true) return ['             it was typed one line so Orca lists it among its agents: Codex tells Orca only at a first turn.'];
+  if (tab.listLine === false) return [`             it was not typed the line that makes Orca list it (${tab.listLineTrouble}): Orca lists it at its next turn.`];
+  return [];
 }
 
 /**
