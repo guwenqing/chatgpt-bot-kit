@@ -88,10 +88,10 @@ test('N1: the NOTICE states as many deliberate departures as it lists', async ()
 
 const DEBUGGING = 'skills/obk-debugging/SKILL.md';
 
-/** The section "Prove it where it appeared", its heading allowed to be reworded around "prove". */
+/** The section "Prove it where it appeared", its heading allowed to be reworded around "prove" or "verify". */
 async function proveSection() {
   const text = await readFile(path.join(repoRoot, DEBUGGING), 'utf8');
-  const section = sectionsIn(text).find(({ heading }) => /\bprove\b/i.test(heading));
+  const section = sectionsIn(text).find(({ heading }) => /\bprove\b|\bverif/i.test(heading));
   assert.ok(section !== undefined, `${DEBUGGING} should still have its section "Prove it where it appeared"`);
   return section.body;
 }
@@ -113,31 +113,86 @@ test('D1: the section says who the test author is: a context of its own, not a f
     `every mention of a fork in the section should rule it out as the author.\n${shown(body)}`);
 });
 
+/** Where a negation stops governing what follows it in a clause. */
+const RESET = /\b(?:but|only)\b/gi;
+
+/**
+ * Each place `pattern` matches in the section, with its clause and whether it
+ * is negated: a negation comes before it in the same clause, with no "but" or
+ * "only" in between. "not your fix, your diff or your plan" negates all three.
+ */
+function mentions(body, pattern) {
+  const found = [];
+  for (const clause of clausesOf(body)) {
+    const nots = [...clause.matchAll(new RegExp(NOT.source, 'gi'))].map((match) => match.index + match[0].length);
+    const resets = [...clause.matchAll(RESET)].map((match) => match.index);
+    for (const match of clause.matchAll(new RegExp(pattern.source, 'gi'))) {
+      const negated = nots.some((end) => end <= match.index
+        && !resets.some((reset) => reset >= end && reset < match.index));
+      found.push({ clause, at: match.index, negated });
+    }
+  }
+  return found;
+}
+
+/** A clause about what the author is given. */
+const GIVING = /\b(?:give|gives|given|giving|hand|hands|handed|share|shares|shared|show|shows|shown|send|sends|sent|pass|passes|tell|tells|brief|get|gets|see|sees|seen)\b/i;
+
+/** A clause that is itself a negated item, as after a semicolon or in a list: "not your fix, ...". */
+const NEGATED_ITEM = /^(?:[-*+]\s+|\d+[.)]\s+)?(?:but |and )?(?:not|never|nor|no)\b/i;
+
+const GIVEN = [
+  ['the requirement', /\brequirements?\b|\bacceptance criteri(?:a|on)\b/],
+  ['what the correct result is', /\b(?:correct|expected|right|intended) (?:result|behaviou?r|output|answer|outcome)s?\b|\bwhat (?:should|ought to) (?:happen|have happened|come out)\b/],
+  ['the public interface', /\bpublic (?:interface|api|surface|boundary)\b|\bsignatures?\b/],
+  ['the reproduction', /\b(?:reproduction|repro|reproducer)\b/],
+];
+
+const WITHHELD = [
+  ['the fix', /\bfix(?:es)?\b/],
+  ['the diff', /\bdiffs?\b|\bpatch(?:es)?\b/],
+  ['the plan', /\bplans?\b/],
+];
+
 test('D2: the section says what the author gets, and that it does not get the fix, the diff or the plan', async () => {
   const body = await proveSection();
-  const text = flat(body);
-  assert.ok(/\brequirements?\b|\b(?:correct|expected|right|intended) (?:result|behaviou?r|output|answer|outcome)s?\b|\bwhat (?:should|ought to) (?:happen|have happened|come out)\b/i.test(text),
-    `the section should say the author gets the requirement and what the correct result is.\n${shown(body)}`);
-  assert.ok(/\bpublic (?:interface|api|surface|boundary)\b|\bsignatures?\b/i.test(text),
-    `the section should say the author gets the public interface.\n${shown(body)}`);
-  assert.ok(/\b(?:reproduction|repro|reproducer)\b/i.test(text),
-    `the section should say the author gets the reproduction as the worked example.\n${shown(body)}`);
-  const withheld = clausesOf(body).filter((clause) => /\b(?:fix|diff|plan|patch|implementation)\b/i.test(clause)
-    && (/^(?:[-*+]\s+|\d+[.)]\s+)?(?:but |and )?(?:not|never|nor)\b/i.test(clause)
-      || (NOT.test(clause) && /\b(?:author|brief|see|sees|seen|show|shown|give|gives|given|get|gets|hand|share|tell)\b/i.test(clause))));
-  assert.ok(withheld.length > 0,
-    `the section should say the author does not get the fix, the diff or the plan.\n${shown(body)}`);
+  for (const [what, pattern] of GIVEN) {
+    const said = mentions(body, pattern);
+    assert.ok(said.some(({ negated }) => !negated),
+      `the section should say the author gets ${what}.\n${shown(body)}`);
+    assert.deepEqual(said.filter(({ negated }) => negated).map(({ clause }) => clause), [],
+      `the section should not say the author goes without ${what}.\n${shown(body)}`);
+  }
+  for (const [what, pattern] of WITHHELD) {
+    const said = mentions(body, pattern);
+    assert.ok(said.some(({ clause, negated }) => negated && (NEGATED_ITEM.test(clause) || GIVING.test(clause))),
+      `the section should say the author does not get ${what}.\n${shown(body)}`);
+    assert.deepEqual(said.filter(({ clause, negated }) => !negated && GIVING.test(clause)).map(({ clause }) => clause), [],
+      `the section should not give the author ${what}.\n${shown(body)}`);
+  }
 });
+
+/** A clause about what the author returns. */
+const RETURNING = /\breturns?\b|\bhands? (?:back|over)\b|\b(?:brings?|sends?|gives?) (?:you )?back\b|\bcomes? back with\b|\breports?\b/i;
+
+const RETURNED = [
+  ['the tests', /\btests?\b|\btest files?\b/],
+  ['the command', /\bcommands?\b|\binvocations?\b|\bcommand line\b/],
+  ['the failing output', /\bfail\w*\s+(?:\w+\s+)?(?:output|run|result)s?\b|\boutput\b(?:\W+\w+){0,4}?\W+fail|\bred (?:output|run)\b/],
+];
 
 test('D3: the section says what the author returns: the tests, the command, the failing output', async () => {
   const body = await proveSection();
-  const text = flat(body);
-  assert.ok(/\breturns?\b|\bhands? (?:back|over)\b|\b(?:brings?|sends?|gives?) (?:you )?back\b|\bcomes? back with\b|\breports?\b/i.test(text),
-    `the section should say what the author returns.\n${shown(body)}`);
-  assert.ok(/\bcommands?\b/i.test(text),
-    `the section should say the author returns the command it ran.\n${shown(body)}`);
-  assert.ok(/\bfail\w*\s+(?:\w+\s+)?(?:output|run|result)s?\b|\boutput\b(?:\W+\w+){0,4}?\W+fail|\bred (?:output|run)\b/i.test(text),
-    `the section should say the author returns the failing output.\n${shown(body)}`);
+  for (const [what, pattern] of RETURNED) {
+    const said = mentions(body, pattern).filter(({ clause, at }) => {
+      const verb = RETURNING.exec(clause);
+      return verb !== null && verb.index < at;
+    });
+    assert.ok(said.some(({ negated }) => !negated),
+      `the section should say the author returns ${what}.\n${shown(body)}`);
+    assert.deepEqual(said.filter(({ negated }) => negated).map(({ clause }) => clause), [],
+      `the section should not say the author returns no ${what.replace(/^the /, '')}.\n${shown(body)}`);
+  }
 });
 
 test('D4: the section does not leave how the brief goes to obk-tdd; a mention of it is only a pointer for more', async () => {
