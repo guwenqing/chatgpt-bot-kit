@@ -418,9 +418,15 @@ async function typeListLine(home, tabId) {
   for (;;) {
     let found;
     try {
-      found = tabToTypeInto(home, tabId, LIST_LOOK_MS);
+      // Each look waits no longer than what is left of the wait.
+      found = tabToTypeInto(home, tabId, Math.max(1, Math.min(LIST_LOOK_MS, until - Date.now())));
     } catch (error) {
       return { typed: false, why: `Orca would not say whether it may be typed into: ${error.message}` };
+    }
+    // A yes that comes after the wait is too late: the wait is a cutoff, not a
+    // count of looks (review of PR #421).
+    if (found.handle !== undefined && Date.now() > until) {
+      return { typed: false, why: `the ${LIST_WAIT_MS / 1000} s wait for it ran out before the kit could tell it may be typed into` };
     }
     if (found.handle !== undefined) {
       try {

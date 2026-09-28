@@ -40,6 +40,14 @@
 // and says why; if the kit counts wall-clock time, each of those tests takes
 // the kit's full wait.
 //
+// The 20 s is a hard cutoff (the review of PR #421): a gate that answers yes
+// only after the time is up is too late, and nothing is typed. That one is
+// modelled with the fake's `hang`: every `terminal read` of the run is answered
+// 21 s late, as it would have been. Every look through the gate reads the
+// screen, so its first answer comes after more than 20 s whatever the launch
+// did before it, and that answer lets the line through. It costs a minute or
+// more of real time: the launch's own looks read the screen too.
+//
 // Every expected value here is the ruling's: the line's words, the keys of the
 // report, and Orca's own reason where it gave one.
 
@@ -249,6 +257,22 @@ test('a resumed Codex tab showing a question of Codex\'s own, which Orca calls i
 
   await assertListLineNotTyped(box, bots, entry, 'a question on screen');
   assert.match(entry.listLineTrouble, /question/i, `it says a question is waiting, got: ${entry.listLineTrouble}`);
+});
+
+test('a gate that lets the line through only after the 20 s are up is too late: nothing is typed, and the answer says the wait ran out', async (t) => {
+  // Each screen read answers 21 s late and then as it would have: an idle
+  // Codex, no question, the agent named. So the gate's first answer is yes,
+  // and it comes after the 20 s the kit is allowed (see "How the wait is
+  // modelled" above).
+  const box = await createSandbox(t);
+  const bots = await closedWithConversation(box);
+  await box.orca.set({ hang: { command: 'terminal read', ms: 21000 } });
+
+  const entry = entryOf(await run(box, 'up'));
+
+  assert.equal(entry.harnessStarted, true, `the premise: the harness came up, got: ${JSON.stringify(entry)}`);
+  await assertListLineNotTyped(box, bots, entry, 'a yes after the wait');
+  assert.match(entry.listLineTrouble, /\b20\s*(?:s|seconds?)\b/i, `it says the 20 s wait ran out, got: ${entry.listLineTrouble}`);
 });
 
 test('a resumed Codex tab where Orca names no agent for the whole wait gets nothing typed, and the answer says why', async (t) => {
