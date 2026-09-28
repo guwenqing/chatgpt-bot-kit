@@ -11,6 +11,7 @@
 //   <root>/orca-fake/    the fake Orca's world: state.json and calls.log
 //   <root>/cwd           the working directory the CLI is spawned from
 //   <root>/home          HOME, so a stray write to the home dir shows up here
+//   <root>/tmp           TMPDIR, the kit's system temp folder (#401)
 //   <root>/Orca.app      only after `orcaApp`: a fake of the installed app, with
 //                        Orca's runtime client in it, and bin/orca linked into it
 //
@@ -36,6 +37,14 @@
 //
 // The kit reads it and must never write it (PRD 6.5), which is what
 // `assertHomeUntouched` is for.
+//
+// A fleet under the system temp folder is a throwaway one, and the kit marks
+// its Orca projects so (#401). Every sandbox is under the machine's temp
+// folder, so left there every fleet in the suite would be a throwaway one and
+// no test could speak for the owner's own. So the kit runs with a temp folder
+// of the sandbox's own, `<root>/tmp`, which holds none of `cwd`: a fleet in the
+// sandbox is an owner's fleet, and a test about a throwaway one makes its bots
+// folder under `tmp`.
 
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -141,8 +150,10 @@ export async function createSandbox(t) {
   const cwd = path.join(root, 'cwd');
   const home = path.join(root, 'home');
   await mkdir(bin);
+  const tmp = path.join(root, 'tmp');
   await mkdir(cwd);
   await mkdir(home);
+  await mkdir(tmp);
 
   // The bin entry is a symlink, so the CLI must carry its own shebang and exec bit.
   const obk = path.join(bin, 'obk');
@@ -223,6 +234,7 @@ export async function createSandbox(t) {
     ...outsideOrca,
     PATH: `${bin}${path.delimiter}${process.env.PATH}`,
     HOME: home,
+    TMPDIR: tmp,
     OBK_ORCA: fakeOrca,
     OBK_PS: fakePs,
     OBK_OSASCRIPT: fakeOsascript,
@@ -267,6 +279,8 @@ export async function createSandbox(t) {
     root,
     cwd,
     home,
+    /** The kit's system temp folder, TMPDIR: beside `cwd`, not around it. */
+    tmp,
     /** The home directory as the sandbox seeded it: what `assertHomeUntouched` holds it to. */
     homeSeeded: await snapshot(home),
     /** The environment the CLI is spawned with: `bin` first on PATH, HOME and OBK_ORCA inside the sandbox. */
@@ -1396,6 +1410,19 @@ const commentsIn = (text) => text
   .split('\n')
   .map((line) => /(?:^|\s)#(.*)$/.exec(line)?.[1].trim())
   .filter((comment) => comment !== undefined);
+
+/**
+ * `name` is a project name marked as a throwaway fleet's (#401): the bot's
+ * `display` name and the `folder` under the temp folder are both in it whole,
+ * and something beyond them and the spaces between them is the mark. The words
+ * are the kit's to choose, so this holds what the name has, not how it reads.
+ */
+export function assertMarkedName(name, display, folder) {
+  assert.ok(name.includes(display), `the project name should keep the display name ${display}, got ${JSON.stringify(name)}`);
+  assert.ok(name.includes(folder), `the project name should name the folder ${folder}, got ${JSON.stringify(name)}`);
+  const rest = name.replace(display, '').replace(folder, '');
+  assert.match(rest, /\S/, `the project name should carry a mark beside ${display} and ${folder}, got ${JSON.stringify(name)}`);
+}
 
 /** Nothing the kit writes leaves whitespace hanging at the end of a line. */
 export function assertNoTrailingSpace(text) {
