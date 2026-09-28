@@ -60,6 +60,29 @@ export function tabGuard(cli, { env = process.env } = {}) {
   }
 
   /**
+   * A teardown's close: every tab this test created that is open at one of
+   * `homes` (the path a tab was opened in), closed one by one by its handle,
+   * and every other tab open there named, not closed (review of PR #425).
+   * Answers `{ closed, foreign: [{ home, handle }] }`.
+   */
+  function closeOwnAt(homes) {
+    const answer = orca(['terminal', 'list']);
+    assert.equal(answer.ok, true, `orca terminal list failed: ${JSON.stringify(answer.error)}`);
+    const shut = [];
+    const foreign = [];
+    for (const terminal of answer.result.terminals) {
+      if (!homes.includes(terminal.worktreePath)) continue;
+      if (!created.has(terminal.handle)) {
+        foreign.push({ home: terminal.worktreePath, handle: terminal.handle });
+        continue;
+      }
+      orca(['terminal', 'close', '--terminal', terminal.handle, '--tab']);
+      shut.push(terminal.handle);
+    }
+    return { closed: shut, foreign };
+  }
+
+  /**
    * What this test closed that it did not create, and what went that it did
    * not close from the handles open before it began.
    */
@@ -75,5 +98,5 @@ export function tabGuard(cli, { env = process.env } = {}) {
     };
   }
 
-  return { orca, openedByKit, closedByKit, closed: () => [...closed], verdict };
+  return { orca, openedByKit, closedByKit, closeOwnAt, closed: () => [...closed], verdict };
 }

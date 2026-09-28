@@ -305,3 +305,43 @@ test('verdict() takes the handles open before as an array as well as a Set', asy
 
   assert.deepEqual(guard.verdict([...before]), { closedNotOurs: [owner[0]], goneElsewhere: [owner[2]] });
 });
+
+// The review of PR #425: a teardown closed every tab at its homes that was not
+// open before the run, so a stranger's tab opened there meanwhile went too.
+// `closeOwnAt(homes)` is the teardown's close: it closes the test's own tabs
+// at those homes, one by one by handle, and names every other tab it finds
+// there instead of closing it.
+test('closeOwnAt closes the test\'s own tabs at its homes, and names a stranger\'s there without closing it', async (t) => {
+  const { box, ours, owner, before } = await ownersMachine(t);
+  const guard = tabGuard(box.orca.cli, { env: box.env });
+  const mine = openOurs(guard, ours, 'mine');
+  const kits = openElsewhere(box, ours, 'Example daily');
+  guard.openedByKit({ tabs: [kitTab(kits, true)] });
+  const stranger = openElsewhere(box, ours, 'stranger');
+
+  const { closed, foreign } = guard.closeOwnAt([ours]);
+
+  assert.deepEqual([...closed].sort(), [mine, kits].sort(), 'the test\'s own two tabs, the one it opened and the one the kit said it opened');
+  assert.deepEqual(foreign, [{ home: ours, handle: stranger }], 'the stranger\'s tab is named, with the home it is at');
+  const open = openNow(box);
+  assert.ok(open.has(stranger), 'and it is still open');
+  assert.ok(!open.has(mine) && !open.has(kits), 'while the test\'s own are gone');
+  assert.ok(owner.every((handle) => open.has(handle)), 'and the owner\'s tabs in their own project are untouched');
+  assert.deepEqual(guard.verdict(before), { closedNotOurs: [], goneElsewhere: [] });
+});
+
+test('closeOwnAt leaves the test\'s own tabs at other homes alone, and finds nothing foreign where there is nothing', async (t) => {
+  const { box, ours, before } = await ownersMachine(t);
+  const guard = tabGuard(box.orca.cli, { env: box.env });
+  const other = box.path('other-project');
+  elsewhere(box, ['repo', 'add', '--path', other]);
+  const here = openOurs(guard, ours, 'here');
+  const there = openOurs(guard, other, 'there');
+
+  const { closed, foreign } = guard.closeOwnAt([ours]);
+
+  assert.deepEqual(closed, [here]);
+  assert.deepEqual(foreign, []);
+  assert.ok(openNow(box).has(there), 'a home not named is not swept');
+  assert.deepEqual(guard.verdict(before), { closedNotOurs: [], goneElsewhere: [] });
+});
