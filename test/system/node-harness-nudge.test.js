@@ -95,9 +95,23 @@
 //      Its selection starts on `No, exit`, so it takes a down-arrow and then
 //      return. `sender` comes up in the same folder after it and should ask
 //      nothing.
-//   3. `Node Nudge target`: if Claude Code asks before it runs the command the
+//   3. `Node Nudge target`, after its first turn, and again under the wrapper:
+//      Claude Code's form "Teach auto mode about your environment?" ("←/→ to
+//      change usage · Enter to continue · Esc to cancel"). Seen live on 2.1.283
+//      in the first run of this test, where a typed /exit pressed Continue on
+//      it. Answer it (Esc cancels it) before the test types into the tab: if
+//      it is still up then, the test fails with the screen and types nothing.
+//   4. `Node Nudge target`: if Claude Code asks before it runs the command the
 //      nudge names, allow it.
-//   4. Any tab, if its harness offers an update: accept it (PRD 6.5).
+//   5. Any tab, if its harness offers an update: accept it (PRD 6.5).
+//
+// Nothing typed into a Claude tab here answers any of these. Before each line
+// with a return that goes to Claude Code (/exit twice and the long request)
+// the test reads the screen, and it types only at Claude's plain input prompt:
+// its lowest `❯` row between the input box's two rules, no numbered question,
+// and none of "Enter to continue", "Enter to confirm", "Esc to cancel", "←/→"
+// or "Do you want". Anything else fails the test with the screen, and nothing
+// is typed.
 //
 // Every wait says what the tab is showing when it runs out of patience, so a
 // run that was left alone names the screen that stopped it.
@@ -115,7 +129,7 @@ import { setTimeout } from 'node:timers/promises';
 import { parse } from 'yaml';
 
 import { cliEntry, shellWord } from '../helpers/cli.js';
-import { waitingOn } from '../helpers/screens.js';
+import { questionOn, waitingOn } from '../helpers/screens.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 
 /**
@@ -305,6 +319,55 @@ function sendLine(handle, text) {
         + ` same command with --retry-request ${gated} --wait-submit 30.`)
     + whatIsUp(handle),
   );
+}
+
+/**
+ * What on a Claude Code screen says a form or a menu is up, one of which a
+ * return would answer. Seen live on Claude Code 2.1.283: its "Teach auto mode
+ * about your environment?" form, drawn after a first turn, with no numbered
+ * list, ends "←/→ to change usage · Enter to continue · Esc to cancel"; its
+ * folder trust ends "Enter to confirm · Esc to cancel".
+ */
+const FORM_SIGNS = [/Enter to continue/, /Enter to confirm/, /Esc to cancel/, /←\/→/, /Do you want/];
+
+/** A row of Claude Code's input box's rules: nothing but `─`, a name set into it aside. */
+const RULE_ROW = /^\s*─{8,}/;
+
+/**
+ * Why a Claude tab is not at its plain input prompt, or undefined when it is:
+ * the screen can be read, shows none of FORM_SIGNS and no numbered question,
+ * and its lowest `❯` row is the input line, between the input box's two rules.
+ * A `❯` anywhere below that is a list's pointer.
+ */
+function notAtPrompt(handle) {
+  const answer = orca(['terminal', 'read', '--terminal', handle, '--screen']);
+  const shown = answer.ok === true ? answer.result?.terminal : undefined;
+  if (shown?.source !== 'screen' || !Array.isArray(shown.tail)) {
+    return `its screen could not be read (${answer.ok === true ? `source ${shown?.source}` : JSON.stringify(answer.error)})`;
+  }
+  const rows = shown.tail;
+  const screen = `\n    ${rows.join('\n    ')}`;
+  const sign = FORM_SIGNS.find((pattern) => rows.some((row) => pattern.test(row)));
+  if (sign !== undefined) return `a form or menu is up (${sign}):${screen}`;
+  if (questionOn(rows) !== undefined) return `a numbered question is up:${screen}`;
+  const at = rows.findLastIndex((row) => row.trimStart().startsWith('❯'));
+  if (at < 0) return `no input line is on it:${screen}`;
+  if (!RULE_ROW.test(rows[at - 1] ?? '') || !RULE_ROW.test(rows[at + 1] ?? '')) {
+    return `its lowest ❯ row is not the input line between the input box's rules:${screen}`;
+  }
+  return undefined;
+}
+
+/**
+ * Type one line into a Claude tab of this test's own, and only when it is at
+ * its plain input prompt (architect's rule, #261 live run): a line with a
+ * return must never answer a form or a menu. Otherwise fail with the screen,
+ * having typed nothing.
+ */
+function typeIntoClaude(handle, text) {
+  const why = notAtPrompt(handle);
+  assert.equal(why, undefined, `this test would type ${JSON.stringify(text)} into ${handle}, but ${why}\n  Nothing was typed.`);
+  sendLine(handle, text);
 }
 
 /** Read `ps` for one pid, and nothing else: it is a reader here and never a road to a signal. */
@@ -529,7 +592,7 @@ test('a Claude Code running as node on the kit\'s launch line is nudged idle and
     async () => (/^run_/.test(String((await sessionIn(home, 'sender')).mailbox)) ? true : undefined),
   );
 
-  sendLine(handle, '/exit');
+  typeIntoClaude(handle, '/exit');
   await frontIs(handle, 'shell');
 
   // 2. The kit's launch line, with the wrapper where `claude` goes.
@@ -564,7 +627,7 @@ test('a Claude Code running as node on the kit\'s launch line is nudged idle and
   t.diagnostic(`idle: the mail was ${screenOf(handle).includes(SENDS.idle.body) ? '' : 'not '}read in the tab`);
 
   // 5. Busy: a long answer under way, then the send.
-  sendLine(handle, LONG_REQUEST);
+  typeIntoClaude(handle, LONG_REQUEST);
   await until(
     `${handle} to be at work on its long answer`,
     ANSWER_MS,
@@ -590,7 +653,7 @@ test('a Claude Code running as node on the kit\'s launch line is nudged idle and
   await readyForMail(handle, ROUND_TRIP_MS);
 
   // 6. The wrapped Claude quits, and less takes the tab.
-  sendLine(handle, '/exit');
+  typeIntoClaude(handle, '/exit');
   await frontIs(handle, 'shell');
   await writeFile(pagerFile, `${Array.from({ length: 200 }, (_, n) => `${PAGER_WORD} line ${n + 1}`).join('\n')}\n`);
   sendLine(handle, `less ${shellWord(pagerFile)}`);
