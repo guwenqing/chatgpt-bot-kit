@@ -121,3 +121,90 @@ test('a ) inside quotes within a $( ) does not end it early', () => {
     assert.equal(startsBareObk(command), true, `${label}: ${JSON.stringify(command)}`);
   }
 });
+
+// The review of 46959aa: a `)` in a `#` comment inside a `$( )` ended it early
+// here, and the shell ran the `obk` after it. A comment inside a substitution is
+// skipped as the shell skips it. What this reading cannot follow inside a
+// substitution, a `case` (its patterns end in `)`) or a heredoc (its body can
+// hold one), makes it throw, so the live test fails as unreadable rather than
+// passing a command it could not read. Outside a substitution neither throws.
+test('a ) in a comment inside a $( ) does not end it, and $# is no comment', () => {
+  const commented = 'cat <<EOF\n$(\n# 1) Read the kit version\nobk --version\n)\nEOF';
+  assert.equal(startsBareObk(commented), true, `a comment with a ) in it: ${JSON.stringify(commented)}`);
+  assert.equal(startsBareObk('x=$(echo $#; obk health)'), true, '$# is a parameter, not a comment');
+  assert.equal(startsBareObk('x=$(echo ${#x}; obk health)'), true, '${#x} is a length, not a comment');
+  assert.equal(startsBareObk('x=$(echo a#b; obk health)'), true, 'a#b is a word, not a comment');
+  assert.equal(startsBareObk("cat <<'EOF'\n$(\n# 1) Read the kit version\nobk --version\n)\nEOF"), false, "the same body under <<'EOF' is text");
+});
+
+test('a case inside a substitution cannot be read here, and says so by throwing; outside one it is read', () => {
+  for (const [label, command] of [
+    ['a case in $( )', 'x=$(case "$1" in a) echo a;; esac; obk health)'],
+    ['a case in $( ) in an unquoted heredoc body', 'cat <<EOF\n$(case y in y) obk health;; esac)\nEOF'],
+    ['a case in backticks', 'x=`case y in y) obk health;; esac`'],
+  ]) {
+    assert.throws(() => startsBareObk(command), /can(?:no|')t be read/i, `${label}: ${JSON.stringify(command)}`);
+  }
+  for (const [label, command, runs] of [
+    ['a case at the top', 'case "$1" in a) echo a;; esac', false],
+    ['a heredoc at the top', 'cat <<EOF > f\ncase x in a) obk;; esac\nEOF', false],
+    ["a case in a quoted heredoc's body", "cat <<'EOF'\n$(case y in y) obk health;; esac)\nEOF", false],
+    ['a case at the top that runs obk', 'case "$1" in a) obk health;; esac', true],
+  ]) {
+    assert.equal(startsBareObk(command), runs, `${label}: ${JSON.stringify(command)}`);
+  }
+});
+
+// Indirection: a command word held in a string. `eval` and a shell run with
+// `-c` run a string this reading does not look into, so they throw, as a
+// substitution it cannot follow does. `find`'s `-exec` and `-execdir` run the
+// word after them, so that is a command position, as after `xargs`.
+test('eval and a shell run with -c cannot be read here, and throw; find -exec runs a command word', () => {
+  for (const [label, command] of [
+    ['eval', 'eval "obk health"'],
+    ['eval after ;', 'cd /tmp/b; eval $cmd'],
+    ['sh -c', 'sh -c "obk health"'],
+    ['bash -lc', 'bash -lc "obk health"'],
+    ['bash -l -c', "bash -l -c 'obk health'"],
+    ['zsh -c', 'zsh -c "obk health"'],
+    ['dash -c', 'dash -c "obk health"'],
+    ['ksh -c', 'ksh -c "obk health"'],
+    ['eval in a $( ) inside double quotes', 'echo "$(eval x)"'],
+  ]) {
+    assert.throws(() => startsBareObk(command), /can(?:no|')t be read/i, `${label}: ${JSON.stringify(command)}`);
+  }
+  assert.equal(startsBareObk('find . -name bot.yaml -exec obk health \;'), true, 'find -exec');
+  assert.equal(startsBareObk('find . -execdir obk health {} +'), true, 'find -execdir');
+  for (const [label, command] of [
+    ['eval as an argument', 'echo eval'],
+    ['-c as a flag of another program', 'grep -c obk file'],
+    ['a shell running a script', 'sh script.sh'],
+    ['a shell running a script, with a flag that is not -c', 'bash -e run.sh'],
+  ]) {
+    assert.equal(startsBareObk(command), false, `${label}: ${JSON.stringify(command)}`);
+  }
+});
+
+// A heredoc inside a `$( )` is Claude Code's usual way to write a commit
+// message: `git commit -m "$(cat <<'EOF' … EOF )"`. So it is read, not thrown
+// on: its body is skipped while the substitution's parens are counted, so a
+// paren in it does not end the substitution, and the body is then text or
+// code as its end word says, as a heredoc anywhere else is (#239, round 6).
+test('a heredoc inside a $( ) is read: a quoted one is text, an unquoted one expands, and a paren in its body does not end the substitution', () => {
+  const commit = 'git add -- a.md && git commit -m "$(cat <<\'EOF\'\ntarget-bot: rebuild (see obk rules build)\n\nobk rules build ran; in case it matters)\nClaude-Session: x\nEOF\n)" -- a.md';
+  assert.equal(startsBareObk(commit), false, `Claude Code's commit form, with obk and a ) in its message: ${JSON.stringify(commit)}`);
+  assert.equal(startsBareObk('echo "$(cat <<X\nhi\nX\n)"'), false, 'an unquoted heredoc of plain text in a $( ) inside double quotes');
+
+  for (const [label, command] of [
+    ['an unquoted heredoc in "$( )" that runs obk', 'git commit -m "$(cat <<EOF\nversion $(obk health)\nEOF\n)"'],
+    ['a ) in a heredoc body, obk after the heredoc, still in the $( )', 'x=$(cat <<X\n)\nX\nobk health)'],
+    ['a ( in a heredoc body, obk after the heredoc, still in the $( )', "x=$(cat <<'X'\nunbalanced ( here\nX\nobk health)"],
+    ['a <<- heredoc with a ) in its body, obk after it', 'x=$(cat <<-X\n\ta ) here\n\tX\nobk health)'],
+    ['a ) in a heredoc body, obk after it, all in "$( )"', 'echo "$(cat <<\'X\'\na ) b\nX\nobk health)"'],
+  ]) {
+    assert.equal(startsBareObk(command), true, `${label}: ${JSON.stringify(command)}`);
+  }
+  // Read as text all through: a ) that ended the substitution early would leave
+  // the body's `obk rules build` line standing as a command.
+  assert.equal(startsBareObk("x=$(cat <<'X'\n)\nobk rules build\nX\n)"), false, 'a quoted body with a ) and an obk line in it, in a $( )');
+});
