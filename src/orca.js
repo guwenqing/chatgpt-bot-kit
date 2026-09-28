@@ -326,9 +326,11 @@ export const retitleTab = (handle, title) =>
  * the screen, as `questionIn` answers, and `screenUnreadable` says why there
  * was none.
  */
-export function harnessInTab(handle, timeoutMs) {
+export function harnessInTab(handle, timeoutMs, readMs) {
   const args = ['terminal', 'wait', '--terminal', handle, '--for', 'tui-idle', '--timeout-ms', String(timeoutMs)];
-  const answer = ask(args);
+  // With `readMs`, each call to Orca is given that long on top of what it was
+  // asked to wait, and ends as TIMED_OUT when it has not answered (#422).
+  const answer = ask(args, readMs === undefined ? undefined : timeoutMs + readMs);
 
   // Out of time means nothing went idle, busy or absent alike. That is an
   // answer, not a breakdown.
@@ -336,19 +338,25 @@ export function harnessInTab(handle, timeoutMs) {
     throw refusal(args, answer);
   }
 
-  const shown = orca(['terminal', 'show', '--terminal', handle]).terminal;
+  const shown = orca(['terminal', 'show', '--terminal', handle], { timeoutMs: readMs }).terminal;
   const agent = typeof shown?.agentIdentity === 'string' && shown.agentIdentity !== '' ? shown.agentIdentity : undefined;
   return {
     answered: answer.ok === true,
     blockedReason: answer.result?.wait?.blockedReason,
     agent,
-    ...frontOf(handle, shown?.ptyId),
-    ...screenOf(handle),
+    ...frontOf(handle, shown?.ptyId, readMs),
+    ...screenOf(handle, readMs),
   };
 }
 
 /** Orca's reason for a folder-trust screen, which it can go on giving once that is answered (#342). */
 const TRUST_REASON = 'agent-trust-workspace';
+
+/**
+ * How long each call to Orca the typing gate makes is given, beyond any wait it
+ * asked for, before the gate gives up on it and cannot tell (#422).
+ */
+const GATE_READ_MS = 5000;
 
 /** The kit's word for a tab whose screen shows a question of its harness's own (#329). */
 export const QUESTION_ON_SCREEN = 'question-on-screen';
@@ -360,10 +368,10 @@ export const QUESTION_ON_SCREEN = 'question-on-screen';
  * rendered screen: accumulated output comes back in fragments (tech notes,
  * section 1).
  */
-function screenOf(handle) {
+function screenOf(handle, readMs) {
   let read;
   try {
-    read = orca(['terminal', 'read', '--terminal', handle, '--screen']).terminal;
+    read = orca(['terminal', 'read', '--terminal', handle, '--screen'], { timeoutMs: readMs }).terminal;
   } catch (error) {
     return { screenUnreadable: `Orca would not read its screen: ${error.message}` };
   }
@@ -425,10 +433,18 @@ export function questionIn(rows) {
  */
 export function tabToTypeInto(home, tabId, timeoutMs) {
   if (tabId === undefined) return {};
-  const live = tabs(home).find((tab) => tab.tabId === tabId);
-  if (live === undefined) return {};
-
-  const seen = harnessInTab(live.handle, timeoutMs);
+  // Every call to Orca here has a bound, so one slow reply cannot hold the
+  // command that asked: one that runs out is "cannot tell" (#422).
+  let live;
+  let seen;
+  try {
+    live = tabs(home, { timeoutMs: GATE_READ_MS }).find((tab) => tab.tabId === tabId);
+    if (live === undefined) return {};
+    seen = harnessInTab(live.handle, timeoutMs, GATE_READ_MS);
+  } catch (error) {
+    if (error.code !== TIMED_OUT) throw error;
+    return { unsure: `Orca did not answer in time (${error.message}), so the kit could not tell whether a harness is running in it, and nothing was typed` };
+  }
   // A line typed into a screen waiting for an answer is that answer: once, it
   // confirmed Claude Code's folder-trust default, `No, exit` (tech notes,
   // section 1).
@@ -516,8 +532,8 @@ const psCli = () => process.env.OBK_PS || '/bin/ps';
  * sandbox, where it does not start at all, Orca's runtime is asked instead
  * (#298, ADR 0031).
  */
-function frontOf(handle, ptyId) {
-  const read = frontByPs(ptyId);
+function frontOf(handle, ptyId, readMs) {
+  const read = frontByPs(ptyId, readMs);
   if (read.unreadable === undefined) return read;
   const asked = frontByOrca(handle);
   return asked.unreadable === undefined ? asked : { unreadable: `${read.unreadable}, and ${asked.unreadable}` };
@@ -556,10 +572,10 @@ function frontByOrca(handle) {
  * `diagnostics memory` is a diagnostics command and may change, so everything
  * here ends in "cannot tell" rather than in an error or a guess.
  */
-function frontByPs(ptyId) {
+function frontByPs(ptyId, readMs) {
   let pane;
   try {
-    pane = orca(['diagnostics', 'memory']).worktrees
+    pane = orca(['diagnostics', 'memory'], { timeoutMs: readMs }).worktrees
       .flatMap((worktree) => worktree.sessions ?? [])
       .find((session) => session.sessionId === ptyId)?.pid;
   } catch (error) {

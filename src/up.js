@@ -437,8 +437,8 @@ async function typeListLine(home, tabId) {
       }
     }
     if (Date.now() >= until) {
-      const why = found.blocked !== undefined ? `it is waiting on ${found.blocked}` : found.unsure ?? 'no harness is running in it';
-      return { typed: false, why };
+      const last = found.blocked !== undefined ? `it is waiting on ${found.blocked}` : found.unsure ?? 'no harness is running in it';
+      return { typed: false, why: `the ${LIST_WAIT_MS / 1000} s wait for it ran out: ${last}` };
     }
     await pause(LIST_ASK_MS);
   }
