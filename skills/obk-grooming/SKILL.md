@@ -185,6 +185,25 @@ Never edit a memory yourself, not even to cut it. The memory is the bot's, the
 harness keeps it, and a pass that rewrites what a bot remembers is a pass that
 decides what the bot knows.
 
+## Temporary sessions left behind
+
+A temporary session is one a bot's own session made for a piece of work with
+`obk temp make`, and its maker retires it when the work is done. Each bot's
+book, `sessions.yaml` in its folder, marks one on its entry as `temporary`,
+with its `maker` and when it was `made`. Read the books every run, a quiet one
+included: a session left behind does no work, so the usage index never shows
+it.
+
+Count one as left behind when its maker is no longer one of the bot's
+sessions, or when it was made more than a day ago. The report names each: the
+bot and session, its maker, saying so where the maker is gone, and how old it
+is. Put them in the open findings, so the next run says whether each is still
+there rather than reporting it as new.
+
+Retire none of them. Only the maker knows when the work is done: a review
+session can be waiting on an open pull request for a re-review. What to do
+about a bot that leaves them behind is the management session's to offer.
+
 ## Say whether this run was worth making
 
 Every run, record which of three things happened: it found something that

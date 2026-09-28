@@ -227,6 +227,18 @@ ask for and you do it.
 A grooming report is input to this review, not its end: check what it flags
 against the fleet, and recommend from there.
 
+When a grooming report names temporary sessions a bot left behind, offer the
+user one rule for that bot's charter, with the words ready to accept, such as:
+"Retire each temporary session you make as soon as its work is done, and
+before you end a piece of work, check that none of yours is left." On a yes,
+read the bot's charter, add the line, and set the whole with `obk bot change
+--bots <folder> --bot <bot> --charter <text>`, which replaces the charter, so
+what you pass is all of it. On a no, nothing changes, and it is not offered
+again for the same sessions: write the declined offer in grooming's open
+findings, next to those sessions, so it outlasts this conversation. Retire
+none of them yourself, and send nothing to their makers: the hint is for the
+user, and only a maker knows when its work is done.
+
 Sort the problem before you write it up. Something the kit does wrong, or
 cannot do, is filed where the kit's problems are filed, as one issue, in one
 step: no draft to approve first. Something a bot is doing wrong goes back to
