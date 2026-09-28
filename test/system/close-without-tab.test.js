@@ -333,6 +333,19 @@ function inFront(pane) {
   return comm === undefined ? undefined : { pid: group, name: path.basename(comm.replace(/^-/, '')), parent };
 }
 
+/**
+ * The tab a listed terminal really belongs to. While Orca calls a tab orphaned,
+ * `terminal list` gives it `tabId: "pty:<ptyId>"`, and only `terminal show`
+ * answers with the real one (tech notes, section 1: Claude Code typed into a
+ * tab of a project the window has not loaded orphans it within 2 s; #187).
+ * Undefined when `show` cannot say, as for a terminal already gone.
+ */
+function realTabIdOf(terminal) {
+  if (terminal.orphaned !== true) return terminal.tabId;
+  const shown = orca(['terminal', 'show', '--terminal', terminal.handle]);
+  return shown.ok === true ? shown.result?.terminal?.tabId : undefined;
+}
+
 /** The words a process was started with. `command=` and not `-E`, so none of the environment is read. */
 const argvOf = (pid) => (psOf(pid, ['-ww', '-o', 'command=']) ?? '').split(/\s+/);
 
@@ -462,12 +475,19 @@ test('#405: a kit tab whose harness quit, closed without --tab, leaves the listi
 
   // The tab holds one pane, as every tab the kit opens does: that is what makes
   // a close without --tab take the whole tab (#405, Orca 1.4.215's code).
-  const panesOfTab = allTerminals().filter((terminal) => terminal.tabId === tabId);
+  // A pane of the tab is listed in the bot's project, under its real tab id or,
+  // while orphaned, under `pty:<ptyId>`, so each is read through `show`.
+  const atHome = terminalsAt(home).map((terminal) => ({ ...terminal, realTabId: realTabIdOf(terminal) }));
+  const unknown = atHome.filter((terminal) => terminal.realTabId === undefined);
+  assert.deepEqual(unknown, [], `the premise: Orca says which tab each terminal of ${home} is in`);
+  const panesOfTab = atHome.filter((terminal) => terminal.realTabId === tabId);
   assert.deepEqual(
     panesOfTab.map((terminal) => terminal.handle),
     [opened.terminal],
-    `the premise: the kit's tab holds one pane, got: ${JSON.stringify(panesOfTab)}`,
+    `the premise: the kit's tab holds one pane, got: ${JSON.stringify(atHome)}`,
   );
+  const { ptyId } = panesOfTab[0];
+  assert.equal(typeof ptyId, 'string', `the premise: Orca gives the tab's pane a pty id, got: ${JSON.stringify(panesOfTab[0])}`);
 
   // 2. Its harness quits to the tab's shell, as a session's whose harness quit.
   const kits = processesIn(id);
@@ -499,13 +519,21 @@ test('#405: a kit tab whose harness quit, closed without --tab, leaves the listi
   assert.equal(answer.ok, true, `Orca refused the close without --tab: ${JSON.stringify(answer.error)}`);
   t.diagnostic(`orca terminal close --terminal ${opened.terminal} answered: ${JSON.stringify(answer.result)}`);
 
-  // 4. The listing drops the tab within the kit's own wait, by handle and by
-  // tab id, since a listing can show a tab under `pty:<ptyId>` (#187).
+  // 4. The listing drops the tab within the kit's own wait. Looked for every
+  // way it can be listed: by its handle, by its pane's pty id (a handle Orca
+  // re-issues keeps it, #294), by its real tab id, by `pty:<ptyId>`, the id an
+  // orphaned tab is listed under (#187), and by the real tab id `show` gives
+  // any orphaned terminal of the bot's project.
+  const ofTheTab = (terminal) => terminal.handle === opened.terminal
+    || terminal.ptyId === ptyId
+    || terminal.tabId === tabId
+    || terminal.tabId === `pty:${ptyId}`
+    || (terminal.worktreePath === home && terminal.orphaned === true && realTabIdOf(terminal) === tabId);
   const closedAt = Date.now();
-  let still = allTerminals().filter((terminal) => terminal.handle === opened.terminal || terminal.tabId === tabId);
+  let still = allTerminals().filter(ofTheTab);
   while (still.length > 0 && Date.now() - closedAt < KIT_CLOSE_WAIT_MS) {
     await setTimeout(250);
-    still = allTerminals().filter((terminal) => terminal.handle === opened.terminal || terminal.tabId === tabId);
+    still = allTerminals().filter(ofTheTab);
   }
   assert.deepEqual(
     still,
