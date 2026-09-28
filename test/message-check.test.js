@@ -19,6 +19,7 @@ import {
   assertOrcaCallsAllowed,
   assertRefused,
   createSandbox,
+  kitLaunchMark,
   orcaCallsOf,
   orcaFlag,
   sessionIn,
@@ -187,14 +188,16 @@ test('a bot with several sessions, named without one, is refused and the choices
 
 test('a session reads its own mail from its own tab, naming nobody', async (t) => {
   // How a bot actually runs it: inside its own Orca tab, where `ORCA_TAB_ID`
-  // says which session it is.
+  // says which session it is, run by the harness the kit's launch line
+  // started there, which hands it OBK_TAB_SHELL (#408).
   const box = await createSandbox(t);
   const bots = await fleetIn(box);
   await sendTo(box, { subject: 'for you', text: 'and nobody else' });
   const coder = await sessionIn(bots, 'coder', 'daily');
+  const tab = (await box.orca.terminals()).find((terminal) => terminal.tabId === coder.tab);
 
   const result = await box.run(['message', 'check', '--bots', 'bots'], {
-    env: { ...box.env, ORCA_TAB_ID: coder.tab },
+    env: { ...box.env, ORCA_TAB_ID: coder.tab, ...kitLaunchMark(box, tab) },
   });
 
   assert.equal(result.code, 0, result.stderr);

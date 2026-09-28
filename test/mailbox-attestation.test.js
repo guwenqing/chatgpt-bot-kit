@@ -43,6 +43,7 @@ import {
   CODEX_NETWORK,
   createSandbox,
   fakeProgram,
+  kitLaunchMark,
   orcaCallsOf,
   orcaFlag,
   recordSession,
@@ -84,6 +85,16 @@ const obkFrom = (box, terminal, args) => box.run(args, terminal === null ? {} : 
 async function obkIn(box, terminal, args) {
   const result = await obkFrom(box, terminal, args);
   assert.equal(result.code, 0, `obk ${args.join(' ')} should have worked${terminal === null ? '' : ` in ${terminal.title}`}:\n${result.stdout}${result.stderr}`);
+  return result;
+}
+
+/**
+ * The same, as the session's harness runs it in its own tab: with what the
+ * kit's launch line gave that harness when the line started the tab (#408).
+ */
+async function obkByHarness(box, terminal, args) {
+  const result = await box.run(args, { env: { ...inTab(box, terminal), ...kitLaunchMark(box, terminal) } });
+  assert.equal(result.code, 0, `obk ${args.join(' ')} should have worked in ${terminal.title}:\n${result.stdout}${result.stderr}`);
   return result;
 }
 
@@ -945,7 +956,7 @@ test('#317: message check in the session\'s own tab binds its mailbox to that ta
   await setCoordinator(box, mailbox, null);
   await mail(box, 'coder', 'the staging host');
 
-  const read = await obkIn(box, coder, ['message', 'check', '--bots', 'bots', '--bot', 'coder', '--session', 'daily']);
+  const read = await obkByHarness(box, coder, ['message', 'check', '--bots', 'bots', '--bot', 'coder', '--session', 'daily']);
 
   assert.ok(read.stdout.includes('the staging host'), `it reads coder's mail, got: ${read.stdout}`);
   assert.deepEqual((await box.orca.messages()).map((message) => message.acked), [true], 'and takes it');
@@ -1007,7 +1018,7 @@ test('#317: every Orca call across all of this is an allowed one, and none made 
   await obkIn(box, await tabOf(box, bots, 'coder'), MAILBOX);
   await mail(box, 'coder', 'hello');
   await obkFrom(box, a, ['message', 'check', '--bots', 'bots', '--bot', 'coder', '--session', 'daily']);
-  await obkIn(box, await tabOf(box, bots, 'coder'), ['message', 'check', '--bots', 'bots']);
+  await obkByHarness(box, await tabOf(box, bots, 'coder'), ['message', 'check', '--bots', 'bots']);
 
   const calls = await box.orca.calls();
   const closes = orcaCallsOf(calls, 'terminal close');

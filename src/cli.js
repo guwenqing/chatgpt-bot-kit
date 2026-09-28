@@ -17,8 +17,8 @@ import { addCommand, groomCommand, grooming, upCommand } from './groom.js';
 import { checkHealth, orcaSettingFindings } from './health.js';
 import { initBots } from './init.js';
 import { APPROVALS, HARNESSES, ownCli, shellWord, workDirOf } from './launch.js';
-import { checkMail, lookUp, noMailboxYet, sendMessage } from './message.js';
-import { orcaCli, orcaTrouble, RELOAD_LINE } from './orca.js';
+import { checkMail, lookUp, noMailboxYet, sendMessage, sessionInTab } from './message.js';
+import { orcaCli, orcaTrouble, RELOAD_LINE, TERMINAL_ENV } from './orca.js';
 import { allowCommand, allowIn, beyondDefaults, refuseBroad, refuseNoCodexForm, runsOnClaude, runsOnCodex, takeBack, writePermissions } from './permissions.js';
 import { pauseSessions, unpauseSessions } from './pause.js';
 import { recordSession, SHELL_ENV, TAB_ENV } from './record.js';
@@ -594,13 +594,14 @@ const commands = {
   },
 
   async 'temp make'(bots, values) {
+    const tab = callerTab(bots, true);
     refuseWhenOrcaIsDown();
     const given = { name: values.name };
     for (const [flag, key] of [['harness', 'harness'], ['model', 'model'], ['effort', 'effort'], ['approval', 'approval'], ['prompt', 'prompt'], ['prompt-file', 'prompt_file']]) {
       if (values[flag] !== undefined) given[key] = values[flag];
     }
     if (values.context !== undefined) given.context = asNumberOrText(values.context);
-    const made = await makeTemp(bots, { tab: process.env[TAB_ENV], ...given });
+    const made = await makeTemp(bots, { tab, ...given });
     const { tabs, rules, skills, permissions, paused, projects } = made.up;
     const answer = { bots, bot: made.bot, session: made.session, maker: made.maker, settings: made.settings, created: [], completed: [], rules, skills, permissions, tabs, paused, projects };
     const retire = `${shellWord(ownCli())} temp retire --bots ${shellWord(bots)} --name ${made.session}`;
@@ -611,8 +612,9 @@ const commands = {
   },
 
   async 'temp retire'(bots, values) {
+    const tab = callerTab(bots, true);
     refuseWhenOrcaIsDown();
-    const retired = await retireTemp(bots, { tab: process.env[TAB_ENV], name: values.name });
+    const retired = await retireTemp(bots, { tab, name: values.name });
     return {
       answer: { bots, ...retired },
       lines: [
@@ -880,11 +882,12 @@ const commands = {
   },
 
   'message send'(bots, values) {
+    const tab = callerTab(bots, values.from === undefined);
     refuseWhenOrcaIsDown();
     const answer = sendMessage(bots, {
       to: values.to,
       from: values.from,
-      tab: process.env[TAB_ENV],
+      tab,
       subject: values.subject,
       text: values.text,
       textFile: values['text-file'],
@@ -913,11 +916,13 @@ const commands = {
   },
 
   'message check'(bots, values) {
+    // Named or not, the mail is read as the caller's own terminal when it has one.
+    const tab = callerTab(bots, values.bot === undefined || process.env[TERMINAL_ENV] !== undefined);
     refuseWhenOrcaIsDown();
     const answer = checkMail(bots, {
       bot: values.bot,
       session: values.session,
-      tab: process.env[TAB_ENV],
+      tab,
       peek: values.peek === true,
     });
     const where = `${answer.bot}/${answer.session}`;
@@ -1077,6 +1082,19 @@ const leftLines = (left = []) => left.flatMap(({ file, reason }) => [
 const asNumberOrText = (value) => (/^\d+$/.test(value) ? Number(value) : value);
 
 const oneLine = (value) => (Array.isArray(value) ? value.join(' ') : String(value)).replace(/\s+/g, ' ').trim();
+
+/**
+ * The Orca tab this command runs in, with the caller taken to be the session
+ * there only once sessionInTab has shown it is, when the command takes its
+ * caller from the tab (#408). Asked before Orca is: a Codex that Orca brought
+ * back by itself may run in a sandbox that cannot reach Orca at all, and
+ * "Orca is not ready" would send its user the wrong way.
+ */
+function callerTab(bots, takesCaller) {
+  const tab = process.env[TAB_ENV];
+  if (takesCaller && tab !== undefined) sessionInTab(bots, tab);
+  return tab;
+}
 
 function refuseWhenOrcaIsDown() {
   const trouble = orcaTrouble();
