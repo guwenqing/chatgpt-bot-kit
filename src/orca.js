@@ -376,6 +376,9 @@ function screenOf(handle) {
 /** A row the harness starts with its selection pointer: `›` on Codex, `❯` on Claude Code. */
 const POINTER_ROW = /^ *[›❯]/;
 
+/** How a harness's form says it is answered, as Claude Code 2.1.283 draws its foot (#416). */
+const FORM_FOOT = /Enter to (?:continue|confirm|select)\b.*Esc to cancel/i;
+
 /** That pointer on a numbered choice, and the column its number starts in. */
 const ON_A_CHOICE = /^( *[›❯] +)\d+\. /;
 
@@ -392,6 +395,13 @@ const ON_A_CHOICE = /^( *[›❯] +)\d+\. /;
  */
 export function questionIn(rows) {
   const at = rows.findLastIndex((row) => POINTER_ROW.test(row));
+  // A form of the harness's own has no numbers but a foot that says how to
+  // answer it: Claude Code 2.1.283's "Teach auto mode" ends `Enter to continue
+  // · Esc to cancel`, and a return there is Continue, which starts a scan
+  // (#416). It counts on or below the lowest pointer row, or anywhere when
+  // there is none: under old words of one in the history, the input line is
+  // the lowest pointer, and nothing below it is a foot.
+  if (rows.slice(Math.max(at, 0)).some((row) => FORM_FOOT.test(row))) return true;
   const pointer = at < 0 ? null : ON_A_CHOICE.exec(rows[at]);
   if (pointer === null) return false;
   const column = pointer[1].length;

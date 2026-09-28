@@ -66,6 +66,10 @@
 //   3. After `up`, the new `Plain Close daily` tab. It is the same folder, so it
 //      should come straight up; if it asks again, answer it the same way.
 //   4. `Bot Father daily` will be sitting on its own trust question. Leave it.
+//   5. `Plain Close daily`, after its first answer: Claude Code 2.1.283's form
+//      "Teach auto mode about your environment?". Esc cancels it. The test
+//      types nothing into the tab while it is up, since a return presses
+//      Continue (#416).
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';

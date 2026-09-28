@@ -58,6 +58,8 @@ import {
   CLAUDE_ANSWERED,
   CLAUDE_IDLE,
   CLAUDE_TEACH_AUTO,
+  CLAUDE_TEACH_FORM,
+  CLAUDE_TEACH_FORM_ON_CONTINUE,
   CLAUDE_TRUST,
   CLAUDE_TRUST_AS_ORCA_SAW_IT,
   CODEX_ANSWERED,
@@ -68,6 +70,7 @@ import {
   CODEX_NEW_MENU,
   CODEX_TRUST,
   CODEX_UPDATE_OFFER,
+  FORM_IN_HISTORY,
   NUMBERED_ANSWER,
   QUESTION_IN_HISTORY,
   questionOn,
@@ -162,13 +165,17 @@ test('a Codex tab on its update offer, which Orca calls idle, gets no nudge, and
 // trust, hooks and `/new` screens, and Claude Code's numbered menus, the
 // selection on whichever choice. Orca names no reason in any of them here, so
 // each is about the screen alone; live, it named none for the hooks review and
-// the `/new` menu either.
+// the `/new` menu either. Claude Code 2.1.283's form to teach auto mode is here
+// too (#416): no numbers, and a return on it presses Continue, which starts a
+// scan of the project, recent sessions and the shell history.
 for (const [label, bot, screen] of [
   ['Codex 0.157.1\'s /new menu, as captured, the answered turn above it', 'coder', CODEX_NEW_MENU],
   ['Codex 0.157.1\'s folder-trust question, as captured', 'coder', CODEX_TRUST],
   ['Codex 0.157.1\'s hooks review, as captured', 'coder', CODEX_HOOKS_REVIEW],
   ['Codex 0.157.1\'s hooks review, as captured, its selection moved to the second choice', 'coder', CODEX_HOOKS_REVIEW_ON_TWO],
   ['Claude Code\'s offer to teach auto mode', 'writer', CLAUDE_TEACH_AUTO],
+  ['Claude Code 2.1.283\'s form to teach auto mode, as captured', 'writer', CLAUDE_TEACH_FORM],
+  ['Claude Code 2.1.283\'s form to teach auto mode, its selection moved to Continue', 'writer', CLAUDE_TEACH_FORM_ON_CONTINUE],
 ]) {
   test(`a tab showing ${label} gets no nudge, and the answer says a question is waiting`, async (t) => {
     const box = await createSandbox(t);
@@ -218,6 +225,21 @@ test('a harness Orca finds busy is not typed into while its screen shows a quest
   await assertQueuedUntyped(box, 'busy, with the update offer');
 });
 
+// Covers #416 where Orca's wait times out: what Orca says of a tab showing the
+// teach form was not seen, so the busy answer is asked too.
+test('a Claude tab Orca finds busy is not typed into while its screen shows the form to teach auto mode', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await fleetIn(box);
+  await box.orca.set({ waitIdle: 'busy' });
+  await showIn(box, await tabOf(bots, 'writer'), { screen: CLAUDE_TEACH_FORM });
+
+  const answer = await send(box, 'writer');
+
+  assert.equal(answer.nudged, false, `got: ${JSON.stringify(answer)}`);
+  assert.equal(answer.blocked, QUESTION, `got: ${JSON.stringify(answer)}`);
+  await assertQueuedUntyped(box, 'busy, with the teach form');
+});
+
 // Covers the interface: where Orca names a reason, that reason stays the
 // `blocked` value. It describes what the kit does today and passes before the
 // change; it holds the new look to leaving Orca's word in place.
@@ -248,6 +270,21 @@ test('the plain report says the tab has something waiting to be answered, names 
   await assertQueuedUntyped(box, 'the plain report');
 });
 
+// Covers #416, "says": the plain report for a tab on the teach form, as for
+// any question.
+test('the plain report for a tab on the form to teach auto mode says it is waiting on a question, and nothing was typed', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await fleetIn(box);
+  await showIn(box, await tabOf(bots, 'writer'), { screen: CLAUDE_TEACH_FORM });
+
+  const result = await box.run(sendArgs('writer'));
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(result.stdout.includes(`(${QUESTION})`), `the report should name what the tab is waiting on, got:\n${result.stdout}`);
+  assert.match(result.stdout, /nothing was typed/, `and say nothing was typed, got:\n${result.stdout}`);
+  await assertQueuedUntyped(box, 'the plain report, teach form');
+});
+
 // Covers the boundary: screens that ask nothing are nudged as ever. These pass
 // before the change too; they hold the new guard to not swallowing every nudge.
 for (const [label, bot, screen] of [
@@ -258,6 +295,8 @@ for (const [label, bot, screen] of [
   ['Codex 0.157.1 after an answered turn, its wrapped echo above the input line, as captured', 'coder', CODEX_ANSWERED],
   ['a numbered list in the model\'s answer, the input line below it', 'writer', NUMBERED_ANSWER],
   ['a question that is history, the input line back below it', 'writer', QUESTION_IN_HISTORY],
+  // #416: the form's own words are old text here, not a form that is up.
+  ['the teach form\'s words quoted in history, the input line back below them', 'writer', FORM_IN_HISTORY],
 ]) {
   test(`${label}: no question, and the tab is nudged as ever`, async (t) => {
     const box = await createSandbox(t);
@@ -369,6 +408,23 @@ test('a Claude session whose screen shows a question gets no /reload-skills, and
   const box = await createSandbox(t);
   const bots = await skillsFleetIn(box);
   await showIn(box, await tabOf(bots, BOT, 'daily'), { screen: CLAUDE_TEACH_AUTO });
+
+  const sessions = await build(box, bots);
+
+  assert.deepEqual(sessions, [
+    { session: 'daily', harness: 'claude', state: 'blocked', blocked: QUESTION },
+    { session: 'reviewer', harness: 'codex', state: 'next-turn', read: [codexSkillMd(bots)] },
+  ]);
+  assert.deepEqual(Object.values(await sentSinceLaunch(box)).flat(), [], `no ${RELOAD}, and nothing else, typed anywhere`);
+});
+
+// Covers #416, `/reload-skills`: a Claude session on the teach form is reported
+// blocked on `question-on-screen`, and nothing is typed. A return after
+// `/reload-skills` would press Continue.
+test('a Claude session on the form to teach auto mode gets no /reload-skills, and is reported blocked on it', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await skillsFleetIn(box);
+  await showIn(box, await tabOf(bots, BOT, 'daily'), { screen: CLAUDE_TEACH_FORM });
 
   const sessions = await build(box, bots);
 
@@ -578,9 +634,9 @@ test('when Orca refuses to read the screen, restart reports as it did before: no
 // demand, so this is the one place that look is held to the screens. It tests
 // the suite's own helper, so it passes before the kit changes.
 test('the system tests\' look finds every harness question here, and none on a screen that asks nothing', () => {
-  // Claude Code's unnumbered trust list is in neither list: the look is not
-  // asked to find it, since the waits never pass it anyway (`tui-idle` times
-  // out on it, seen live).
+  // Claude Code's unnumbered forms are questions to this look, by the keys
+  // their foot rows offer (#416): the teach form, and the trust list with it,
+  // which the waits never pass anyway (`tui-idle` times out on it, seen live).
   for (const [label, screen] of [
     ['the update offer', CODEX_UPDATE_OFFER],
     ['Codex 0.157.1\'s /new menu, captured, the answered turn above it', CODEX_NEW_MENU],
@@ -588,6 +644,9 @@ test('the system tests\' look finds every harness question here, and none on a s
     ['Codex 0.157.1\'s hooks review, captured', CODEX_HOOKS_REVIEW],
     ['Codex 0.157.1\'s hooks review on its second choice, captured', CODEX_HOOKS_REVIEW_ON_TWO],
     ['Claude Code\'s offer to teach auto mode', CLAUDE_TEACH_AUTO],
+    ['Claude Code 2.1.283\'s form to teach auto mode, captured', CLAUDE_TEACH_FORM],
+    ['Claude Code 2.1.283\'s form to teach auto mode on Continue', CLAUDE_TEACH_FORM_ON_CONTINUE],
+    ['Claude Code 2.1.283\'s trust list, captured', CLAUDE_TRUST],
   ]) {
     assert.notEqual(questionOn(screen), undefined, `${label} is a question`);
   }
@@ -599,9 +658,14 @@ test('the system tests\' look finds every harness question here, and none on a s
     ['Codex 0.157.1 after an answered turn, captured', CODEX_ANSWERED],
     ['a numbered list in an answer', NUMBERED_ANSWER],
     ['a question that is history', QUESTION_IN_HISTORY],
+    ['the teach form\'s words in history', FORM_IN_HISTORY],
   ]) {
     assert.equal(questionOn(screen), undefined, `${label} is no question`);
   }
+  assert.ok(
+    questionOn(CLAUDE_TEACH_FORM).some((row) => row.includes('Teach auto mode about your environment?')),
+    'what it gives back for a form holds the form\'s title, for a wait that ran out to show',
+  );
   assert.ok(
     questionOn(CODEX_UPDATE_OFFER).some((row) => row.includes('1. Update now')),
     'what it gives back is the question itself, for a wait that ran out to show',

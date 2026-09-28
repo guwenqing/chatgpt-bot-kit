@@ -289,7 +289,7 @@ otherwise `/Applications/Orca.app/Contents/Resources/bin/orca`. A bare
 | Codex's `Where should the new conversation run?` | `\r` | **Current checkout** | Codex 0.157.1 |
 | Codex's update offer, `1. Update now` | `\r` | **Update now**, where it starts | Codex 0.156.1 |
 | `[oh-my-zsh] Would you like to update?` | `n` | no: the user updates it | oh-my-zsh bf77e35 |
-| Claude Code's `Teach auto mode…` | `\x1b` | Esc, **Not now** | Not yet proven, below |
+| Claude Code's `Teach auto mode…` | `\x1b` | Esc cancels; no return | Not yet proven, below |
 
 Each key counts on where the selection starts on the version named. Read the
 screen before you send: if the selection is elsewhere or the options have
@@ -298,9 +298,11 @@ return: on Codex's update offer that took the highlighted **Update now**,
 whatever the digit was. Codex's trust said `1. Yes, continue` on older
 versions. Its hooks review sometimes starts on `2` already: then return alone.
 0.157.1 has had no newer release to offer, so its update offer was proven on
-0.156.1. Claude Code's `Teach auto mode` has not been seen live on 2.1.283:
-Esc is Not now in its code, and 2.1.278 was answered with `2. Not now`.
-Not now, because Yes writes the user's settings. Codex's hooks
+0.156.1. Claude Code's `Teach auto mode` on 2.1.283 is a form, not a list,
+ending `Enter to continue · Esc to cancel`: never send it a return, since
+Enter is Continue, which scans the project, recent sessions and the machine's
+shell history. Esc cancels in its code; that is not yet proven live. On 2.1.278
+it was a numbered list, answered with `2. Not now`. Codex's hooks
 question matters most. The kit's hook is how the book learns which
 conversation the session is running, and until it is answered the
 conversation has not started. Codex's trust applies to the repository root,
