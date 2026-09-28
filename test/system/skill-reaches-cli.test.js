@@ -25,6 +25,11 @@
 //   3. It asks reader-bot, in one line typed into its own tab, to do what the
 //      obk-bot-building skill says to do after that edit, for target-bot. The
 //      line names the skill, the bots folder and the edit, and no command.
+//      The checks below run once reader-bot's turn is over: it said the done
+//      word the line asks for, or its tab sat idle at its prompt with its
+//      record unchanged. A bot can rightly end its turn on a question to the
+//      user instead, such as a yes for the permission rules the build listed
+//      (live run 3), and that is no failure of the test's.
 //
 // How the two CLIs are told apart, without touching the machine's `obk`:
 //
@@ -357,6 +362,13 @@ const shellCommandsIn = (lines) => lines
   .filter((item) => item?.type === 'tool_use' && item.name === 'Bash' && typeof item.input?.command === 'string')
   .map((item) => item.input.command);
 
+/** The text a line says, where it says it as text: not a tool's answer. */
+function textsOf(line) {
+  const content = line.message?.content;
+  if (typeof content === 'string') return [content];
+  if (!Array.isArray(content)) return [];
+  return content.filter((item) => item?.type === 'text' && typeof item.text === 'string').map((item) => item.text);
+}
 
 // ------------------------------------------------------------- the bots
 
@@ -381,8 +393,51 @@ const askFor = (bots) => [
   'Use your obk-bot-building skill.',
   `In the bots folder ${bots}, the rules list in ${TARGET}'s bot.yaml was just edited by hand to add kit:${UNIT}.`,
   `Do what that skill says to do after such an edit, for ${TARGET} only, and nothing else.`,
-  `When it is done, reply with ${DONE} in lower case.`,
+  `When you have done what the skill says, end your reply with ${DONE} in lower case,`,
+  'also when you are waiting on a yes for something else.',
 ].join(' ');
+
+/** How long reader-bot's tab has to stay idle at its prompt, its record unchanged, for its turn to count as over. */
+const SETTLED_MS = 10000;
+
+/**
+ * Wait, up to ANSWER_MS, for reader-bot's turn to be over, and say how it
+ * ended. It is over when the done word is on the screen, or when the ask is in
+ * the conversation's record and the tab has sat idle at its plain prompt, with
+ * no question up and nothing added to the record, for SETTLED_MS. A bot can
+ * rightly end its turn on a question of its own to the user, such as a yes for
+ * permission rules the build listed, without the word (live run 3); that is
+ * the second way. A question of the harness's own (a permission prompt, a
+ * menu) is not idle at the prompt, so the wait goes on for the person
+ * attending.
+ */
+async function turnOver(handle, home, id) {
+  let since;
+  let count;
+  return until(
+    'reader-bot\'s turn to be over',
+    ANSWER_MS,
+    async () => {
+      if (screenOf(handle).includes(DONE.toLowerCase())) return 'with the done word';
+      const lines = linesOf(home, id);
+      const asked = lines.some((line) => line.type === 'user' && textsOf(line).some((text) => text.includes(DONE)));
+      const look = orca(['terminal', 'wait', '--terminal', handle, '--for', 'tui-idle', '--timeout-ms', '5000']);
+      const idle = look.ok === true && look.result?.wait?.blockedReason === undefined
+        && waitingOn(orca, handle) === undefined && notAtPrompt(handle) === undefined;
+      if (!asked || !idle) {
+        since = undefined;
+        return undefined;
+      }
+      if (since === undefined || lines.length !== count) {
+        since = Date.now();
+        count = lines.length;
+        return undefined;
+      }
+      return Date.now() - since >= SETTLED_MS ? `idle at its prompt for ${SETTLED_MS / 1000}s, without the done word` : undefined;
+    },
+    () => whatIsUp(handle),
+  );
+}
 
 test('a Claude bot that follows the obk-bot-building skill reaches the CLI that launched its tab, and the machine\'s obk is not run', async (t) => {
   const before = {
@@ -478,7 +533,7 @@ test('a Claude bot that follows the obk-bot-building skill reaches the CLI that 
   // 3. The ask, typed at reader-bot's plain prompt.
   await atPrompt(handle);
   typeIntoClaude(handle, askFor(bots));
-  await until(`reader-bot to answer ${DONE.toLowerCase()}`, ANSWER_MS, async () => (screenOf(handle).includes(DONE.toLowerCase()) ? true : undefined), () => whatIsUp(handle));
+  t.diagnostic(`reader-bot's turn ended ${await turnOver(handle, reader, id)}`);
 
   // What it ran, as its own record has it.
   const commands = shellCommandsIn(linesOf(reader, id));
