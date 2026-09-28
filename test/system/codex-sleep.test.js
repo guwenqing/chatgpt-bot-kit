@@ -39,8 +39,10 @@
 //      way, `obk message send`, so the kit gates and types its notice into the
 //      tab. Printed as diagnostics: what the send said (typed and seen, typed
 //      but not seen, held back and why); whether the sleep ended, and how long
-//      after the send; whether the bot read the mail within READ_MS; and
-//      whether its tab went idle. Only what the observation needs is asserted:
+//      after the send; whether the bot read the mail; and whether its tab went
+//      idle. They are watched until both bots have read their mail, READ_MS at
+//      most, and a fact not seen by then is printed as not seen in the time
+//      actually watched. Only what the observation needs is asserted:
 //      the sleep was still running when the mail was sent, and the mail was
 //      queued.
 //
@@ -376,7 +378,9 @@ test('a GPT-6 Codex bot told to wait sleeps in its turn; a notice to it is obser
   t.diagnostic(`${SLEEPER.title}: the send said ${JSON.stringify({ nudged, nudgeUnseen, nudgeTrouble, blocked })}`);
 
   // Watched together, up to READ_MS: the awake bot reading its mail, and what
-  // becomes of the sleeper.
+  // becomes of the sleeper. The watch stops as soon as both have read their
+  // mail, so a fact not seen by then is reported as not seen in the time that
+  // was watched, never as not within READ_MS.
   const seen = { awakeRead: null, sleepEnded: null, sleeperRead: null, sleeperIdle: null };
   const readUntil = sentAt + READ_MS;
   while (Date.now() < readUntil) {
@@ -389,7 +393,8 @@ test('a GPT-6 Codex bot told to wait sleeps in its turn; a notice to it is obser
     if (seen.awakeRead !== null && seen.sleeperRead !== null) break;
     await setTimeout(3000);
   }
-  const after = (at) => (at === null ? `not within ${READ_MS / 1000}s` : `${Math.round((at - sentAt) / 1000)}s after the send`);
+  const watched = Math.round((Date.now() - sentAt) / 1000);
+  const after = (at) => (at === null ? `not seen in the ${watched}s watched after the send` : `${Math.round((at - sentAt) / 1000)}s after the send`);
   t.diagnostic(`${SLEEPER.title}: its sleep ended ${after(seen.sleepEnded)}`);
   t.diagnostic(`${SLEEPER.title}: it read its mail ${after(seen.sleeperRead)}`);
   t.diagnostic(`${SLEEPER.title}: its tab went idle ${after(seen.sleeperIdle)}`);
