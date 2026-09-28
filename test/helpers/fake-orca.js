@@ -125,7 +125,14 @@
 //                 'unseen'       no turn start within the wait: stages
 //                                input_accepted alone, and Orca's warning that
 //                                the Enter may have been swallowed, naming
-//                                the request id to confirm it with
+//                                the request id to confirm it with. The
+//                                default, in place of 'turn-started', for a
+//                                tab with a harness launched in it while
+//                                `waitIdle` says 'busy' (as the last `terminal
+//                                wait` found it, when it is a list): seen live
+//                                (#402), a busy harness's receipt never showed
+//                                turn_started, even after a 60 s wait. A
+//                                `submit` a test sets wins over that.
 //                 'unsupported'  Orca did not watch the line at all and answers
 //                                a receipt it builds itself: stages
 //                                input_accepted alone, `provider` and
@@ -814,7 +821,14 @@ if (command === 'terminal send') {
   // Whether the line started a turn is in the receipt, and only when Orca was
   // asked to watch for it (see `submit` at the top of this file).
   const requestId = retryRequest ?? randomUUID();
-  const submit = terminal.submit ?? state.submit ?? 'turn-started';
+  // A harness busy mid-turn queues the line, and Orca sees no turn start
+  // (#402). Busy as the last `terminal wait` found it, the way helpers/fake-ps.js
+  // reads `waitIdle`.
+  const idleNow = Array.isArray(state.waitIdle)
+    ? state.waitIdle[Math.min(Math.max(callsSoFar('terminal wait') - 1 - (state.waitIdleFrom ?? 0), 0), state.waitIdle.length - 1)]
+    : state.waitIdle;
+  const busy = launchedIn(terminal) !== undefined && idleNow === 'busy';
+  const submit = terminal.submit ?? state.submit ?? (busy ? 'unseen' : 'turn-started');
   const unwatched = UNWATCHED[submit];
   const seen = unwatched === undefined && waitSubmit !== undefined && submit === 'turn-started';
   const warnings = unwatched !== undefined
