@@ -125,7 +125,7 @@ function forBot(bots, name, onlySession, window) {
   const claimed = sessionIdsIn(book);
 
   // A conversation the book names is its session's wherever the harness filed
-  // it: the book says whose it is (ADR 0002, ADR 0012). One filed under another
+  // it: the book says whose it is (ADR 0012). One filed under another
   // folder, or whose record cannot be opened to say which folder it ran in, is
   // found by its id instead, and counted or said to be unreadable (#396).
   for (const id of claimed) {

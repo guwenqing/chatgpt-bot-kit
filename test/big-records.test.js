@@ -26,8 +26,8 @@
 //   6. Reading a big file in pieces does not break a character in two: a user
 //      turn whose emoji straddles a 64 KiB boundary is still found, whole.
 //   7. A conversation the book names under a session is that session's,
-//      wherever its record was filed (the architect's ruling on #396; ADR 0002
-//      and 0012): `obk usage` counts it under that session, big or not, and not
+//      wherever its record was filed (the architect's ruling on #396; ADR
+//      0012): `obk usage` counts it under that session, big or not, and not
 //      as unclaimed. One filed elsewhere that the book does not name is not
 //      this bot's at all. The live case was a conversation carried into a bot
 //      by hand, having started in another folder.
