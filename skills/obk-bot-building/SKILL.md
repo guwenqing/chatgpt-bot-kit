@@ -19,6 +19,10 @@ own commands write them.
 These are defaults for work where nothing says otherwise. A user who asks for
 something else gets what they asked for; say which of these you left and why.
 
+Where this skill says `obk`, run the kit that started your tab, `"${OBK_CLI:-obk}"`,
+in its place: in a tab the kit launched that is the kit's own path, and anywhere
+else it is plain `obk`.
+
 ## Ask whether this wants a new bot
 
 Look at the fleet before you add to it. Where a bot already there could own

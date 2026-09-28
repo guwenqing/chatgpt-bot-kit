@@ -25,6 +25,10 @@ act on your own, and that is set by the charter you are working under.
 These are defaults for work where nothing says otherwise. A user who asks for
 something else gets what they asked for; say which of these you left and why.
 
+Where this skill says `obk`, run the kit that started your tab, `"${OBK_CLI:-obk}"`,
+in its place: in a tab the kit launched that is the kit's own path, and anywhere
+else it is plain `obk`.
+
 ## Start from what is on disk
 
 Read the fleet before you talk about it. `obk roster` reports what each bot
