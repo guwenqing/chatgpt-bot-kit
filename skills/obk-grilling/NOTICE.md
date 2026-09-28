@@ -73,7 +73,7 @@ words where they are quoted here:
   against the session log (19:12:40, 19:15:38), which is the fix the skill
   gives.
 
-Three deliberate departures from `grilling` and `domain-modeling`, so they are
+Five deliberate departures from `grilling` and `domain-modeling`, so they are
 not mistaken for consolidation:
 
 - **A round is three questions, not the whole frontier.** `grilling` says to
