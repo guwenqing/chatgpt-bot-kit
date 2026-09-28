@@ -149,7 +149,19 @@ npm, counts as that harness when `ps` shows it carrying this tab's
 shell started it on the kit's launch line, which sets that variable for the
 harness alone. A program the shell starts later has no mark, and one the
 harness starts has the harness as its parent. This counts only where Orca names
-an agent in the tab at all. (The architect, #261; the owner may overrule.) A
+an agent in the tab at all. A tab Orca restored by itself carries no mark, and
+keeps the name rule: a native harness there is typed into as before, one under
+another name is "cannot tell". A sender inside Codex's sandbox cannot read
+another process's environment, since `ps` does not run there and Orca's
+runtime gives no pid, so from there a program under another name is "cannot
+tell" (#350), while the name rule works through the runtime as before. The
+marker is proven: on macOS `ps -E` reads a same-user process's environment
+(#318), and live on Orca 1.4.215 a Claude Code 2.1.283 run as the child of a
+`node` wrapper on the kit's launch-line shape led its tab carrying the mark,
+was nudged idle and busy by mail from a codex-cli 0.157.1 session, and a `less`
+in its place got nothing (#261, PR #417; tech notes, section 1). A real npm
+install, where `node` is the harness itself, and Codex through npm were not
+seen. (The architect, #261; the owner may overrule.) A
 program Orca names no agent for, one under another name without that mark,
 and a pid, group or environment that cannot be read, are "cannot tell"; then
 the kit says it cannot tell, and it types nothing.
@@ -328,10 +340,11 @@ architect, #224 and #343; the owner may overrule.)
 - Bad: a user without Orca cannot use the kit.
 - Bad: the kit reads the operating system's process table as well as Orca, and
   `diagnostics memory` may change. A harness run under another name, such as
-  `node`, is nudged when the kit's launch line started it (#261). In a tab
-  Orca restored by itself it carries no mark and stays "cannot tell", and so
-  does every tab for a sender inside Codex's sandbox, where `ps` does not run
-  and Orca's runtime gives no pid (#350).
+  `node`, is nudged when the kit's launch line started it (#261). Such a
+  harness in a tab Orca restored by itself carries no mark and stays "cannot
+  tell", and so does such a harness for a sender inside Codex's sandbox, where
+  `ps` does not run and Orca's runtime gives no pid (#350). A native harness
+  in either place is typed into by the name rule, as before.
 - Good: mail sent from a Codex session at the kit's `auto` level nudges an
   idle receiver, as mail from a Claude session does, and `health`, `restart`,
   the skills reload and grooming read a tab from there too (#298).
@@ -434,5 +447,6 @@ architect, #224 and #343; the owner may overrule.)
   front app, in place of the `project.update` call, and prints the reload line
   only when that was not done (#343). It replaced ADR 0024.
 - 2026-09-28, this record: a harness under another name is recognised by the
-  kit's launch mark, read with `ps`, and nudged; restored tabs and senders
-  inside Codex's sandbox stay "cannot tell" (#261). It replaces ADR 0025.
+  kit's launch mark, read with `ps`, and nudged; such a harness in a restored
+  tab, or for a sender inside Codex's sandbox, stays "cannot tell", while the
+  name rule is unchanged (#261). It replaces ADR 0025.
