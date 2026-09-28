@@ -1,9 +1,9 @@
-# ADR 0025: Orca is the host
+# ADR 0031: Orca is the host
 
-Date: 2026-09-26.
-Status: superseded by [ADR 0031](0031-orca-is-the-host.md).
-Decided by: the owner, in his design session of 2026-09-19, and on 2026-09-20 for the plain folder; the architect, for #232 and PR #260, for the sentences marked so; the owner on 2026-09-24 for calling Orca's runtime through Orca's own client (#224), with the architect deciding how the user is told, for the sentences marked so; the architect, for #329, for the kit's own reading of a tab's screen before it types into it, for the sentences marked so; the architect, for #298, for asking Orca's runtime who is in front of a tab where `ps` cannot read it, for the sentences marked so; the owner on 2026-09-26 for Orca's own Force Reload after a removal (#343), with the architect deciding how the menu item is found, for the sentences marked so. The owner may overrule the architect's sentences. Consulted: the coordinator, who researched Orca. A sentence marked (proposed) is not decided yet.
-Supersedes: [ADR 0024](0024-orca-is-the-host.md).
+Date: 2026-09-28.
+Status: accepted.
+Decided by: the owner, in his design session of 2026-09-19, and on 2026-09-20 for the plain folder; the architect, for #232 and PR #260, for the sentences marked so; the owner on 2026-09-24 for calling Orca's runtime through Orca's own client (#224), with the architect deciding how the user is told, for the sentences marked so; the architect, for #329, for the kit's own reading of a tab's screen before it types into it, for the sentences marked so; the architect, for #298, for asking Orca's runtime who is in front of a tab where `ps` cannot read it, for the sentences marked so; the owner on 2026-09-26 for Orca's own Force Reload after a removal (#343), with the architect deciding how the menu item is found, for the sentences marked so; the architect, for #261, for recognising the harness the kit launched by its launch mark, for the sentences marked so. The owner may overrule the architect's sentences. Consulted: the coordinator, who researched Orca. A sentence marked (proposed) is not decided yet.
+Supersedes: [ADR 0025](0025-orca-is-the-host.md).
 
 ## Context
 
@@ -142,10 +142,17 @@ pid Orca gives in `orca diagnostics memory`. It only reads, and it never
 kills. The shell in front means no harness is in the tab. The kit types a
 nudge into a tab only when the process leading the foreground group is the
 harness Orca names in `agentIdentity`, and Orca sees nothing on screen waiting
-to be answered. A program Orca names no agent for, or one under another name,
-is "cannot tell", as is a pid or group that cannot be read; then the kit says
-it cannot tell, and it types nothing. (The architect, #232 and PR #260; the
-owner may overrule.)
+to be answered. (The architect, #232 and PR #260; the owner may overrule.) A
+process under another name, such as `node` for a harness installed through
+npm, counts as that harness when `ps` shows it carrying this tab's
+`ORCA_TAB_ID` and an `OBK_TAB_SHELL` equal to its own parent's pid: the tab's
+shell started it on the kit's launch line, which sets that variable for the
+harness alone. A program the shell starts later has no mark, and one the
+harness starts has the harness as its parent. This counts only where Orca names
+an agent in the tab at all. (The architect, #261; the owner may overrule.) A
+program Orca names no agent for, one under another name without that mark,
+and a pid, group or environment that cannot be read, are "cannot tell"; then
+the kit says it cannot tell, and it types nothing.
 
 Where `ps` cannot read the tab, as inside Codex's sandbox, the kit asks
 Orca's runtime `terminal.inspectProcess` for the tab instead, through Orca's
@@ -268,9 +275,14 @@ architect, #224 and #343; the owner may overrule.)
   shows before its session has started (#329).
 - **Waiting for Orca to match the new footer.** Outside the repo, and the next
   change to a footer would open the same gap (#329).
-- **A marker in the launch shell's environment, read with `ps -E`.** Open, not
-  yet proven (#261). Until then a harness run through a wrapper such as `node`
-  is "cannot tell".
+- **The launch mark alone, without its parent.** Not chosen: a program the
+  harness starts inherits the mark, so it would count as the harness (#261).
+- **The launch mark counting where Orca names no agent.** Not chosen: a
+  harness Orca has not named yet may be seconds into its launch and not ready
+  for a line, which is why the name rule does not count it either (#261).
+- **Loosening the name rule without a mark**, so that any program in front
+  counts where Orca names an agent. Not chosen: #232's `less` after the
+  harness quit would be typed into (#261's boundary).
 - **An Orca CLI command that sends the event.** None does: `repo add` and
   `project setup-existing-folder` on a path Orca knows return without it,
   `repo set-base-ref` throws on a folder project first, `project setups` sends
@@ -315,8 +327,11 @@ architect, #224 and #343; the owner may overrule.)
   is PRD 6.8's, #237's and #238's.
 - Bad: a user without Orca cannot use the kit.
 - Bad: the kit reads the operating system's process table as well as Orca, and
-  `diagnostics memory` may change. A harness installed through a wrapper gets
-  "cannot tell", so its mail waits without a nudge, until #261.
+  `diagnostics memory` may change. A harness run under another name, such as
+  `node`, is nudged when the kit's launch line started it (#261). In a tab
+  Orca restored by itself it carries no mark and stays "cannot tell", and so
+  does every tab for a sender inside Codex's sandbox, where `ps` does not run
+  and Orca's runtime gives no pid (#350).
 - Good: mail sent from a Codex session at the kit's `auto` level nudges an
   idle receiver, as mail from a Claude session does, and `health`, `restart`,
   the skills reload and grooming read a tab from there too (#298).
@@ -373,12 +388,14 @@ architect, #224 and #343; the owner may overrule.)
   in every run measured; low for the window call until the window has been
   seen to re-read. (Proposed in #262; not recorded when it was decided.)
 - Checked by: `test/harness-in-tab.test.js` for the reading of a tab,
+  `test/node-harness-nudge.test.js` for a harness under another name,
   `test/front-without-ps.test.js` for asking Orca's runtime where `ps` cannot,
   `test/question-on-screen.test.js` for the reading of its screen,
   `test/orca-window.test.js` for the window call, the Force Reload and their
   fallbacks, and the
   system tests, which drive the real Orca, `test/system/harness-question.test.js`
-  and `test/system/codex-nudge.test.js` among them.
+  `test/system/codex-nudge.test.js` and
+  `test/system/node-harness-nudge.test.js` among them.
 
 ## History
 
@@ -412,7 +429,10 @@ architect, #224 and #343; the owner may overrule.)
 - 2026-09-26, [ADR 0024](0024-orca-is-the-host.md): where `ps` cannot read a
   tab, as inside Codex's sandbox, the kit asks Orca's runtime
   `terminal.inspectProcess` instead (#298). It replaced ADR 0023.
-- 2026-09-26, this record: after a removal, the kit has Orca's window
-  force-reload itself through Orca's menu when Orca is the front app, in
-  place of the `project.update` call, and prints the reload line only when
-  that was not done (#343). It replaces ADR 0024.
+- 2026-09-26, [ADR 0025](0025-orca-is-the-host.md): after a removal, the kit
+  has Orca's window force-reload itself through Orca's menu when Orca is the
+  front app, in place of the `project.update` call, and prints the reload line
+  only when that was not done (#343). It replaced ADR 0024.
+- 2026-09-28, this record: a harness under another name is recognised by the
+  kit's launch mark, read with `ps`, and nudged; restored tabs and senders
+  inside Codex's sandbox stay "cannot tell" (#261). It replaces ADR 0025.
