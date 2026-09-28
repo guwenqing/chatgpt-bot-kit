@@ -31,9 +31,12 @@
 //      `orca diagnostics memory`, then `ps`): `node` is in front, its parent
 //      is the tab's shell, and its environment carries `ORCA_TAB_ID=<this
 //      tab>` and `OBK_TAB_SHELL=<its parent>`.
-//   4. Idle: `obk message send` from a second session of the same bot, `sender`,
-//      at another approval level so the mail goes through Orca and not
-//      Claude's own messaging. The send must say it nudged, and the subject,
+//   4. Idle: `obk message send --from` a second session of the same bot,
+//      `sender`, a Codex one, so the mail goes through Orca and not Claude's
+//      own messaging, which carries mail between two Claude sessions of one
+//      approval class (auto and ask are one class). The test sends it itself;
+//      the sender's Codex only has to have come up once, for its mailbox. The
+//      send must say it nudged, and the subject,
 //      which only the nudge carries, must show up in the tab.
 //   5. Busy: the test asks the wrapped Claude for a long answer, and while it
 //      is writing it (Orca's wait times out and the answer's last line, which
@@ -93,17 +96,22 @@
 //      Bot Father or writes to it. Leave it.
 //   2. `Node Nudge target`: Claude Code's folder trust, once for the folder.
 //      Its selection starts on `No, exit`, so it takes a down-arrow and then
-//      return. `sender` comes up in the same folder after it and should ask
-//      nothing.
-//   3. `Node Nudge target`, after its first turn, and again under the wrapper:
+//      return.
+//   3. `Node Nudge sender`, a Codex tab in the same folder
+//      (`<tmp>/obk-system-node-nudge-*/bots/node-nudge`, bot `node-nudge`):
+//      Codex's folder trust (`1`, trust and continue), then Codex's `Hooks
+//      need review` (`2`, "Trust all and continue"). Nothing here waits on
+//      them: the sender's mailbox is made by its launch line before Codex
+//      starts, and the test sends for it.
+//   4. `Node Nudge target`, after its first turn, and again under the wrapper:
 //      Claude Code's form "Teach auto mode about your environment?" ("←/→ to
 //      change usage · Enter to continue · Esc to cancel"). Seen live on 2.1.283
 //      in the first run of this test, where a typed /exit pressed Continue on
 //      it. Answer it (Esc cancels it) before the test types into the tab: if
 //      it is still up then, the test fails with the screen and types nothing.
-//   4. `Node Nudge target`: if Claude Code asks before it runs the command the
+//   5. `Node Nudge target`: if Claude Code asks before it runs the command the
 //      nudge names, allow it.
-//   5. Any tab, if its harness offers an update: accept it (PRD 6.5).
+//   6. Any tab, if its harness offers an update: accept it (PRD 6.5).
 //
 // Nothing typed into a Claude tab here answers any of these. Before each line
 // with a return that goes to Claude Code (/exit twice and the long request)
@@ -530,11 +538,11 @@ test('a Claude Code running as node on the kit\'s launch line is nudged idle and
     'bot', 'create', '--bots', bots, '--name', BOT.name, '--harness', 'claude',
     '--charter', `${BOT.display} exists for one system test run and owns nothing.`,
   ]);
-  // `target` at the kit's default, `auto`; `sender` at `ask`, so mail between
-  // them crosses approval classes and goes through Orca, not Claude's own
-  // messaging (PRD 6.9).
+  // `target` is Claude at the kit's default, `auto`; `sender` is Codex, so mail
+  // between them goes through Orca, where the kit types the nudge, and not by
+  // Claude's own messaging (PRD 6.9).
   obkJson(['session', 'add', '--bots', bots, '--bot', BOT.name, '--name', 'target', `--prompt=${promptOf(bots, 'target')}`]);
-  obkJson(['session', 'add', '--bots', bots, '--bot', BOT.name, '--name', 'sender', '--approval', 'ask', `--prompt=${promptOf(bots, 'sender')}`]);
+  obkJson(['session', 'add', '--bots', bots, '--bot', BOT.name, '--name', 'sender', '--harness', 'codex', `--prompt=${promptOf(bots, 'sender')}`]);
 
   /** Bring one session up, alone, and hand back its tab's entry. */
   const bringUp = (session) => {
@@ -584,7 +592,8 @@ test('a Claude Code running as node on the kit\'s launch line is nudged idle and
   }
   t.diagnostic(`the kit gave claude: ${args.join(' ')}; conversation ${id}`);
 
-  // The sender needs a mailbox of its own, which its launch line makes.
+  // The sender needs a mailbox of its own, which its launch line makes before
+  // its Codex starts. Codex's first-run screens in its tab are the attendee's.
   bringUp('sender');
   await until(
     'sender to have its mailbox',
