@@ -108,6 +108,7 @@ import { parse } from 'yaml';
 
 import { cliEntry } from '../helpers/cli.js';
 import { waitingOn } from '../helpers/screens.js';
+import { tabGuard } from '../helpers/tab-guard.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
 
 /**
@@ -148,22 +149,13 @@ const HOOK_MS = 60000;
  */
 const READY_MS = 180000;
 
-/** Ask Orca something and read its JSON. Never the blanket close, on any road. */
-function orca(args) {
-  assert.ok(
-    !(args.includes('--all') && args.includes('close')),
-    `refusing to run \`orca ${args.join(' ')}\`: it would take away someone else's tabs`,
-  );
-  const done = spawnSync(ORCA, [...args, '--json'], { encoding: 'utf8' });
-  assert.equal(done.error, undefined, `could not run ${ORCA}: ${done.error?.message}`);
-  let answer;
-  try {
-    answer = JSON.parse(done.stdout);
-  } catch {
-    assert.fail(`orca ${args.join(' ')} did not answer JSON: ${done.stdout}${done.stderr}`);
-  }
-  return answer;
-}
+/**
+ * Ask Orca something and read its JSON. Never the blanket close, on any road.
+ * Every tab it opens or closes is counted as this test's, for the check at the
+ * end (#246, #426).
+ */
+const guard = tabGuard(ORCA);
+const { orca } = guard;
 
 /** Every terminal Orca knows about right now. */
 function allTerminals() {
@@ -216,12 +208,12 @@ function obk(args) {
   return done;
 }
 
-/** Run `obk ... --json` and read the answer it printed. */
+/** Run `obk ... --json` and read the answer it printed. A tab it says it opened is this test's own. */
 function obkJson(args) {
   const done = obk([...args, '--json']);
   assert.equal(done.status, 0, `obk ${args.join(' ')} failed: ${done.stdout}${done.stderr}`);
   try {
-    return JSON.parse(done.stdout);
+    return guard.openedByKit(JSON.parse(done.stdout));
   } catch {
     assert.fail(`obk ${args.join(' ')} --json did not print JSON: ${done.stdout}`);
   }
@@ -400,32 +392,32 @@ test('a restart closes the session\'s tab and brings the conversation back with 
 
   // Registered before anything is created, so it runs however this test ends.
   t.after(async () => {
-    const closed = [];
-    for (const each of homes) {
-      for (const terminal of terminalsAt(each)) {
-        if (before.handles.has(terminal.handle)) continue;
-        orca(['terminal', 'close', '--terminal', terminal.handle, '--tab']);
-        closed.push(terminal.handle);
-      }
-    }
+    // Only this test's own tabs are closed. A tab it did not create at one of
+    // its homes is not its to close: that project and the bots folder stay
+    // where they are, and the test fails naming the tab (#426).
+    const { closed, foreign } = guard.closeOwnAt(homes);
+    const held = new Set(foreign.map((one) => one.home));
     let deleted = 0;
     for (const setup of allSetups()) {
-      if (!homes.includes(setup.path) || before.setups.has(setup.id)) continue;
+      if (!homes.includes(setup.path) || before.setups.has(setup.id) || held.has(setup.path)) continue;
       orca(['project', 'setup-delete', '--setup', setup.id]);
       deleted += 1;
     }
     // Orca's sidebar keeps a deleted project's row until its window is
     // rebuilt (#343): the kit's own reload, as after a retire.
     if (deleted > 0 && !(await reloadWindow())) t.diagnostic(RELOAD_LINE);
+    assert.deepEqual(foreign, [], `tabs this test did not create are open at its homes, so it closed only its own and left those projects and ${bots} in place`);
     await removeBotsFolderAndSiblings(bots);
 
-    // The point of all the care above: this test closes only tabs of its own.
-    // The loop above picks them, and it picks only a tab listed at one of the
-    // homes this test made and not open before it began; the one tab the kit
-    // closed for it is checked where the restart ran. Whether every tab open
-    // before is still open is not asked: on a busy machine other sessions
-    // close their own tabs while this runs (seen live, #330), and that is not
-    // this test's doing. What is asked is that nothing of its own is left.
+    // The point of all the care above: this test closes only tabs of its own,
+    // the ones the kit said it opened for it and the spare it opened itself;
+    // the tab the kit closed for it is checked where the restart ran too. A tab
+    // open before and gone now is said, not failed: on a busy machine other
+    // sessions close their own tabs while this runs (seen live, #330), and that
+    // is not this test's doing. What is asked is that nothing of its own is left.
+    const { closedNotOurs, goneElsewhere } = guard.verdict(before.handles);
+    assert.deepEqual(closedNotOurs, [], 'this test closed tabs it did not create');
+    if (goneElsewhere.length > 0) t.diagnostic(`tabs open before this test and closed elsewhere meanwhile: ${goneElsewhere.join(', ')}`);
     for (const each of homes) {
       assert.deepEqual(await terminalsAfterClosing(each, closed), [], `this test left tabs behind in ${each}`);
     }
@@ -510,6 +502,7 @@ test('a restart closes the session\'s tab and brings the conversation back with 
   // the harness in it is killed and Orca's resume record goes with the tab —
   // and opens a new one on the conversation the book holds.
   const answer = obkJson(['restart', '--bots', bots, '--bot', BOT.name]);
+  guard.closedByKit(answer.closed);
 
   // The facts, not the exact shape: what the answer carries key for key is
   // pinned in `test/restart.test.js`, and a cosmetic difference there is not
@@ -732,32 +725,32 @@ test('#330: a Codex session restarted again and again comes back each time, on t
 
   // Registered before anything is created, so it runs however this test ends.
   t.after(async () => {
-    const closed = [];
-    for (const each of homes) {
-      for (const terminal of terminalsAt(each)) {
-        if (before.handles.has(terminal.handle)) continue;
-        orca(['terminal', 'close', '--terminal', terminal.handle, '--tab']);
-        closed.push(terminal.handle);
-      }
-    }
+    // Only this test's own tabs are closed. A tab it did not create at one of
+    // its homes is not its to close: that project and the bots folder stay
+    // where they are, and the test fails naming the tab (#426).
+    const { closed, foreign } = guard.closeOwnAt(homes);
+    const held = new Set(foreign.map((one) => one.home));
     let deleted = 0;
     for (const setup of allSetups()) {
-      if (!homes.includes(setup.path) || before.setups.has(setup.id)) continue;
+      if (!homes.includes(setup.path) || before.setups.has(setup.id) || held.has(setup.path)) continue;
       orca(['project', 'setup-delete', '--setup', setup.id]);
       deleted += 1;
     }
     // Orca's sidebar keeps a deleted project's row until its window is
     // rebuilt (#343): the kit's own reload, as after a retire.
     if (deleted > 0 && !(await reloadWindow())) t.diagnostic(RELOAD_LINE);
+    assert.deepEqual(foreign, [], `tabs this test did not create are open at its homes, so it closed only its own and left those projects and ${bots} in place`);
     await removeBotsFolderAndSiblings(bots);
 
-    // The point of all the care above: this test closes only tabs of its own.
-    // The loop above picks them, and it picks only a tab listed at one of the
-    // homes this test made and not open before it began; the one tab the kit
-    // closed for it is checked where the restart ran. Whether every tab open
-    // before is still open is not asked: on a busy machine other sessions
-    // close their own tabs while this runs (seen live, #330), and that is not
-    // this test's doing. What is asked is that nothing of its own is left.
+    // The point of all the care above: this test closes only tabs of its own,
+    // the ones the kit said it opened for it; the tab the kit closed for it at
+    // each restart is checked where the restart ran too. A tab open before and
+    // gone now is said, not failed: on a busy machine other sessions close their
+    // own tabs while this runs (seen live, #330), and that is not this test's
+    // doing. What is asked is that nothing of its own is left.
+    const { closedNotOurs, goneElsewhere } = guard.verdict(before.handles);
+    assert.deepEqual(closedNotOurs, [], 'this test closed tabs it did not create');
+    if (goneElsewhere.length > 0) t.diagnostic(`tabs open before this test and closed elsewhere meanwhile: ${goneElsewhere.join(', ')}`);
     for (const each of homes) {
       assert.deepEqual(await terminalsAfterClosing(each, closed), [], `this test left tabs behind in ${each}`);
     }
@@ -823,6 +816,7 @@ test('#330: a Codex session restarted again and again comes back each time, on t
   for (const [round, [form, shaped]] of PASSPHRASE_FORMS.entries()) {
     const which = `restart ${round + 1} of ${RESTARTS}`;
     const answer = obkJson(['restart', '--bots', bots, '--bot', CODEX_BOT.name]);
+    guard.closedByKit(answer.closed);
 
     assert.equal((answer.closed ?? []).length, 1, `${which}: the run should say it closed one tab, got: ${JSON.stringify(answer.closed)}`);
     assert.equal(answer.closed[0].terminal, current.terminal, `${which}: and it is the session's own tab that went`);
