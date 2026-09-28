@@ -56,9 +56,12 @@
 // harness update offer. The Codex bot's session is given its folder's trust at
 // launch (#240, test/helpers/codex-trust.js), so Codex asks neither its
 // directory trust nor its hooks review, and writes nothing about this folder
-// into the user's own ~/.codex/config.toml. Every wait below says what the tab
-// is showing when it runs out of patience, so a run that was left alone names
-// the screen that stopped it.
+// into the user's own ~/.codex/config.toml. It also runs without Codex's sleep
+// tool (#432): told to "wait", a Codex on a GPT-6 model called its built-in
+// `sleep` in its turn, for hours, and the waits below for its tab to be idle
+// before anything is sent to it never ended (#240's live set). Every wait below
+// says what the tab is showing when it runs out of patience, so a run that was
+// left alone names the screen that stopped it.
 //
 // **Nothing here types at a bot.** Each one is given its whole part in its
 // start prompt, and the only lines that go into these tabs afterwards are the
@@ -400,6 +403,14 @@ const PART_WAY = 'STEP-03';
 const LAST_STEP = `STEP-${COUNT_TO}`;
 
 /**
+ * The subjects of the busy case's two mails, which the kit's nudge line carries:
+ * the one that starts the work, and the one that arrives while it runs. Neither
+ * is a receipt: nothing here waits for either word on a screen.
+ */
+const START_WORK = 'start the work';
+const WHILE_BUSY = 'while you are busy';
+
+/**
  * Where the busy receiver reads its mail to: the time, in whole seconds, just
  * before the kit's check ran, and then the check's answer. The time comes
  * first, so the read itself can only have been later.
@@ -473,6 +484,16 @@ const exchangePrompts = (bots, bot) => (bot.harness === 'claude'
  * was working — the tab has to be busy long enough for "busy" to be a fact
  * anybody can check.
  *
+ * The work starts when the test says so, not when the session starts: a first
+ * mail, subject START_WORK, whose nudge line carries that subject, and whose
+ * body the bot never reads. It used to start from the start prompt, and the
+ * case leaned on something it could not bound: the Codex tab's own first-run
+ * screens, answered by a person, which kept the loop from starting until the
+ * Claude bot was ready too. With Codex's trust given at launch (#240) the loop
+ * started at once and was over before the Claude bot's trust was answered, and
+ * so before anything could be sent (#432's live run). The test sends the first
+ * mail once both bots are ready, and the loop cannot end before then.
+ *
  * Its mail it reads the way the receiver in case 3 does: the kit's own check,
  * in its own tab, with its shell writing the answer to a file, here after the
  * time. So when the mail was read is a time its own shell wrote down, and so
@@ -485,9 +506,11 @@ const busyPrompts = (bots, bot) => {
   return (bot.harness === 'codex'
     ? [
       ...aBotOf(bots),
-      'As soon as you are running, run exactly this command, once, and wait for it to finish:',
+      'Say nothing now and wait.',
+      `When a line arrives saying fleet mail is waiting with the subject ${START_WORK}, do not run the command that line names,`,
+      'and do not read that mail. Run exactly this command instead, once, and wait for it to finish:',
       work(path.join(home, STEPS_FILE)),
-      'When a line arrives saying fleet mail is waiting, do not run the command that line names.',
+      `When a line arrives saying fleet mail is waiting with the subject ${WHILE_BUSY}, do not run the command that line names.`,
       'Run exactly this command instead, once, and then wait and say nothing else:',
       `{ date +%s; ${check}; } > ${path.join(home, MAIL_FILE)}`,
       'The two files these commands write in your folder are the only thing you write.',
@@ -685,10 +708,19 @@ test('a busy receiver finishes what it was doing before it reads its mail', asyn
   const steps = path.join(homeOf('mail-codex'), STEPS_FILE);
   const mailRead = path.join(homeOf('mail-codex'), MAIL_FILE);
 
-  // It is part way through what its start prompt gave it: some of the loop's
-  // lines are in its file, and the last one is not. That is what says the mail
-  // below arrives at a receiver with work in hand, and there are some thirty
-  // seconds of loop still to run after it.
+  // The work starts now, with both bots ready, by the first mail's nudge (see
+  // `busyPrompts`): the loop has not run before this, so it cannot have ended.
+  assert.equal(await readFile(steps, 'utf8').catch(() => ''), '', `the premise: the loop has not started before it is sent for: ${steps}`);
+  const started = obkJson([
+    'message', 'send', '--bots', bots, '--to', 'mail-codex/daily', '--from', 'mail-claude/daily',
+    '--subject', START_WORK, '--text', 'Start the work your instructions give you for this subject.',
+  ]);
+  assert.equal(started.nudged, true, `the premise: the kit typed the nudge that starts the work into the receiver's tab: ${JSON.stringify(started)}`);
+
+  // It is part way through that work: some of the loop's lines are in its
+  // file, and the last one is not. That is what says the mail below arrives at
+  // a receiver with work in hand, and there are some thirty seconds of loop
+  // still to run after it.
   await partWayThrough(receiver, steps);
 
   // Mail arrives in the middle of it. The kit types the nudge in; nobody
@@ -697,7 +729,7 @@ test('a busy receiver finishes what it was doing before it reads its mail', asyn
   // did: a tab it found blocked, or could not be sure of, gets nothing typed.
   const sent = obkJson([
     'message', 'send', '--bots', bots, '--to', 'mail-codex/daily', '--from', 'mail-claude/daily',
-    '--subject', 'while you are busy', '--text', `${mail} — nothing to do, just read this.`,
+    '--subject', WHILE_BUSY, '--text', `${mail} — nothing to do, just read this.`,
   ]);
   assert.equal(sent.sent, true, `the send should have gone through: ${JSON.stringify(sent)}`);
   assert.equal(sent.nudged, true, `the kit should have typed its nudge into the receiver's tab while it worked: ${JSON.stringify(sent)}`);

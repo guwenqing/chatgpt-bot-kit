@@ -20,10 +20,13 @@
 // Every Codex here is given its folder's trust at launch (#240,
 // test/helpers/codex-trust.js), so Codex asks neither its folder trust nor its
 // hooks review and writes nothing about this folder into the user's own
-// ~/.codex/config.toml. The kit's launch lines carry it from bot.yaml, a restart
-// included (worked out from src/launch.js, not proven live). The bare resume
-// carries the same three arguments and nothing else of the kit's line: without
-// them Codex would ask this folder's trust again, where Orca's own restore
+// ~/.codex/config.toml; and each runs without Codex's sleep tool (#432): a
+// Codex on a GPT-6 model told to wait sleeps in its turn otherwise, and the
+// waits here for its turn to end would not end. The kit's launch lines carry
+// them from bot.yaml, a restart included (worked out from src/launch.js, not
+// proven live). The bare resume carries the same arguments and nothing else of
+// the kit's line: without them Codex would ask this folder's trust again, and
+// could sleep, where Orca's own restore
 // resumes in a folder the user trusted long ago. What this test is about, the
 // missing `OBK_TAB_SHELL` and `--no-daemon`, is the same either way.
 //
