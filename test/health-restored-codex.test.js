@@ -8,8 +8,11 @@
 // carries the tab of whichever session started that server. So such a
 // session's commands run under another tab's identity, and the kit refuses its
 // tab-bound commands. `obk restart` is the fix, and it can stop at "open in
-// another app" while another session's server still holds the conversation, so
-// that session needs a restart too (seen live, 2026-09-27, codex-cli 0.157.1).
+// another app" while Codex's shared server still holds the conversation (seen
+// live, 2026-09-27, codex-cli 0.157.1). That server outlives the sessions that
+// started it, so the way past is Codex's own `codex app-server daemon stop`,
+// once every Codex session health names is back on the kit's line, and then
+// that session's restart again.
 //
 // A Claude session Orca brought back runs no such server, and its finding does
 // not say any of this.
@@ -92,6 +95,22 @@ const SHARED_SERVER = /\b(?:shared|background)\b[^.]{0,40}\bserver\b|\bdaemon\b/
 const OTHER_APP = /\banother app\b/i;
 
 /**
+ * What frees a conversation Codex's shared server still holds, seen live
+ * (#408, run 5): the server outlives the sessions that started it, so a second
+ * restart meets "open in another app" again.
+ */
+const DAEMON_STOP = 'codex app-server daemon stop';
+
+/**
+ * Words that warn what the stop reaches: Codex's shared server ends for
+ * everything using it. Read loosely.
+ */
+const STOP_REACH = /\b(?:everything|every|all|any|other)\b[^.;]{0,80}\b(?:using|uses|use|sharing|shares|share|connected to|attached to)\b[^.;]{0,40}\b(?:it|server)\b/i;
+
+/** Words that say that reach includes Codex sessions the kit did not start, the owner's own among them. */
+const BEYOND_THE_KIT = /\boutside (?:the kit|obk)\b|\bCodex sessions? (?:the kit|obk) (?:did not|didn't|does not|doesn't) start\b|\b(?:your|the owner's|the user's) own Codex\b/i;
+
+/**
  * What a Codex session's finding adds: its commands run under the tab of
  * whichever session started Codex's shared server, so the kit refuses its
  * tab-bound commands; restart is the fix; and the other-app case.
@@ -102,6 +121,9 @@ function assertSaysSharedServer(says, bot, session) {
   assert.match(says, /\brefus/i, `so the kit refuses its tab-bound commands, got: ${says}`);
   assert.match(says, /\brestart\b/, `restart is the fix, got: ${says}`);
   assert.match(says, OTHER_APP, `and a restart can stop at "open in another app", got: ${says}`);
+  assert.ok(says.includes(DAEMON_STOP), `and that the way past it is Codex's own \`${DAEMON_STOP}\`, got: ${says}`);
+  assert.match(says, STOP_REACH, `and warns that the stop ends Codex's shared server for everything using it, got: ${says}`);
+  assert.match(says, BEYOND_THE_KIT, `Codex sessions outside the kit, the owner's own, included, got: ${says}`);
 }
 
 test('H1 each Codex session Orca brought back is told its commands run under another tab\'s identity, that restart fixes it, and the other-app case', async (t) => {

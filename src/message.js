@@ -186,10 +186,6 @@ export function sendMessage(bots, { to: target, from: sender, tab, subject, text
  * check hands over all of it (issue #299).
  */
 export function checkMail(bots, { bot: botName, session: sessionName, tab, peek = false }) {
-  // Reading as the caller's own terminal takes the caller to be the session in
-  // its tab, so a caller that cannot be shown to be it is refused first (#408).
-  if (tab !== undefined && process.env[TERMINAL_ENV] !== undefined) sessionInTab(bots, tab);
-
   const asked = sessionName === undefined && botName === undefined
     ? whoIsWriting(bots, undefined, tab, '--bot <bot> [--session <name>]: whose mail to read')
     : findSession(bots, sessionName === undefined ? botName : `${botName}/${sessionName}`);
@@ -393,7 +389,7 @@ export function sessionInTab(bots, tab, shell = process.env[SHELL_ENV]) {
 
 /** Why a caller in a Codex session's tab is not taken to be that session, and what puts it right. */
 const notTheCodexInTab = (found, tab) =>
-  `this command takes its caller from the Orca tab it runs in, ${tab}, which is ${found.bot}/${found.session}'s, a Codex session; but it did not come from a Codex the kit started there: nothing of the kit's launch line is in its environment. A Codex that Orca brought back by itself, after a restart or an update, runs its commands in Codex's shared background server, under the tab of whichever session started that server, so the kit cannot tell which session is asking. Nothing was done. \`${shellWord(ownCli())} restart --bots ${shellWord(found.bots)} --bot <bot> --session <name>\` starts each such session on the kit's line; \`${shellWord(ownCli())} health --bots ${shellWord(found.bots)}\` names them. If Codex then shows "This conversation is open in another app", the background server another session started still holds that conversation: restart that session too, then try again.`;
+  `this command takes its caller from the Orca tab it runs in, ${tab}, which is ${found.bot}/${found.session}'s, a Codex session; but it did not come from a Codex the kit started there: nothing of the kit's launch line is in its environment. A Codex that Orca brought back by itself, after a restart or an update, runs its commands in Codex's shared background server, under the tab of whichever session started that server, so the kit cannot tell which session is asking. Nothing was done. \`${shellWord(ownCli())} restart --bots ${shellWord(found.bots)} --bot <bot> --session <name>\` starts each such session on the kit's line; \`${shellWord(ownCli())} health --bots ${shellWord(found.bots)}\` names them. If Codex then shows "This conversation is open in another app", Codex's shared background server still holds that conversation, and it can outlive the session that started it: once every such session is back on the kit's line, stop the server with Codex's own \`codex app-server daemon stop\`, then restart the stuck session again. That stops the server for everything using it, Codex sessions outside the kit included, so first check that nothing else needs it.`;
 
 /**
  * The message as it will travel: the text itself when it is short enough, and

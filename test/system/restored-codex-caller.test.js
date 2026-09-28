@@ -44,16 +44,36 @@
 //   - A bare resume on 0.157.1 once failed with "Cannot use the shared
 //     background server" (tech notes, section 3). It is typed once more; a
 //     second failure stops the test with the screen.
-//   - Whether the restart meets "This conversation is open in another app":
-//     the shared server, a child of `first`'s restored Codex, may hold
-//     `second`'s conversation after `second` is relaunched (seen live, #408).
-//     The bot's restart takes both sessions, which is what the kit's refusal
-//     advises. A session still showing that screen once both are through is
-//     restarted alone once more, with a diagnostic; showing it again fails,
-//     because then the kit's advice does not hold. The test never presses R.
-//   - Whether the shared server outlives the tabs it was started from. The
-//     test signals no process and does not look for one; a server left running
-//     would be Codex's, holding this test's throwaway conversations.
+//   - Whether the restart meets "This conversation is open in another app".
+//     It did in live run 5: the shared server outlives the sessions that
+//     started it and goes on holding the conversation, so a second plain
+//     restart met the same screen. The kit's advice for it is Codex's own
+//     `codex app-server daemon stop`, once every Codex session is back on the
+//     kit's line, and then the stuck session's restart again; the test follows
+//     it. After the bot's restart, a session at that screen gets the stop,
+//     only when the one managed server running is the test's own (as in the
+//     cleanup; one that is not fails the test and is not stopped), and then
+//     its own restart, which must come back ready. Still at the screen, the
+//     test fails with it: the advice does not hold. The test never presses R.
+//     That the restart works after the stop has not been seen live yet.
+//   - Whether the shared server outlives the tabs it was started from. It
+//     does: the live run of 2026-09-27 left `codex app-server --listen unix://
+//     --managed-daemon` and `codex app-server daemon pid-update-loop` running,
+//     reparented to pid 1, after every tab of the test's was closed. Left
+//     there, the owner's Codex sessions would join it at their next bare
+//     resume, under a dead test tab's identity. So the cleanup stops it, pass
+//     or fail, with Codex's own `codex app-server daemon stop`, and only when
+//     the one managed server running is the test's own: its environment, read
+//     with `ps -E`, names the test's bots folder. One that is not the test's
+//     is left alone and the test fails saying so. Codex's updater helper,
+//     `codex app-server daemon pid-update-loop`, outlives the stop (seen live),
+//     and nothing of Codex's ends it; Codex, not the test, started it. So a
+//     helper still there after the stop is named in a diagnostic, with the pid
+//     Codex records for it in ~/.codex/app-server-daemon/daemon-updater.pid,
+//     and never signalled.
+//   - And so the test refuses to start while a managed Codex server is already
+//     running: its resumes would join that one, and the cleanup could not
+//     tell it from its own.
 //
 // The mailbox is looked at the way test/system/codex-nudge.test.js does and
 // for the same reason: Orca's own listing, `orca orchestration inbox`, read
@@ -74,7 +94,10 @@
 //     `obk`, and has the bots run it the same way.
 //
 // `orca terminal close --worktree … --all` is never run here, and the helper
-// below refuses to run it at all. `ps` is only ever read, one pid at a time.
+// below refuses to run it at all. `ps` is only ever read: one pid at a time,
+// but for one listing of this user's command lines, kept to the lines of
+// Codex's server. Nothing here signals a process by a pid; the only thing
+// stopped is Codex's server, by Codex's own command.
 //
 // It is slow: two real Codex sessions, a quit and a resume each, a restart of
 // both, and commands run by the model twice. Ten minutes or more.
@@ -98,7 +121,7 @@ import test from '../helpers/system.js';
 import { setTimeout } from 'node:timers/promises';
 import { parse } from 'yaml';
 
-import { cliEntry, shellWord } from '../helpers/cli.js';
+import { cliEntry, shellWord, spellingsOf } from '../helpers/cli.js';
 import { waitingOn } from '../helpers/screens.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
@@ -294,8 +317,106 @@ const environmentWords = (pid) => (psOf(pid, ['-E', '-ww', '-o', 'command=']) ??
 /** The command line of one process, word by word. */
 const argvOf = (pid) => (psOf(pid, ['-ww', '-o', 'command=']) ?? '').split(/\s+/);
 
+/**
+ * The words on the command lines of Codex's shared background server and its
+ * helper, as seen live on codex-cli 0.157.1 (#408).
+ */
+const MANAGED_SERVER = ['app-server', '--managed-daemon'];
+const PID_UPDATE_LOOP = ['app-server', 'pid-update-loop'];
+
+/**
+ * This user's processes whose command line carries each of `words`, as
+ * `{ pid, command }`. Command lines only, read to find Codex's server; no
+ * environment is read here, and nothing found here is signalled.
+ */
+function processesWith(words) {
+  const done = spawnSync('ps', ['-U', String(process.getuid()), '-ww', '-o', 'pid=,command='], { encoding: 'utf8' });
+  assert.equal(done.status, 0, `ps could not list this user's processes: exit ${done.status}`);
+  return done.stdout.split('\n')
+    .map((line) => /^\s*(\d+)\s+(.*)$/.exec(line))
+    .filter((found) => found !== null)
+    .map(([, pid, command]) => ({ pid: Number(pid), command }))
+    .filter(({ pid, command }) => pid !== process.pid && words.every((word) => command.split(/\s+/).includes(word)));
+}
+
+/**
+ * Whether one process's environment names `folder`: some variable whose value
+ * is that folder or inside it, macOS's `/private` in front or not. Looked
+ * through, never printed.
+ */
+function environmentNames(pid, folder) {
+  const spellings = [folder, folder.replace(/^\/private(?=\/)/, '')];
+  return environmentWords(pid).some((word) => {
+    const at = word.indexOf('=');
+    const value = at > 0 ? word.slice(at + 1) : '';
+    return spellings.some((one) => value === one || value.startsWith(`${one}/`));
+  });
+}
+
+/** Where Codex records its updater helper: read, never acted on. */
+const UPDATER_RECORD = path.join(os.homedir(), '.codex', 'app-server-daemon', 'daemon-updater.pid');
+
+/** The pid Codex's record of its updater names, as words for the diagnostic, or why it could not be read. */
+function recordedUpdater() {
+  try {
+    const { pid } = JSON.parse(readFileSync(UPDATER_RECORD, 'utf8'));
+    return `, which names pid ${pid}`;
+  } catch (error) {
+    return `, which could not be read (${error.code ?? error.message})`;
+  }
+}
+
+/** Whether one pid is still a process. */
+const alive = (pid) => psOf(pid, ['-o', 'pid=']) !== undefined;
+
+/**
+ * Stop the managed Codex server this test started, if one is running: with
+ * Codex's own `codex app-server daemon stop`, and only when every managed
+ * server running names `bots` in its environment. Answers what is wrong, for
+ * the cleanup to fail on after the rest of it is done.
+ */
+async function stopOurCodexServer(t, bots) {
+  const servers = processesWith(MANAGED_SERVER);
+  if (servers.length === 0) return [];
+  const others = servers.filter((one) => !environmentNames(one.pid, bots));
+  if (others.length > 0) {
+    return [
+      `a managed Codex server this test did not start is running (pid ${others.map((one) => one.pid).join(', ')}), so none was stopped;`
+      + ' `codex app-server daemon stop` would stop it too. Look at it before anything else starts a bare Codex.',
+    ];
+  }
+  const stopped = spawnSync('codex', ['app-server', 'daemon', 'stop'], { encoding: 'utf8', cwd: os.tmpdir(), timeout: 30000 });
+  t.diagnostic(`codex app-server daemon stop: exit ${stopped.status}${stopped.error ? ` (${stopped.error.message})` : ''}, said ${JSON.stringify(stopped.stdout.trim())}`);
+  const until = Date.now() + 15000;
+  while (servers.some((one) => alive(one.pid)) && Date.now() < until) await setTimeout(500);
+  const loops = processesWith(PID_UPDATE_LOOP);
+  if (loops.length > 0) {
+    t.diagnostic(
+      `Codex's updater helper (\`codex app-server daemon pid-update-loop\`, pid ${loops.map((one) => one.pid).join(', ')}) is still running after the stop.`
+      + ' Codex started it, not this test, and nothing of Codex\'s ends it, so this test cannot end it and leaves it alone.'
+      + ` Codex records it in ${UPDATER_RECORD}${recordedUpdater()}.`,
+    );
+  }
+  const left = servers.filter((one) => alive(one.pid));
+  return left.length === 0
+    ? []
+    : [`the managed Codex server this test started (pid ${left.map((one) => one.pid).join(', ')}) is still running after \`codex app-server daemon stop\``];
+}
+
 /** What Codex 0.157.1 printed when a resume could not use its shared server (tech notes, section 3). */
 const SHARED_SERVER_ERROR = 'Cannot use the shared background server';
+
+/** Codex's own stop of its shared server: the kit's advice for the other-app screen, and what this test runs for it. */
+const DAEMON_STOP = 'codex app-server daemon stop';
+
+/**
+ * Words that warn what the stop reaches: Codex's shared server ends for
+ * everything using it. Read loosely.
+ */
+const STOP_REACH = /\b(?:everything|every|all|any|other)\b[^.;]{0,80}\b(?:using|uses|use|sharing|shares|share|connected to|attached to)\b[^.;]{0,40}\b(?:it|server)\b/i;
+
+/** Words that say that reach includes Codex sessions the kit did not start, the owner's own among them. */
+const BEYOND_THE_KIT = /\boutside (?:the kit|obk)\b|\bCodex sessions? (?:the kit|obk) (?:did not|didn't|does not|doesn't) start\b|\b(?:your|the owner's|the user's) own Codex\b/i;
 
 /** What Codex shows when another process holds the conversation (seen live, #408). */
 const OTHER_APP_SCREEN = 'open in another app';
@@ -311,8 +432,13 @@ function assertRefusedAsRestored(what, { status, said }) {
   assert.notEqual(status, '0', `${what} from a Codex brought back without the kit's line should be refused, and exited 0: ${flat}`);
   assert.match(flat, /\bCodex\b/, `${what}: it says the caller is a Codex the kit did not start, got: ${flat}`);
   assert.match(flat, SHARED_SERVER, `${what}: and names Codex's shared background server, got: ${flat}`);
-  assert.match(flat, /\bobk'? restart\b/, `${what}: it names obk restart, got: ${flat}`);
+  // The kit names itself by the path it was started by (#220): here this
+  // checkout's CLI, never the bare `obk`.
+  assert.ok(spellingsOf(cliEntry).some((cli) => flat.includes(`${cli} restart`)), `${what}: it names the kit's own CLI running restart, got: ${flat}`);
   assert.match(flat, /\banother app\b/i, `${what}: and the "open in another app" case, got: ${flat}`);
+  assert.ok(flat.includes(DAEMON_STOP), `${what}: and Codex's own \`${DAEMON_STOP}\` as the way past it, got: ${flat}`);
+  assert.match(flat, STOP_REACH, `${what}: and warns that the stop ends Codex's shared server for everything using it, got: ${flat}`);
+  assert.match(flat, BEYOND_THE_KIT, `${what}: Codex sessions outside the kit, the owner's own, included, got: ${flat}`);
 }
 
 // ------------------------------------------------------------- the mailbox
@@ -429,6 +555,14 @@ async function codexUpIn(handle, what) {
 }
 
 test('a Codex session brought back without the kit\'s line is refused its tab-bound commands, with the reason, and after obk restart they work', async (t) => {
+  // A managed server already running would take this test's resumes, and its
+  // cleanup could not tell that server from one of its own (see the header).
+  assert.deepEqual(
+    processesWith(MANAGED_SERVER).map((one) => one.pid),
+    [],
+    'a managed Codex server (`codex app-server --managed-daemon`) is already running on this machine, so this test\'s bare resumes'
+    + ' would join it under a tab this test did not make. Run it when none is running.',
+  );
   const before = {
     handles: new Set(allTerminals().map((terminal) => terminal.handle)),
     setups: new Set(allSetups().map((setup) => setup.id)),
@@ -457,6 +591,13 @@ test('a Codex session brought back without the kit\'s line is refused its tab-bo
     }
     // Orca's sidebar keeps a deleted project's row until its window is rebuilt (#343).
     if (deleted > 0 && !(await reloadWindow())) t.diagnostic(RELOAD_LINE);
+    // Codex's shared server outlives the tabs it was started from (see the header).
+    let serverTrouble;
+    try {
+      serverTrouble = await stopOurCodexServer(t, bots);
+    } catch (error) {
+      serverTrouble = [`could not look for Codex's shared server: ${error.message}`];
+    }
     await removeBotsFolderAndSiblings(bots);
 
     const { closedNotOurs, goneElsewhere } = guard.verdict(before.handles);
@@ -465,6 +606,7 @@ test('a Codex session brought back without the kit\'s line is refused its tab-bo
     for (const each of homes) {
       assert.deepEqual(await terminalsAfterClosing(each, closed), [], `this test left tabs behind in ${each}`);
     }
+    assert.deepEqual(serverTrouble, [], 'Codex\'s shared server is not left running under this test\'s identity');
   });
 
   obkJson(['init', '--bots', bots, '--harness', 'claude']);
@@ -583,18 +725,26 @@ test('a Codex session brought back without the kit\'s line is refused its tab-bo
   for (const session of SESSIONS) {
     if (await codexUpIn(tabs[session].terminal, `${session}'s new tab`) === 'other-app') stuck.push(session);
   }
-  for (const session of stuck) {
-    // The shared server may have held this conversation while this session
-    // was relaunched; both are restarted now, so once more is due to work.
-    t.diagnostic(`${session} came back at "${OTHER_APP_SCREEN}" after the bot's restart; restarted alone once more`);
-    const again = obkJson(['restart', '--bots', bots, '--bot', BOT.name, '--session', session]);
-    guard.closedByKit(again.closed);
-    tabs[session] = tabOf(again, session);
-    assert.equal(
-      await codexUpIn(tabs[session].terminal, `${session}'s second new tab`),
-      'ready',
-      `${session} is still at "${OTHER_APP_SCREEN}" after both sessions were restarted and it was restarted again: the kit's advice does not bring it back.${whatIsUp(tabs[session].terminal)}`,
+  if (stuck.length > 0) {
+    // The kit's advice: every Codex session is back on its line now, so stop
+    // the shared server that still holds the conversation, then restart the
+    // stuck session again. Only the test's own server is stopped.
+    const running = processesWith(MANAGED_SERVER).length;
+    t.diagnostic(
+      `${stuck.join(', ')} came back at "${OTHER_APP_SCREEN}" after the bot's restart; following the kit's advice: ${DAEMON_STOP}, then restart ${stuck.join(', ')} again`
+      + (running === 0 ? '. No managed Codex server is running, so there is nothing to stop.' : ''),
     );
+    assert.deepEqual(await stopOurCodexServer(t, bots), [], `before the stop the kit advises for "${OTHER_APP_SCREEN}"`);
+    for (const session of stuck) {
+      const again = obkJson(['restart', '--bots', bots, '--bot', BOT.name, '--session', session]);
+      guard.closedByKit(again.closed);
+      tabs[session] = tabOf(again, session);
+      assert.equal(
+        await codexUpIn(tabs[session].terminal, `${session}'s tab after ${DAEMON_STOP}`),
+        'ready',
+        `${session} is still at "${OTHER_APP_SCREEN}" after both sessions were restarted, ${DAEMON_STOP}, and its restart again: the kit's advice does not bring it back.${whatIsUp(tabs[session].terminal)}`,
+      );
+    }
   }
   for (const session of SESSIONS) {
     const front = inFront(tabs[session].terminal);

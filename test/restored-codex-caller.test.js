@@ -24,8 +24,11 @@
 // says why (the command did not come from the Codex the kit started in that
 // tab: a Codex Orca brought back runs its commands in Codex's shared background
 // server, under the tab of whichever session started it), names `obk restart`,
-// and says a restart can stop at "open in another app" while another session's
-// server holds the conversation, so that session needs a restart too. It
+// and says a restart can stop at "open in another app" while Codex's shared
+// server still holds the conversation. That server outlives the sessions that
+// started it, so a second restart does not help (seen live, run 5): the advice
+// is Codex's own `codex app-server daemon stop` once every Codex session is
+// back on the kit's line, then the stuck session's restart again. It
 // writes nothing: no message, nothing typed, no mailbox read, acknowledged or
 // bound, no temporary session made or retired, bot.yaml and the book as they
 // were.
@@ -35,7 +38,8 @@
 //
 // The words are the implementer's. What is read is the content, loosely: the
 // reason (Codex, its shared background server), the restart, the other-app
-// case. Every run is in the sandbox (helpers/cli.js), against the fake Orca.
+// case and `codex app-server daemon stop` for it. Every run is in the sandbox
+// (helpers/cli.js), against the fake Orca.
 
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -136,6 +140,23 @@ const SHARED_SERVER = /\b(?:shared|background)\b[^.]{0,40}\bserver\b|\bdaemon\b/
 const OTHER_APP = /\banother app\b/i;
 
 /**
+ * What frees a conversation Codex's shared server still holds, seen live
+ * (#408, run 5): the server outlives the sessions that started it, and a
+ * second restart meets "open in another app" again. Codex's own stop of it,
+ * once every Codex session is back on the kit's line, is the way past.
+ */
+const DAEMON_STOP = 'codex app-server daemon stop';
+
+/**
+ * Words that warn what the stop reaches: Codex's shared server ends for
+ * everything using it. Read loosely.
+ */
+const STOP_REACH = /\b(?:everything|every|all|any|other)\b[^.;]{0,80}\b(?:using|uses|use|sharing|shares|share|connected to|attached to)\b[^.;]{0,40}\b(?:it|server)\b/i;
+
+/** Words that say that reach includes Codex sessions the kit did not start, the owner's own among them. */
+const BEYOND_THE_KIT = /\boutside (?:the kit|obk)\b|\bCodex sessions? (?:the kit|obk) (?:did not|didn't|does not|doesn't) start\b|\b(?:your|the owner's|the user's) own Codex\b/i;
+
+/**
  * The refusal #408 asks for: not 0, a message rather than a crash, and it says
  * why (Codex, its shared background server), names `obk restart` (the kit's
  * own CLI, whose last word is obk), and the other-app case.
@@ -149,6 +170,9 @@ function assertRefusedAsRestored(result) {
   assert.match(said, SHARED_SERVER, `and why the kit cannot tell who asks: Codex's shared background server, got: ${said}`);
   assert.match(said, /\bobk'? restart\b/, `it names obk restart as the fix, got: ${said}`);
   assert.match(said, OTHER_APP, `and says a restart can stop at "open in another app", got: ${said}`);
+  assert.ok(said.includes(DAEMON_STOP), `and that the way past it is Codex's own \`${DAEMON_STOP}\`, got: ${said}`);
+  assert.match(said, STOP_REACH, `and warns that the stop ends Codex's shared server for everything using it, got: ${said}`);
+  assert.match(said, BEYOND_THE_KIT, `Codex sessions outside the kit, the owner's own, included, got: ${said}`);
 }
 
 /** Orca commands that write: send, type, open, bind, read a mailbox, close. */
@@ -468,3 +492,52 @@ test('R5 temp retire, from a Codex tab without the mark, is refused with the rea
   assert.equal(marked.code, 0, `${marked.stderr}${marked.stdout}`);
   assert.deepEqual(await sessionsOf(bots, 'coder'), ['daily', 'review']);
 });
+
+// ---------------------------------------------------------------------------
+// A caller that cannot reach Orca at all
+// ---------------------------------------------------------------------------
+
+/**
+ * Orca as a command inside a Codex sandbox with no network access sees it:
+ * `orca status` answers not ok, in Orca's words as the kit printed them in the
+ * live run of 2026-09-27. A Codex brought back by itself has none of the kit's
+ * `-c sandbox_workspace_write.network_access=true`, so this is where its
+ * commands run. The error code is the fake's own.
+ */
+const SANDBOX_BLOCKED = {
+  status: { id: 'x', ok: false, error: { code: 'runtime_unavailable', message: 'The Codex sandbox blocked this command from connecting to Orca (EPERM)' } },
+};
+
+/** What "Orca is not ready" looks like, loosely, whoever says it. */
+const ORCA_NOT_READY = /not ready|blocked this command from connecting to Orca/i;
+
+for (const [label, args, makeFirst] of [
+  ['message send with no --from', SEND, false],
+  ['message check naming nobody', CHECK, false],
+  ['temp make', MAKE, false],
+  ['temp retire', RETIRE, true],
+]) {
+  test(`R6 ${label}, from a Codex tab without the mark that cannot reach Orca, gives the #408 reason, not "Orca is not ready"; the marked caller there is told Orca is not ready`, async (t) => {
+    // Seen live: the kit asked Orca first, and the Codex brought back was told
+    // Orca was not ready, which sends its user to the wrong fix.
+    const box = await createSandbox(t);
+    const { bots, daily } = await fleet(box);
+    if (makeFirst) {
+      const made = await box.run(MAKE, { env: fromKitCodex(box, daily) });
+      assert.equal(made.code, 0, `the premise: daily made scout while Orca could be reached: ${made.stderr}${made.stdout}`);
+    }
+    await box.orca.set(SANDBOX_BLOCKED);
+
+    const refused = await refusedWithNothingDone(box, bots, args, fromRestoredCodex(box, daily));
+    const said = flat(`${refused.stdout}\n${refused.stderr}`);
+    assert.doesNotMatch(said, ORCA_NOT_READY, `the reason is the caller, not Orca, got: ${said}`);
+
+    // The contrast, in the same sandbox: the Codex the kit started is not in
+    // doubt, and is told what stops it.
+    const marked = await box.run(args, { env: fromKitCodex(box, daily) });
+    const told = flat(`${marked.stdout}\n${marked.stderr}`);
+    assert.notEqual(marked.code, 0, `the premise: Orca cannot be reached from here, got exit 0: ${told}`);
+    assert.match(told, ORCA_NOT_READY, `the marked caller is told Orca is not ready, got: ${told}`);
+    assert.doesNotMatch(told, SHARED_SERVER, `and not the #408 reason, got: ${told}`);
+  });
+}
