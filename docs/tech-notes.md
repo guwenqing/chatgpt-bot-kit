@@ -441,6 +441,11 @@ Nothing in the kit's code, tests or skills stands in his way.
   transcripts or settings. So nothing may send this form a return, and the kit's screen check refuses
   it by its own words (#416). Esc cancelling it stays read in code, not seen live (#370). **verified**
   (live, the form and its words; the Continue, worked out from the code)
+  Seen again (2026-09-28, about 17:00Z, 2.1.283 in auto mode, #239's live run 1), also right after
+  the first turn. `~/.claude.json` had no `autoModeEnvSetup` at all when read at 17:07Z, just after the
+  run, and nothing is known to have set it since 09:47Z; so the conditions read in the code above look
+  like not the whole story (worked out, not proven). Nothing answered it; the
+  test's teardown closed the tab, and `~/.claude/settings.json` was unchanged. Esc still not seen.
 - Anything else: type nothing and raise it with the user, naming the bot, the tab and what is on screen.
 
 The kit's own code does not change user-level settings on its own initiative.
