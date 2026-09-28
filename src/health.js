@@ -281,7 +281,11 @@ function runningOn(bots, home, bot, book, handles, sessions) {
       // see may still match, by the harness's own defaults; the rest of what
       // bot.yaml asks for is not on it either way.
       const drift = off.length === 0 ? '' : ` ${parts}, as the harness's own record of its conversation ${conversation} says.`;
-      found.push(finding('session', entry.tab, `${bot.name}'s session ${session.name} was not started by the kit: the harness in its tab ${entry.tab} carries nothing of the kit's launch line, as when Orca brings its tabs back by itself after a restart or an update. So it runs on the harness's own defaults and whatever Orca added, not on what ${path.join(home, 'bot.yaml')} asks for.${drift} ${restart} starts it on bot.yaml.`, bot.name));
+      // A Codex brought back this way also runs its commands in Codex's shared
+      // background server, under whichever tab started it (#408).
+      const daemon = harness !== 'codex' ? '' : ` Without the kit's line it also runs without --no-daemon, so its commands run in Codex's shared background server, under the tab of whichever session started that server: another tab's identity, not its own. So the kit refuses its commands that take the caller from its tab, such as reading its mail.`;
+      const held = harness !== 'codex' ? '' : ` If Codex then shows "This conversation is open in another app", the background server another session started still holds the conversation: restart that session too.`;
+      found.push(finding('session', entry.tab, `${bot.name}'s session ${session.name} was not started by the kit: the harness in its tab ${entry.tab} carries nothing of the kit's launch line, as when Orca brings its tabs back by itself after a restart or an update. So it runs on the harness's own defaults and whatever Orca added, not on what ${path.join(home, 'bot.yaml')} asks for.${drift}${daemon} ${restart} starts it on bot.yaml.${held}`, bot.name));
     } else if (off.length > 0) {
       found.push(finding('session', file, `${bot.name}'s session ${session.name} does not run on what ${path.join(home, 'bot.yaml')} asks for. ${parts}. That is what the harness's own record of its conversation ${conversation} says. A session takes these when it starts, so if bot.yaml changed after it started, ${restart} starts it on them; if not, something else set them, such as a default of the harness's own or a change made inside the session.`, bot.name));
     }

@@ -49,6 +49,7 @@ import {
   createSandbox,
   fakeProgram,
   harnessPartOf,
+  kitLaunchMark,
   mailboxStep,
   orcaCallsOf,
   orcaFlag,
@@ -100,8 +101,12 @@ async function settingsOf(bots, bot, name) {
 const exists = (file) => stat(file).then(() => true, () => false);
 const isDirectory = (file) => stat(file).then((found) => found.isDirectory(), () => false);
 
-/** The environment of a command run inside `terminal`, as Orca sets it in every pane. */
-const inTab = (box, terminal) => ({ ...box.env, ORCA_TERMINAL_HANDLE: terminal.handle, ORCA_TAB_ID: terminal.tabId });
+/**
+ * The environment of a command run inside `terminal`, as Orca sets it in every
+ * pane, and what the kit's launch line gave the harness there when that line
+ * started the tab (#408): every command here is one a session's harness runs.
+ */
+const inTab = (box, terminal) => ({ ...box.env, ORCA_TERMINAL_HANDLE: terminal.handle, ORCA_TAB_ID: terminal.tabId, ...kitLaunchMark(box, terminal) });
 
 /** The tab the book gives a session, and Orca's own record of it. */
 async function liveTab(box, bots, bot, name) {

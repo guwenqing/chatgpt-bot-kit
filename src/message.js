@@ -20,7 +20,7 @@ import path from 'node:path';
 
 import { MAILBOX_WAIT_MS, readBook, takeMailboxTurn } from './book.js';
 import { botDir, botNames, readBot } from './bot.js';
-import { harnessOf, isAddressOf, ownCli, reachesMail, shellWord } from './launch.js';
+import { harnessOf, isAddressOf, ownCli, reachesMail, SHELL_ENV, shellWord } from './launch.js';
 import { ackMailbox, coordinatorOf, postMessage, readMailbox, tabs, tabToTypeInto, TERMINAL_ENV, TIMED_OUT, typeIntoTab, useMailbox } from './orca.js';
 
 /**
@@ -186,6 +186,10 @@ export function sendMessage(bots, { to: target, from: sender, tab, subject, text
  * check hands over all of it (issue #299).
  */
 export function checkMail(bots, { bot: botName, session: sessionName, tab, peek = false }) {
+  // Reading as the caller's own terminal takes the caller to be the session in
+  // its tab, so a caller that cannot be shown to be it is refused first (#408).
+  if (tab !== undefined && process.env[TERMINAL_ENV] !== undefined) sessionInTab(bots, tab);
+
   const asked = sessionName === undefined && botName === undefined
     ? whoIsWriting(bots, undefined, tab, '--bot <bot> [--session <name>]: whose mail to read')
     : findSession(bots, sessionName === undefined ? botName : `${botName}/${sessionName}`);
@@ -360,16 +364,36 @@ function whoIsWriting(bots, sender, tab, asked = '--from <bot>/<session>: which 
   return found;
 }
 
-/** The session the book says is in this Orca tab, wherever in the fleet it is. */
-export function sessionInTab(bots, tab) {
+/**
+ * The session the book says is in this Orca tab, wherever in the fleet it is,
+ * when the caller is that session.
+ *
+ * A Codex session is the caller only when the kit's launch line started the
+ * Codex it runs under: `shell` is the mark that line leaves, and everything the
+ * harness runs inherits it. A Codex that Orca brought back by itself has no
+ * mark and no `--no-daemon`, so it runs its commands in Codex's shared
+ * background server, whose every process carries the tab of whichever session
+ * started it (#408). Its tab then says nothing about who is asking. Inside
+ * Codex's sandbox `ps` does not run, so the environment is all there is to go
+ * on. A Claude session has no such server, and one Orca brought back is still
+ * the session in its tab.
+ */
+export function sessionInTab(bots, tab, shell = process.env[SHELL_ENV]) {
   for (const name of botNames(bots)) {
     const book = readBook(botDir(bots, name));
     for (const [session, entry] of Object.entries(book.sessions)) {
-      if (entry?.tab === tab) return findSession(bots, `${name}/${session}`);
+      if (entry?.tab !== tab) continue;
+      const found = findSession(bots, `${name}/${session}`);
+      if (found.harness === 'codex' && (shell === undefined || shell === '')) throw new Error(notTheCodexInTab(found, tab));
+      return found;
     }
   }
   return undefined;
 }
+
+/** Why a caller in a Codex session's tab is not taken to be that session, and what puts it right. */
+const notTheCodexInTab = (found, tab) =>
+  `this command takes its caller from the Orca tab it runs in, ${tab}, which is ${found.bot}/${found.session}'s, a Codex session; but it did not come from a Codex the kit started there: nothing of the kit's launch line is in its environment. A Codex that Orca brought back by itself, after a restart or an update, runs its commands in Codex's shared background server, under the tab of whichever session started that server, so the kit cannot tell which session is asking. Nothing was done. \`${shellWord(ownCli())} restart --bots ${shellWord(found.bots)} --bot <bot> --session <name>\` starts each such session on the kit's line; \`${shellWord(ownCli())} health --bots ${shellWord(found.bots)}\` names them. If Codex then shows "This conversation is open in another app", the background server another session started still holds that conversation: restart that session too, then try again.`;
 
 /**
  * The message as it will travel: the text itself when it is short enough, and

@@ -40,6 +40,7 @@ import {
   bookIn,
   bookOf,
   createSandbox,
+  kitLaunchMark,
   recordSession,
   sessionIn,
   typedInto,
@@ -74,6 +75,16 @@ const inTab = (box, terminal) => ({ ...box.env, ORCA_TERMINAL_HANDLE: terminal.h
 async function obkIn(box, terminal, args) {
   const result = await box.run(args, terminal === null ? {} : { env: inTab(box, terminal) });
   assert.equal(result.code, 0, `obk ${args.join(' ')} should have worked:\n${result.stdout}${result.stderr}`);
+  return result;
+}
+
+/**
+ * The same, as the session's harness runs it in its own tab: with what the
+ * kit's launch line gave that harness when the line started the tab (#408).
+ */
+async function obkByHarness(box, terminal, args) {
+  const result = await box.run(args, { env: { ...inTab(box, terminal), ...kitLaunchMark(box, terminal) } });
+  assert.equal(result.code, 0, `obk ${args.join(' ')} should have worked in ${terminal.title}:\n${result.stdout}${result.stderr}`);
   return result;
 }
 
@@ -257,7 +268,7 @@ test('#228 check 4: a session checked by name from tab A keeps its mailbox bound
   const bots = await initIn(box, a);
   await addBot(box, a, 'coder', 'codex');
   await obkIn(box, a, ['up', '--bots', 'bots', '--bot', 'coder']);
-  await obkIn(box, await tabOf(box, bots, 'coder'), ['message', 'check', '--bots', 'bots']);
+  await obkByHarness(box, await tabOf(box, bots, 'coder'), ['message', 'check', '--bots', 'bots']);
   await assertBoundToItsOwnTab(box, bots, 'coder');
   await mail(box, a, 'coder', 'the staging host');
 
@@ -280,7 +291,7 @@ test('#228 check 4: Bot Father asking for another session\'s mail by name from i
   const a = await tabOf(box, bots, 'bot-father');
   await addBot(box, a, 'coder', 'codex');
   await obkIn(box, a, ['up', '--bots', 'bots', '--bot', 'coder']);
-  await obkIn(box, await tabOf(box, bots, 'coder'), ['message', 'check', '--bots', 'bots']);
+  await obkByHarness(box, await tabOf(box, bots, 'coder'), ['message', 'check', '--bots', 'bots']);
   await assertBoundToItsOwnTab(box, bots, 'coder');
   await mail(box, a, 'coder', 'the staging host');
 

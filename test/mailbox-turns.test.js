@@ -58,6 +58,7 @@ import {
   bookOf,
   createSandbox,
   fakeProgram,
+  launchLineEnv,
   orcaCallsOf,
   orcaFlag,
   recordSession,
@@ -171,6 +172,20 @@ const mailboxStep = (session = 'daily') => ['session', 'mailbox', '--bots', 'bot
 
 /** `obk message check` for coder/daily. */
 const CHECK = ['message', 'check', '--bots', 'bots', '--bot', 'coder', '--session', 'daily'];
+
+/**
+ * CHECK as coder's harness runs it in `terminal`: in that tab, with what the
+ * kit's launch line gives the harness it starts (#408). Every check here is
+ * that harness's, in a tab the kit launched.
+ */
+const checkFrom = (box, terminal) => box.run(CHECK, { env: { ...inTab(box, terminal), ...launchLineEnv(box) } });
+
+/** The same, and insist it worked. */
+async function checkIn(box, terminal) {
+  const result = await checkFrom(box, terminal);
+  assert.equal(result.code, 0, `obk ${CHECK.join(' ')} should have worked in ${terminal.title}:\n${result.stdout}${result.stderr}`);
+  return result;
+}
 
 // ---------------------------------------------------------------------------
 // Where coder starts from
@@ -496,7 +511,7 @@ test('#321 path 3 (check), two ups at once: A\'s message check acks nothing once
   const from = (await box.orca.calls()).length;
   const watch = watchTheBook(box, bots, a.tabId);
 
-  await obkFrom(box, a, CHECK);
+  await checkFrom(box, a);
   await second.letGo();
   const later = await second.finished;
   const movedAt = await watch.movedAt();
@@ -622,7 +637,7 @@ test('#321: a message check that waited for its turn while the book moved to ano
   await mail(box, 'the staging host');
   const b = await anotherTab(box, bots);
 
-  const { ran, since } = await startedWhileTheBookMoves(box, bots, a, b, () => obkFrom(box, a, CHECK));
+  const { ran, since } = await startedWhileTheBookMoves(box, bots, a, b, () => checkFrom(box, a));
 
   const said = ran.stdout + ran.stderr;
   assert.ok(!/^\s+at /m.test(said), `a message, not a crash:\n${said}`);
@@ -690,7 +705,7 @@ test('#321: waits are bounded, so the harness always starts', { concurrency: tru
       const from = (await box.orca.calls()).length;
 
       const started = Date.now();
-      const ran = await withTurnHeld(bots, 'coder', 'daily', () => obkFrom(box, coder, CHECK));
+      const ran = await withTurnHeld(bots, 'coder', 'daily', () => checkFrom(box, coder));
       const took = Date.now() - started;
 
       const said = ran.stdout + ran.stderr;
@@ -739,7 +754,7 @@ test('#321: waits are bounded, so the harness always starts', { concurrency: tru
       await box.orca.set({ hang: { command: 'orchestration check', ms: HANG_MS } });
 
       const started = Date.now();
-      const ran = await obkFrom(box, coder, CHECK);
+      const ran = await checkFrom(box, coder);
       const took = Date.now() - started;
 
       const said = ran.stdout + ran.stderr;
@@ -823,7 +838,7 @@ test('#321 review: slow Orca calls do not keep a message check past up\'s wait',
       await box.orca.set({ hang: { command: 'orchestration check', ms: SLOW_MS } });
 
       const started = Date.now();
-      const ran = await obkFrom(box, coder, CHECK);
+      const ran = await checkFrom(box, coder);
       const took = Date.now() - started;
 
       const said = ran.stdout + ran.stderr;
@@ -865,7 +880,7 @@ test('#321 review: slow Orca calls do not keep a message check past up\'s wait',
       const from = (await box.orca.calls()).length;
       const watch = watchTheBook(box, bots, a.tabId);
 
-      const checking = obkFrom(box, a, CHECK);
+      const checking = checkFrom(box, a);
       // Let the second up go once A's check is reading, so it holds the turn.
       await until('A\'s check never asked Orca for its mail', async () => orcaCallsOf((await box.orca.calls()).slice(from), 'orchestration check')
         .some((call) => call.caller === a.handle));
@@ -884,7 +899,7 @@ test('#321 review: slow Orca calls do not keep a message check past up\'s wait',
       await assertBoundToTheBooksTab(box, bots);
 
       await box.orca.set({ hang: null });
-      const readInB = await obkIn(box, b, CHECK);
+      const readInB = await checkIn(box, b);
       const missed = left.filter((subject) => !readInB.stdout.includes(subject));
       assert.deepEqual(missed, [], 'and B reads every message of it');
       assert.deepEqual((await box.orca.messages()).filter((message) => !message.acked), [], 'so none is left waiting');
@@ -938,7 +953,7 @@ test('#321 review: a check whose ack Orca does not answer about', { concurrency:
       });
 
       const started = Date.now();
-      const ran = await obkFrom(box, coder, CHECK);
+      const ran = await checkFrom(box, coder);
       const took = Date.now() - started;
 
       const said = ran.stdout + ran.stderr;
@@ -956,7 +971,7 @@ test('#321 review: a check whose ack Orca does not answer about', { concurrency:
       assert.deepEqual(second.filter((message) => message.acked).map((message) => message.subject), [], 'and is still waiting');
 
       await box.orca.set({ hang: null, runDuring: null });
-      const next = await obkIn(box, coder, CHECK);
+      const next = await checkIn(box, coder);
       const missed = second.filter((message) => !next.stdout.includes(message.subject)).map((message) => message.subject);
       assert.deepEqual(missed, [], 'the next check shows it');
     }),
@@ -969,7 +984,7 @@ test('#321 review: a check whose ack Orca does not answer about', { concurrency:
       // The read goes through; the ack after it is refused, once.
       await box.orca.set({ fail: { 'orchestration check': { code: 'runtime_error', message: ACK_REFUSED, after: checks + 1, times: 1 } } });
 
-      const ran = await obkFrom(box, coder, CHECK);
+      const ran = await checkFrom(box, coder);
 
       const said = ran.stdout + ran.stderr;
       assertFailedPlainly(said, ran.code, ACK_REFUSED);

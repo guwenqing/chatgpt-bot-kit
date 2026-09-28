@@ -704,6 +704,19 @@ export const TAB_TITLES = { daily: 'Bot Father daily', ops: 'Bot Father ops' };
 export const TAB_SHELL = 'OBK_TAB_SHELL=$$';
 
 /**
+ * What a command run in `terminal` inherits from the kit's launch line, when
+ * the first line typed into that tab was one: the tab shell's pid and the CLI
+ * (#220, #318), and nothing when it was not. The kit refuses a Codex tab's
+ * tab-bound commands without it (#408), so a test that runs one "in" a tab
+ * the kit launched gives it this, as the tab would. The pid stands for the
+ * shell's; the fake world has no real one.
+ */
+export const kitLaunchMark = (box, terminal) => ((terminal.typed?.[0]?.text ?? '').includes(TAB_SHELL) ? launchLineEnv(box) : {});
+
+/** What the kit's launch line gives the harness it starts, and every command that harness runs: see `kitLaunchMark`. */
+export const launchLineEnv = (box) => ({ OBK_TAB_SHELL: String(process.pid), OBK_CLI: box.cli });
+
+/**
  * One word of a shell line as the kit writes it: bare when it holds nothing a
  * shell would read as more than letters, and otherwise in single quotes, with
  * each quote inside written `'\''`. The same form the kit has always given a
