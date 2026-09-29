@@ -393,7 +393,8 @@ const TABLE_HEADER = /^[ \t]*\[/;
  * config.toml's text without the trust tables `gone` names, and with every
  * other line as it was. A table goes from its header to the next table's,
  * less the comment lines right above that header, which are the next table's
- * own; the last table goes to the end of the file.
+ * own; a table that ends the file goes to the end, with the one blank line
+ * Codex put above it.
  */
 function withoutTables(text, gone) {
   const lines = text.split('\n');
@@ -410,8 +411,14 @@ function withoutTables(text, gone) {
     let end = next;
     if (next < lines.length) while (end > at + 1 && /^[ \t]*#/.test(lines[end - 1])) end -= 1;
     kept.push(...lines.slice(end, next));
-    // A table cut to the end of the file takes its final newline with it.
-    if (next === lines.length && text.endsWith('\n')) kept.push('');
+    if (next === lines.length) {
+      // Codex adds a table at the end with one blank line above it, so a table
+      // that ends the file takes that one line back too, and no more: a blank
+      // line of the owner's own before it stays (live, #240). The file keeps
+      // its final newline.
+      if (kept.length > 0 && kept[kept.length - 1].trim() === '') kept.pop();
+      if (text.endsWith('\n')) kept.push('');
+    }
     at = next;
   }
   return kept.join('\n');
