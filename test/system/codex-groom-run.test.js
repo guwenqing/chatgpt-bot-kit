@@ -429,6 +429,28 @@ function tailOf(lines, count = 15) {
   }).join('\n');
 }
 
+/**
+ * The last lines of one conversation's transcript as the file has them, of any
+ * type and with or without a time of their own (a `file-history-snapshot` or a
+ * `queue-operation` line keeps its time inside), each cut short: for the
+ * message of a wait that ran out, where what Claude Code wrote last matters
+ * whatever it was.
+ */
+function lastLinesOf(home, id, count = 12) {
+  if (typeof id !== 'string') return '    (no conversation in the book)';
+  const file = path.join(transcriptsOf(home), `${id}.jsonl`);
+  if (!existsSync(file)) return `    (no transcript at ${file})`;
+  const raw = readFileSync(file, 'utf8').split('\n').filter((line) => line.trim() !== '');
+  if (raw.length === 0) return '    (the transcript is empty)';
+  return raw.slice(-count).map((line) => `    ${line.slice(0, 300)}${line.length > 300 ? '…' : ''}`).join('\n');
+}
+
+/** What a tab renders now, one row a line, or that Orca would not say. */
+function shownIn(handle) {
+  const rows = rowsOf(handle);
+  return rows === undefined ? '    (Orca did not give its rendered screen)' : rows.map((row) => `    ${row}`).join('\n');
+}
+
 /** A time of day as the kit takes it: 24 hours, in this machine's own time. */
 const hhmm = (date) => `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 
@@ -680,7 +702,10 @@ test('a grooming job with --run-on codex starts one Codex run at its fire, on th
     RUN_MS,
     async () => after(groomingLines(home), firedAt)
       .find((line) => line.type === 'user' && textsOf(line).some((text) => text.includes(mailFrom(runName)))),
-    () => `\n  the grooming conversation since the fire:\n${tailOf(after(groomingLines(home), firedAt))}${whatIsUp(runTab.handle)}`,
+    () => `\n  the grooming conversation since the fire:\n${tailOf(after(groomingLines(home), firedAt))}`
+      + `\n  the grooming transcript's last lines, of any type:\n${lastLinesOf(home, sessionIn(home, 'grooming').session)}`
+      + `\n  the grooming tab (${handle}) shows:\n${shownIn(handle)}`
+      + `\n  the run's tab:${whatIsUp(runTab.handle)}`,
     POLL_MS,
   );
   const noticeAt = Date.parse(notice.timestamp);
