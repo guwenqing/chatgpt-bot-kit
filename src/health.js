@@ -270,7 +270,12 @@ function runningOn(bots, home, bot, book, handles, sessions) {
       const shared = address === `${bot.name}.${session.name}`
         ? `the name every fleet's ${bot.name}/${session.name} was given before #286, so it is shared: a Claude session of another fleet with that bot and session can write to it, thinking it is its own`
         : `not one the kit made for it, so it may not be this session's alone: another session, in this fleet or another, can go by it too`;
-      found.push(finding('session', bookFile(home), `${bot.name}'s session ${session.name} goes by the address ${address}, ${shared}. ${restart} starts it on an address of its own, <bot>.<session> and a token.`, bot.name));
+      // A restart closes the tab, and with no conversation in the book it
+      // refuses rather than end the conversation, so the fix starts there.
+      const fix = typeof entry.session === 'string'
+        ? `${restart} starts it on an address of its own, <bot>.<session> and a token.`
+        : `The book does not say which conversation it is running, and a restart refuses until it does: write the id into ${bookFile(home)} under ${session.name} as  session: <id>, then ${restart} starts it on an address of its own, <bot>.<session> and a token.`;
+      found.push(finding('session', bookFile(home), `${bot.name}'s session ${session.name} goes by the address ${address}, ${shared}. ${fix}`, bot.name));
     }
     const front = frontOfTab(handle);
     if (front.front === 'shell') {
