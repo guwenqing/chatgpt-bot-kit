@@ -485,6 +485,10 @@ What it looks for:
   brings it back; when the book names no conversation for it, restart would
   refuse, and the finding says to close the tab in Orca and run
   `obk up … --session`. A tab the kit cannot read is never called down;
+- **a Claude session on an address the kit did not make**: such as the bare
+  `<bot>.<session>` every fleet's sessions had before 0.10.0, which a session of
+  another fleet can write to. Its next start through the kit gives it one of its
+  own, so the finding names the `obk restart … --session` that does it;
 - **leftovers no book owns**: an Orca project inside your bots folder with no
   bot in it, a tab in a bot's project that the book does not name, a start
   prompt written for a session that has gone, a clone of a skills source you no
