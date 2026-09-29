@@ -12,5 +12,8 @@ Mail is queued, not an interruption. Read it when you finish what you are on.
 
 Ask for a reply when you need one, and send one when you were asked for one.
 
+A message sent is queued, not read or acted on: the reply, or the work done,
+is what shows it arrived. Look for one before you send it again.
+
 Write to the session that needs it, not to several in the hope that one of
 them is right.
