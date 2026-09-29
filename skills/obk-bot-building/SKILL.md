@@ -317,6 +317,13 @@ conversation runs (0.156.1, 0.157.1 and 0.158.0 all did); the answer is
 always the current checkout, the bot home, and never `2. New worktree`:
 the kit never makes a git worktree.
 
+The hooks review of a Codex temporary session you made yourself is the one
+exception: answer it with `obk temp trust-hooks --bots <bots> --name
+<session>`, not with the keys. It reads the screen, chooses **Trust all and
+continue** only if the review is there, and checks that the review went. A
+permission rule can allow that one command, where it cannot allow keys sent
+into any tab.
+
 Where the kit says no session came up, the shell swallowed the launch line,
 usually while it was asking its own question. Answer the shell, then close
 that one tab (`<orca> terminal close --terminal <handle> --tab`) and run

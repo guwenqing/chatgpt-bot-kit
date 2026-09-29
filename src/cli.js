@@ -28,7 +28,7 @@ import { readRoster } from './roster.js';
 import { buildAgents, buildRules, CODEX_CAP } from './rules.js';
 import { addSkill, buildSkills, linkSkills, removeSkill } from './skills.js';
 import { addSource, fetchSources } from './sources.js';
-import { makeTemp, retireTemp } from './temp.js';
+import { makeTemp, retireTemp, trustHooks } from './temp.js';
 import { readUsage } from './usage.js';
 import { BOT_FATHER, bringUp, ownMailbox } from './up.js';
 
@@ -99,18 +99,25 @@ Usage:
   obk temp make --bots <path> --name <session>
                 (--prompt <text> | --prompt-file <path>) [--harness claude|codex]
                 [--model <m>] [--effort <e>] [--context <c>]
-                [--approval ${APPROVALS.join('|')}]
+                [--approval ${APPROVALS.join('|')}] [--extra-arg=<arg>]...
                             Run in a long-lived session's own tab: make a
                             temporary session of that session's bot for a piece
                             of work, and bring it up. It takes your harness,
                             model, effort, context and approval unless you say
-                            otherwise, works in work/<session>, and has the task
-                            as its start prompt. The book records it as
-                            temporary, made by you.
+                            otherwise; on another harness than yours it takes
+                            only your approval. It works in work/<session>, and
+                            has the task as its start prompt. The book records
+                            it as temporary, made by you.
   obk temp retire --bots <path> --name <session>
                             Run in the maker's own tab: retire a temporary
                             session it made, as obk retire does. It refuses a
                             long-lived session, or one another session made.
+  obk temp trust-hooks --bots <path> --name <session>
+                            Run in the maker's own tab: answer the hooks review
+                            of a Codex temporary session it made with "Trust
+                            all and continue", and check the review went. It
+                            refuses anything else on that screen, and types
+                            nothing then.
   obk rules build --bots <path> [--bot <bot>]
                             Build every bot's AGENTS.md from its charter and
                             the rule units it carries, or just the one you
@@ -190,7 +197,8 @@ Usage:
                             with its settings, its tab and the conversation it
                             is in. It reads your files and reports them as they
                             stand; what to make of them is yours.
-  obk groom --bots <path> [--on [--at <HH:MM>] | --at <HH:MM> | --off | --now | --compact]
+  obk groom --bots <path> [--on [--at <HH:MM>] [--run-on codex [--model <m>] [--effort <e>] [--extra-arg=<arg>]...]
+                | --at <HH:MM> | --off | --now | --compact]
                             Say what the daily grooming is: Bot Father's session
                             grooming, and the job scheduled in it on Claude
                             Code's own scheduler. Add that session like any
@@ -201,7 +209,11 @@ Usage:
                             day, so run it by hand once and read it first. --at
                             moves it, --off unschedules it, and --compact
                             compacts its conversation between runs. It fires
-                            only while its tab is up in Orca.
+                            only while its tab is up in Orca. --run-on codex
+                            makes each run a temporary Codex session of the
+                            grooming session's, launched with --model, --effort
+                            and --extra-arg, which reports back by the kit's
+                            mail and is retired.
   obk usage --bots <path> [--bot <bot>] [--session <name>] [--since <time>] [--until <time>]
                             Say what your sessions have used: the conversations
                             each one had, their calls and tokens (their
@@ -260,6 +272,7 @@ const COMMANDS = {
   'session mailbox': ['bots', 'bot', 'session'],
   'temp make': ['bots', 'name'],
   'temp retire': ['bots', 'name'],
+  'temp trust-hooks': ['bots', 'name'],
 };
 
 /** What each flag is for, in the sentence a caller reads when it is missing. */
@@ -333,6 +346,7 @@ async function run(argv) {
       disallow: { type: 'string', multiple: true },
       ...Object.fromEntries(SETTINGS.map(([flag]) => [flag, { type: 'string' }])),
       'extra-arg': { type: 'string', multiple: true },
+      'run-on': { type: 'string' },
       json: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean' },
@@ -601,6 +615,7 @@ const commands = {
       if (values[flag] !== undefined) given[key] = values[flag];
     }
     if (values.context !== undefined) given.context = asNumberOrText(values.context);
+    if (values['extra-arg'] !== undefined) given.extra_args = values['extra-arg'];
     const made = await makeTemp(bots, { tab, ...given });
     const { tabs, rules, skills, permissions, paused, projects } = made.up;
     const answer = { bots, bot: made.bot, session: made.session, maker: made.maker, settings: made.settings, created: [], completed: [], rules, skills, permissions, tabs, paused, projects };
@@ -622,6 +637,16 @@ const commands = {
         `retired    ${retired.bot} ${retired.session}, a temporary session of ${retired.maker}'s: off ${path.join('bots', retired.bot, 'bot.yaml')}, and its conversations kept in the book under retired`,
         ...leftLines(retired.promptsLeft),
       ],
+    };
+  },
+
+  async 'temp trust-hooks'(bots, values) {
+    const tab = callerTab(bots, true);
+    refuseWhenOrcaIsDown();
+    const trusted = await trustHooks(bots, { tab, name: values.name });
+    return {
+      answer: { bots, ...trusted },
+      lines: [`trusted    ${trusted.bot} ${trusted.session}'s hooks, a temporary session of ${trusted.maker}'s: chose "Trust all and continue" on its hooks review, and the review has gone`],
     };
   },
 
@@ -821,7 +846,16 @@ const commands = {
     }
     // --at on its own moves grooming that is on to another time.
     const ask = asks[0] ?? (values.at === undefined ? undefined : 'move');
-    const groom = grooming(bots, { at: values.at, ask });
+    // What each run is launched with when it runs on Codex (#238): given only
+    // with --run-on, and refused by grooming() when it is not.
+    const given = ['run-on', 'model', 'effort', 'extra-arg'].some((flag) => values[flag] !== undefined);
+    const run = !given ? undefined : {
+      harness: values['run-on'],
+      ...(values.model === undefined ? {} : { model: values.model }),
+      ...(values.effort === undefined ? {} : { effort: values.effort }),
+      ...(values['extra-arg'] === undefined ? {} : { extra_args: values['extra-arg'] }),
+    };
+    const groom = grooming(bots, { at: values.at, ask, run });
     return { answer: { bots, groom }, lines: groomLines(groom, bots) };
   },
 
@@ -1275,6 +1309,7 @@ function jobLines(jobs, bots, head) {
     const [job] = jobs;
     return [
       `${head}  on, daily at ${job.at ?? job.cron}  job ${job.id}`,
+      ...(job.run === undefined ? [] : [`${more}Each run is a temporary ${job.run.harness} session: model ${job.run.model ?? `${job.run.harness}'s own`}, effort ${job.run.effort ?? `${job.run.harness}'s own`}.`]),
       `${more}Each run renews it; with no run, Claude Code ends it at ${job.expires}.`,
       `Turn it off:  ${groomCommand(bots)} --off`,
     ];

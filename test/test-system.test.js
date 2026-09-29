@@ -1781,8 +1781,9 @@ describe('test-system', { concurrency: true }, () => {
 // in either spelling of a macOS temp path, whose folder directly under the temp
 // folder is named `obk-system-*` (for a hooks.state key, the path is the part
 // before the hooks file's `:<event>:…`). Such a Codex key fails the run, but
-// for one under an `obk-system-codex-screens-*` folder, the one test known to
-// write them (#240), which is named and does not change the exit code. Such a
+// for one under an `obk-system-codex-screens-*` folder (#240) or an
+// `obk-system-codex-groom-*` one (#238), the two tests known to write them,
+// which is named and does not change the exit code. Such a
 // Claude key is named and never changes the exit code, pending the owner. A key
 // that was there before, or one that is not the run's, is never named: the
 // owner's own sessions write both files while a run goes on.
@@ -2206,6 +2207,61 @@ describe('test-system: what a run leaves in the harness configs (#240)', { concu
 
     assert.equal(result.code, 0, everything(result));
     assertNotNamed(result, key, 'another session\'s codex-screens key');
+  });
+
+  test('a Codex key under an obk-system-codex-groom folder made mid-run is named as that test\'s known writes (#238), and the exit code stays the tests\'', async (t) => {
+    // codex-groom-run's Codex run is started with no trust given at launch, and
+    // its maker answers its folder trust and its hooks review, so Codex writes
+    // both for its folder (#238, the architect's ruling).
+    let key;
+    let hooksFile;
+    const { fixture, env } = await withConfigs(t, ({ dir }) => {
+      const mine = `${dir}/obk-system-codex-groom-Kl12`;
+      key = `${mine}/bots/bots/bot-father`;
+      hooksFile = `${mine}/bots/bots/bot-father/.codex/hooks.json`;
+      return {
+        before: { codex: codexConfig({}) },
+        during: { makes: [mine], codex: codexConfig({ projects: [key], hooks: [`${hooksFile}:session_start:0:0`] }) },
+      };
+    });
+
+    const result = await fixture.confirmed({ env });
+
+    assert.equal(result.code, 0, `codex-groom's known writes do not fail a run whose tests passed:\n${everything(result)}`);
+    assertNamed(result, key, 'a codex-groom projects key');
+    assertNamed(result, hooksFile, 'a codex-groom hooks.state key');
+    assert.match(unwrapped(afterTheRun(result)), /#238/, `it should say these are that test's known writes (#238), got:\n${afterTheRun(result)}`);
+    assertNoSecrets(result);
+  });
+
+  test('a codex-groom key under a folder that was there before the run is not named as the run\'s known writes', async (t) => {
+    let key;
+    const { fixture, env } = await withConfigs(t, ({ dir }) => {
+      const theirs = `${dir}/obk-system-codex-groom-Other8`;
+      key = `${theirs}/bots/bots/bot-father`;
+      return { before: { makes: [theirs] }, during: { codex: codexConfig({ projects: [key] }) } };
+    });
+
+    const result = await fixture.confirmed({ env });
+
+    assert.equal(result.code, 0, everything(result));
+    assertNotNamed(result, key, 'another session\'s codex-groom key');
+  });
+
+  test('a Codex key under another codex test\'s folder made mid-run still fails the run: only codex-screens and codex-groom are known writers', async (t) => {
+    // codex-sleep's Codex is given its trust at launch, so a key of its is a
+    // write no test is allowed.
+    let key;
+    const { fixture, env } = await withConfigs(t, ({ dir }) => {
+      const mine = `${dir}/obk-system-codex-sleep-Mn34`;
+      key = `${mine}/bots`;
+      return { during: { makes: [mine], codex: codexConfig({ projects: [key] }) } };
+    });
+
+    const result = await fixture.confirmed({ env });
+
+    assert.equal(result.code, 1, `the run should fail on it though its tests passed:\n${everything(result)}`);
+    assertNamed(result, key, 'a codex-sleep projects key');
   });
 
   test('a folder the run makes mid-run is the run\'s, and a Codex key under it still fails the run', async (t) => {

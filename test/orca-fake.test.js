@@ -1112,6 +1112,33 @@ test('the fake can refuse one tab\'s close with --tab, keep listing it, and clos
   assert.deepEqual(list().map((one) => one.handle), [again.handle], 'a tab whose closes were both refused is still there');
 });
 
+test('the fake can move one tab\'s screen on at the next key sent into it, and at no other send', async (t) => {
+  // A question on screen that goes once a key answers it (#238's trust-hooks):
+  // the kit reads the screen again after sending, and has to see it change.
+  const box = await createSandbox(t);
+  await twoTabs(box);
+  const before = ['  a question', '› 1. yes'];
+  const moved = ['  the answer was taken'];
+  await box.orca.set({
+    terminals: (await box.orca.terminals()).map((terminal) => (terminal.handle === 'term_a' ? { ...terminal, screen: before, screenAfterSend: moved } : terminal)),
+  });
+  const read = (on) => answer(ask(box, ['terminal', 'read', '--terminal', on, '--screen', '--json'])).result.terminal.tail;
+
+  assert.deepEqual(read('term_a'), before, 'until a key is sent, the screen it has');
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_b', '--text', 'x', '--json']));
+  assert.deepEqual(read('term_a'), before, 'a key sent into another tab moves nothing here');
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_a', '--text', '\r', '--json']));
+  assert.deepEqual(read('term_a'), moved, 'the next key sent into it moves it on');
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_a', '--text', 'y', '--json']));
+  assert.deepEqual(read('term_a'), moved, 'and it stays there');
+
+  const listed = answer(ask(box, ['terminal', 'list', '--json'])).result.terminals.find((one) => one.handle === 'term_a');
+  const showed = answer(ask(box, ['terminal', 'show', '--terminal', 'term_a', '--json'])).result.terminal;
+  for (const [what, entry] of [['list', listed], ['show', showed]]) {
+    assert.equal('screenAfterSend' in entry, false, `Orca shows a screen only through read, not in ${what}`);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Many callers at once (#438)
 // ---------------------------------------------------------------------------

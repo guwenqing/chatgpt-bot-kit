@@ -453,8 +453,21 @@ up. Each run renews its own schedule, which Claude Code would otherwise end
 after a week, and `--on --at` puts it back if it lapses. A `/clear` in its tab
 leaves it running until the session is next restarted; after that, `--on --at`
 puts it back.
-`obk groom --compact` compacts its conversation between runs. Grooming on Codex
-comes later: on a Codex Bot Father, add the session with `--harness claude`.
+`obk groom --compact` compacts its conversation between runs.
+
+The grooming session is always a Claude Code one, even on a Codex Bot Father (add
+it with `--harness claude` there): it is the clock, and where the reports arrive.
+To have the grooming itself done on Codex, turn it on with `--run-on codex`, and
+give the runs their model and effort:
+
+```sh
+obk groom --bots /path/to/my-bots --on --at 04:00 --run-on codex --model gpt-6-sol --effort medium
+```
+
+Each fire then makes a temporary Codex session of the grooming session's, named
+`groom-<date and time>`, which does the grooming, mails its report back, and is
+retired; the grooming session sends the report on to the management session. A
+run an earlier fire left behind is retired at the next one.
 
 ## When something is wrong
 

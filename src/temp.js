@@ -1,5 +1,6 @@
 // `obk temp make` and `obk temp retire`: a session's own temporary sessions
-// (PRD 6.4, #227).
+// (PRD 6.4, #227). And `obk temp trust-hooks`, the one answer a maker gives its
+// Codex run's hooks review (#238).
 //
 // Any long-lived session can make a temporary session of its own bot for a
 // piece of work, and retire it when the work is done, without Bot Father, who
@@ -22,11 +23,13 @@
 
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { setTimeout as pause } from 'node:timers/promises';
 
 import { readBook, updateBook } from './book.js';
 import { addSession, dropSession, NAME, readBot } from './bot.js';
-import { isShortPrompt, ownCli, shellWord, startPrompt, workDirOf } from './launch.js';
+import { harnessOf, isShortPrompt, ownCli, shellWord, startPrompt, workDirOf } from './launch.js';
 import { sessionInTab } from './message.js';
+import { orca, screenRows, tabs } from './orca.js';
 import { retireSession } from './retire.js';
 import { bringUp, promptPath } from './up.js';
 
@@ -61,10 +64,14 @@ export async function makeTemp(bots, { tab, ...given }) {
   const settings = { name: given.name };
   const harness = given.harness ?? maker?.harness;
   if (harness !== undefined) settings.harness = harness;
+  // On another harness than its maker's, the model, the effort and the context
+  // are that harness's own, and only the approval carries over (#238, PRD 6.4).
+  const same = (harness ?? bot.harness) === harnessOf(maker ?? {}, bot.harness);
   for (const field of INHERITED) {
-    const value = given[field] ?? maker?.[field];
+    const value = given[field] ?? (same || field === 'approval' ? maker?.[field] : undefined);
     if (value !== undefined) settings[field] = value;
   }
+  if (given.extra_args !== undefined) settings.extra_args = given.extra_args;
   if (given.prompt !== undefined) settings.prompt = given.prompt;
   else settings.prompt_file = given.prompt_file;
   settings.work_dir = `work/${given.name}`;
@@ -145,28 +152,110 @@ function writePromptFirst(bots, caller, settings) {
  */
 export async function retireTemp(bots, { tab, name }) {
   const caller = callerIn(bots, tab, 'retire');
+  ownTemp(caller, name, 'retire', 'Nothing was retired.');
+  return { ...(await retireSession(bots, { bot: caller.bot, session: name })), maker: caller.session };
+}
+
+/**
+ * The caller's own temporary session `name`, from bot.yaml, or a refusal: one
+ * the bot does not have, a long-lived one, or one another session made.
+ * `verb` finishes "to <verb>", and `nothing` is the sentence that ends each.
+ */
+function ownTemp(caller, name, verb, nothing) {
   const bot = readBot(caller.home, caller.bot);
-  if (!bot.sessions.some((session) => session.name === name)) {
-    throw new Error(`${caller.bot} has no session called ${name}, so there is nothing of yours to retire. Nothing was retired.`);
+  const session = bot.sessions.find((one) => one.name === name);
+  if (session === undefined) {
+    throw new Error(`${caller.bot} has no session called ${name}, so there is nothing of yours to ${verb}. ${nothing}`);
   }
   const temporary = readBook(caller.home).sessions[name]?.temporary;
   if (temporary === undefined) {
-    throw new Error(`${caller.bot}/${name} is a long-lived session, and those are Bot Father's to retire. Nothing was retired.`);
+    throw new Error(`${caller.bot}/${name} is a long-lived session, and those are Bot Father's to ${verb}. ${nothing}`);
   }
   if (temporary.maker !== caller.session) {
-    throw new Error(`${caller.bot}/${name} is a temporary session ${temporary.maker} made, not ${caller.session}, so it is ${temporary.maker}'s to retire. Nothing was retired.`);
+    throw new Error(`${caller.bot}/${name} is a temporary session ${temporary.maker} made, not ${caller.session}, so it is ${temporary.maker}'s to ${verb}. ${nothing}`);
   }
-  return { ...(await retireSession(bots, { bot: caller.bot, session: name })), maker: caller.session };
+  return { bot, session };
+}
+
+/** Codex's hooks review, and the one of its choices this kit answers it with (tech notes, section 3). */
+const HOOKS_REVIEW = 'Hooks need review';
+const TRUST_ALL = 'Trust all and continue';
+
+/** How long the review is given to go once answered, looked at every half second. */
+const REVIEW_GONE_MS = 5000;
+
+/**
+ * Answer the hooks review of a Codex run the caller made with "Trust all and
+ * continue", and confirm the review went (#238, the owner's choice (b)). The
+ * one answer a permission rule of its own can allow: a raw `orca terminal
+ * send` cannot be narrowed to a tab or to these keys. Everything that can
+ * refuse is checked before a key is sent. Returns `{ bot, session, maker }`.
+ */
+export async function trustHooks(bots, { tab, name }) {
+  const caller = callerIn(bots, tab, 'trust-hooks', "answer a run's hooks review");
+  const nothing = 'Nothing was typed.';
+  const { bot, session } = ownTemp(caller, name, 'answer for', nothing);
+  const run = `${caller.bot}/${name}`;
+  const harness = harnessOf(session, bot.harness);
+  if (harness !== 'codex') {
+    throw new Error(`${run} runs on ${harness}, and temp trust-hooks answers a Codex run's "${HOOKS_REVIEW}" alone. ${nothing}`);
+  }
+  const tabId = readBook(caller.home).sessions[name]?.tab;
+  const handle = tabId === undefined ? undefined : tabs(caller.home).find((one) => one.tabId === tabId)?.handle;
+  if (handle === undefined) {
+    throw new Error(`${run} has no tab open in Orca, so there is no review of its to answer. ${nothing}`);
+  }
+  const seen = screenRows(handle);
+  if (seen.rows === undefined) {
+    throw new Error(`${run}'s screen could not be read (${seen.unreadable}), so the kit cannot tell whether its hooks review is there. ${nothing}`);
+  }
+  const keys = keysToTrustAll(seen.rows);
+  if (keys === undefined) {
+    throw new Error(`${run}'s screen shows no "${HOOKS_REVIEW}" with its choices, so there is nothing for this to answer. It shows: ${shown(seen.rows)}. ${nothing}`);
+  }
+  // The return is inside the text: `--enter` would be a second key.
+  orca(['terminal', 'send', '--terminal', handle, '--text', keys]);
+  for (let waited = 0; ; waited += 500) {
+    const after = screenRows(handle);
+    if (after.rows !== undefined && !after.rows.some((row) => row.includes(HOOKS_REVIEW))) break;
+    if (waited >= REVIEW_GONE_MS) {
+      const still = after.rows === undefined ? `its screen could not be read again (${after.unreadable})` : `its screen still shows "${HOOKS_REVIEW}"`;
+      throw new Error(`${run}: "${TRUST_ALL}" was chosen on its hooks review, but ${REVIEW_GONE_MS / 1000} seconds later ${still}. Look at its tab.`);
+    }
+    await pause(500);
+  }
+  return { bot: caller.bot, session: name, maker: caller.session };
+}
+
+/**
+ * The keys that take Codex's hooks review to "2. Trust all and continue" and
+ * answer it, from wherever its pointer is: arrows, then return, never a digit
+ * (a digit and return once took whatever was highlighted). Undefined when the
+ * rows show no such review with the pointer on one of its choices.
+ */
+function keysToTrustAll(rows) {
+  if (!rows.some((row) => row.includes(HOOKS_REVIEW))) return undefined;
+  if (!rows.some((row) => new RegExp(`^ *(?:› +)?2\\. ${TRUST_ALL}`).test(row))) return undefined;
+  const pointer = rows.map((row) => /^ *› +(\d+)\. /.exec(row)).findLast((found) => found !== null);
+  if (pointer === undefined) return undefined;
+  const moves = 2 - Number(pointer[1]);
+  return (moves > 0 ? '\x1b[B'.repeat(moves) : '\x1b[A'.repeat(-moves)) + '\r';
+}
+
+/** What a screen shows, on one line: its rows with words in them, cut short. */
+function shown(rows) {
+  const text = rows.map((row) => row.trim()).filter((row) => row !== '').join(' ⏎ ');
+  return text.length > 500 ? `${text.slice(0, 500)}…` : text;
 }
 
 /**
  * The session this runs in, as the book knows it, with its home and whether it
  * is itself temporary.
  */
-function callerIn(bots, tab, what) {
+function callerIn(bots, tab, what, doing = `${what} it`) {
   const found = tab === undefined ? undefined : sessionInTab(bots, tab);
   if (found === undefined) {
-    throw new Error(`temp ${what} is run by a session in its own tab, and this is not one of the fleet's tabs, so there is no session here to ${what} it for. Nothing was done.`);
+    throw new Error(`temp ${what} is run by a session in its own tab, and this is not one of the fleet's tabs, so there is no session here to ${doing} for. Nothing was done.`);
   }
   const entry = readBook(found.home).sessions[found.session] ?? {};
   return { bot: found.bot, session: found.session, home: found.home, temporary: entry.temporary };

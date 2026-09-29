@@ -276,14 +276,23 @@ function runFoldersNow() {
   }
 }
 
-/** codex-first-run-screens' folder: it answers Codex's trust screens on purpose, and so writes them (#240). */
-const KNOWN_WRITER = 'obk-system-codex-screens-';
+/**
+ * The system tests whose Codex writes its trust on purpose, by their folders'
+ * prefix, and why: codex-first-run-screens answers Codex's trust screens
+ * itself (#240), and codex-groom-run's grooming session answers its Codex
+ * run's first-run screens, as a maker does (#238).
+ */
+const KNOWN_WRITERS = [
+  { prefix: 'obk-system-codex-screens-', test: 'codex-first-run-screens', does: 'answers Codex\'s trust screens on purpose', issue: '#240' },
+  { prefix: 'obk-system-codex-groom-', test: 'codex-groom-run', does: 'has its grooming session answer its Codex run\'s first-run screens', issue: '#238' },
+];
+const writerOf = (key) => KNOWN_WRITERS.find((one) => runFolderOf(key).startsWith(one.prefix));
 
 /**
  * What the run left in the harness configs under its own throwaway folders
  * (#240). A system test must leave nothing in the owner's Codex config, so an
- * added key there fails the run; codex-first-run-screens' own are its known
- * writes, named and not failed on. Claude Code writes a folder into its record
+ * added key there fails the run; the known writers' own (KNOWN_WRITERS) are
+ * their known writes, named and not failed on. Claude Code writes a folder into its record
  * whenever a session starts there, and what to do about that is the owner's
  * call, so those are only named. Keys that were there before, and keys outside
  * the run's folders, are not this run's to answer for. Answers whether the run
@@ -305,7 +314,7 @@ function reportConfigsLeft(before, foldersBefore) {
   }
 
   const codex = added('codex');
-  const known = codex.filter((key) => runFolderOf(key).startsWith(KNOWN_WRITER));
+  const known = codex.filter((key) => writerOf(key) !== undefined);
   const left = codex.filter((key) => !known.includes(key));
   const claude = added('claude');
 
@@ -316,10 +325,12 @@ function reportConfigsLeft(before, foldersBefore) {
       ...left.map((key) => `  ${key}`),
     );
   }
-  if (known.length > 0) {
+  for (const writer of KNOWN_WRITERS) {
+    const its = known.filter((key) => writerOf(key) === writer);
+    if (its.length === 0) continue;
     lines.push(
-      `codex-first-run-screens answers Codex's trust screens on purpose, and left its known writes in ${after.codex.file} (#240):`,
-      ...known.map((key) => `  ${key}`),
+      `${writer.test} ${writer.does}, and left its known writes in ${after.codex.file} (${writer.issue}):`,
+      ...its.map((key) => `  ${key}`),
     );
   }
   if (claude.length > 0) {
