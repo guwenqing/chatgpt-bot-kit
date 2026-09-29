@@ -363,3 +363,42 @@ test('A4 with a conversation id in the book, the restart the finding prints work
   const finding = assertNamedAddress(answer, box, bots, 'api-bot', 'daily', 'api-bot.daily');
   await followRestart(box, bots, 'api-bot', 'daily', printedRestart(box, finding.says));
 });
+
+// With only the tab's shell in front, the harness has quit, and restart closes
+// the tab and starts the session fresh without a conversation id
+// (src/restart.js, #303). So there the address finding gives the restart as it
+// stands, with no step of writing the id first (review of PR #452, the delta).
+// Health also reports such a session as not running; that finding is its own,
+// and the address finding is picked out by the address it names.
+
+/** Put the shell in front of one session's tab, as test/health-shell-in-front.test.js does: `shell` under `login`, or `bare-shell` as the pane itself. */
+async function shellInFront(box, bots, bot, session, front) {
+  const { tab } = await sessionIn(bots, bot, session);
+  const terminals = await box.orca.terminals();
+  assert.ok(terminals.some((one) => one.tabId === tab), `the premise: Orca has ${bot} ${session}'s tab ${tab}`);
+  await box.orca.set({ terminals: terminals.map((one) => (one.tabId === tab ? { ...one, foreground: front } : one)) });
+}
+
+for (const front of ['shell', 'bare-shell']) {
+  test(`A5 with no conversation id in the book and only the ${front} in front, the finding gives the restart as it stands, which works as printed`, async (t) => {
+    const box = await createSandbox(t);
+    const bots = await fleet(box);
+    await addressIs(bots, 'api-bot', 'daily', 'api-bot.daily');
+    assert.equal((await sessionIn(bots, 'api-bot', 'daily'))?.session, undefined, 'the premise: the book names no conversation for daily');
+    await shellInFront(box, bots, 'api-bot', 'daily', front);
+
+    const answer = await found(box);
+
+    const onAddress = about(answer, 'api-bot', 'daily').filter((one) => hasAddress(wordsOf(one), 'api-bot.daily'));
+    assert.equal(onAddress.length, 1, `one finding about daily's address, got: ${JSON.stringify(answer.found, null, 2)}`);
+    const [finding] = onAddress;
+    assert.doesNotMatch(finding.says, /\bsession:\s*<id>/, `restart needs no id with the shell in front, so none is asked for, got: ${finding.says}`);
+    assert.ok(
+      !spellingsOf(bookOf(bots, 'api-bot')).some((spelling) => finding.says.includes(spelling)),
+      `and nothing is to be written into the book, got: ${finding.says}`,
+    );
+
+    // Done as it says, and nothing more: no id is written anywhere.
+    await followRestart(box, bots, 'api-bot', 'daily', printedRestart(box, finding.says));
+  });
+}
