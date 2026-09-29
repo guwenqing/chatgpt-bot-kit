@@ -33,7 +33,8 @@ lightweight is not fluffy; plain tone, no personal colour; defaults and techniqu
 never bans on what a user may ask and no assumed way of working. His own words in the
 research pack win over every source. A skill works in both harnesses (only `name` and
 `description` are portable frontmatter) and never contradicts the everyday rules.
-When the shape of a rule set or a skill is open, propose before writing.
+Its NOTICE names, for each source, the revision actually read: a repository's commit,
+a page's date (#280). When the shape of a rule set or a skill is open, propose before writing.
 
 ## Safety on the owner's machine
 

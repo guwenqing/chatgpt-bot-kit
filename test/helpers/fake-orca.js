@@ -335,7 +335,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { foregroundOf, launchedIn, panePid } from './fake-ps.js';
@@ -356,7 +356,15 @@ appendFileSync(
 );
 
 let state = JSON.parse(readFileSync(stateFile, 'utf8'));
-const save = () => writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`);
+// Saved whole or not at all: written beside the file under a name of this
+// call's own, then renamed over it. Two `up`s at once make calls side by side,
+// and a plain write, which empties the file before it fills it, let another
+// call read it half written, fail to parse it and answer nothing (#438).
+const save = () => {
+  const next = `${stateFile}.${process.pid}.tmp`;
+  writeFileSync(next, `${JSON.stringify(state, null, 2)}\n`);
+  renameSync(next, stateFile);
+};
 
 /** The leading words of the call: everything before the first flag. */
 const words = [];

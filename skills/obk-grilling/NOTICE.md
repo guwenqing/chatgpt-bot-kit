@@ -20,6 +20,9 @@ with thanks:
   to make, and being finished only when the frontier is empty with nothing
   silently assumed and the user confirming the shared understanding before
   anything is built.
+  Revision: mattpocock/skills@c55ee46073ed923f86ce59a5eb3b6d895095d1b7
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **mattpocock/skills**, `engineering/domain-modeling` with its
   `CONTEXT-FORMAT` and `ADR-FORMAT`. Challenging a term that conflicts with
   the agreed one and doing it immediately, proposing a precise term where one
@@ -39,6 +42,9 @@ with thanks:
   that carries lock-in, a boundary and what is deliberately outside it, a
   deliberate departure from the obvious path, a constraint invisible in the
   code, and an alternative rejected for a non-obvious reason.
+  Revision: mattpocock/skills@c55ee46073ed923f86ce59a5eb3b6d895095d1b7
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 
 `grill-with-docs` is a one-line skill that loads the two above, and `grill-me`
 one that loads `grilling` alone. ADR 0019 proposes that a kit skill carries
@@ -76,23 +82,23 @@ words where they are quoted here:
 Five deliberate departures from `grilling` and `domain-modeling`, so they are
 not mistaken for consolidation:
 
-- **A round is three questions, not the whole frontier.** `grilling` says to
+- A round is three questions, not the whole frontier. `grilling` says to
   ask the entire frontier in one round. The owner asked for three at a time
   (13:24:19, recovered in the audit), and a round of nine reads as a form and gets
   filled in like one. The frontier still governs *which* questions are
   askable; it no longer governs how many go out at once.
-- **Small settled things get recorded.** `domain-modeling` says to offer an ADR
+- Small settled things get recorded. `domain-modeling` says to offer an ADR
   only when all three conditions hold and otherwise to skip it. That is the
   right gate for a decision note, and this skill keeps it, but it applies the
   gate to the note rather than to the record, because a reversible unsurprising
   choice is still what the next person needs in order to build the agreed
   thing. Everything settled goes down; a few earn the note.
-- **What was not settled is recorded too.** Neither source asks for this. It
+- What was not settled is recorded too. Neither source asks for this. It
   comes from the audit of the owner's own design session, where what he had
   merely agreed with in passing, and what had been assumed on his behalf, were
   the things that later had to be untangled.
 
-- **A decision note lists its alternatives and is replaced whole.**
+- A decision note lists its alternatives and is replaced whole.
   `ADR-FORMAT` makes a note one paragraph, with the rejected options and the
   consequences optional. The owner decided that a decision record lists every
   alternative that was on the table with why it was not chosen, and that a
@@ -101,7 +107,7 @@ not mistaken for consolidation:
   teaches the record; this skill's note says the same, so the two do not
   disagree.
 
-- **Questions are kept short.** `grilling` allows a question several
+- Questions are kept short. `grilling` allows a question several
   paragraphs of setup; a long one here is taken as a sign it is two questions
   or that teaching should come first.
 

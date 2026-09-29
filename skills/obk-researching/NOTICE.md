@@ -43,6 +43,9 @@ thanks. Each licence below was read from the file named beside it.
   - `why/SKILL.md` adds coverage rather than minimalism, documenting the null
     instead of skipping the search, and the high bar for skipping a source:
     provably irrelevant rather than probably irrelevant.
+  Revision: cursor/plugins@6ed0f7a9504f577d7529064103cecce9be7dfc5e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **`addyosmani/agent-skills`, `skills/source-driven-development`**: MIT,
   `addyosmani_agent-skills/LICENSE`, "Copyright (c) 2025 Addy Osmani". The
   source hierarchy and what sits outside it: model-written summaries and your
@@ -60,6 +63,9 @@ thanks. Each licence below was read from the file named beside it.
   could not find documentation. And the rule this skill takes whole, that
   hedging is the worst of the three options: either verify and cite, or mark it
   unverified, because a disclaimer in a subordinate clause reads as confidence.
+  Revision: addyosmani/agent-skills@dc27a9c2e13721158157632de61b4106c6c2a2a1
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **`garrytan/gstack`, `ETHOS.md`**: MIT, `garrytan_gstack/LICENSE`,
   "Copyright (c) 2026 Garry Tan". The three layers of what you find and how
   much weight each bears: the settled and well-trodden, where the risk is
@@ -71,6 +77,9 @@ thanks. Each licence below was read from the file named beside it.
   look things up by general category rather than by the private thing you are
   working on, and strip names, addresses, paths and anything that looks like a
   secret from a query before it leaves the machine.
+  Revision: garrytan/gstack@a6b3a57512ca6d5c6aa5b68f74f736195021f96e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **`openai/skills`, `skills/.curated/notion-research-documentation`**: MIT,
   that skill's own `LICENSE.txt`, "Copyright 2025 Notion Labs, Inc." The search
   strategy, which is the only material of its kind in the sources: broad to
@@ -83,30 +92,42 @@ thanks. Each licence below was read from the file named beside it.
   citing every sentence, put the citation beside what it supports, mark a
   quotation as a quotation, keep a sources section that includes what held
   nothing, and flag a superseded source where it stands.
+  Revision: openai/skills@49f948faa9258a0c61caceaf225e179651397431
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **`mattpocock/skills`, `skills/engineering/research`**: MIT,
   `mattpocock_skills/LICENSE`, "Copyright (c) 2026 Matt Pocock". Twelve lines,
   one of which the research pack singled out and this skill is built around:
   follow every claim back to the source that owns it, and go to primary
   material rather than a secondary write-up of it.
+  Revision: mattpocock/skills@c55ee46073ed923f86ce59a5eb3b6d895095d1b7
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **Cloudflare's security-audit skill**: MIT,
   `cloudflare_security-audit-skill/LICENSE`, "Copyright (c) 2025-2026
   Cloudflare, Inc." Coverage honesty: never imply that one pass exhausts the
   subject, and a scoped piece of work presents itself as partial rather than
   letting silence read as "the rest is fine".
+  Revision:
+  cloudflare/security-audit-skill@c1c8a8c1471069fb0e188eeaff69b8e8db6564a8
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 
 Two things come from the research pack rather than from a repository, and are
 marked here because the difference matters:
 
-- The evidence-label pair `(verified: <command>)` and `(inferred: did not
-  run)`, which `source-book-2.md:139` calls the single best sentence in its
-  whole survey, is quoted there from **tw93/Waza**'s `rules/anti-patterns.md`
+- **tw93/Waza**, `rules/anti-patterns.md`: the evidence-label pair `(verified:
+  <command>)` and `(inferred: did not run)`, which `source-book-2.md:139` calls
+  the single best sentence in its whole survey, is quoted there from it
   (recorded as MIT in the same book's source table). Waza is not among the
   clones in the research pack, so this is taken from the book's verbatim quote
   rather than from the repository. The label's checkable form is kept as the
   source has it, because being able to audit the label is the whole of its
-  value; the prose around it is ours. The source applies `inferred` to
-  reasoning from code, so this skill keeps it for an inference and asks for
-  `not checked` where the claim is somebody else's unchecked account.
+  value; the prose around it is ours. The source applies `inferred` to reasoning
+  from code, so this skill keeps it for an inference and asks for `not checked`
+  where the claim is somebody else's unchecked account.
+  Revision: tw93/Waza@59323dee82b04fa8b9ad97a8ee503ca8aee7eb3c (as recorded
+  in the research pack's source-book-2.md, read 2026-09-19)
 - The pack's own reports label each claim by where it came from and whether it
   was checked, and keep a section of gaps and cautions at the end. That habit,
   rather than any source, is why this skill treats a claim's support and the

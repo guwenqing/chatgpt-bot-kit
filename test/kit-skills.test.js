@@ -262,3 +262,278 @@ test('the published package ships the skills directory', async () => {
     `package.json files should include the skills directory, got: ${pkg.files.join(', ')}`,
   );
 });
+
+// ------------------------------------------------------------ the revision of each source (#280)
+//
+// A NOTICE says what was taken from each source; it also says which revision
+// was read, so a later refresh can tell what changed upstream since. Each
+// source entry, a `- **…**` bullet anywhere under "# Sources and licences",
+// carries lines of its own among its continuation lines, each one of:
+//
+//   Revision: <owner/repo>@<40-hex commit> (<how>)   a repository source
+//   Read: <YYYY-MM-DD> (<how>)                        a page
+//   Revision: none (<why>)                            neither: the kit's own
+//                                                     earlier skill, a research
+//                                                     pack, a built-in behaviour
+//
+// `<how>` and `<why>` are free text and may wrap onto the entry's next lines.
+// An entry has at least one such line, and no more than the sources it names in
+// bold: pages read together on one date may share one Read: line. Every
+// repository an entry names in bold as `owner/repo` has a Revision: line of its
+// own in that entry naming it, so a second repository's commit cannot hide in
+// the first one's parentheses (review of PR #446, P2 1).
+//
+// A repository credited outside any entry, named in bold as `owner/repo` in a
+// plain bullet or in prose, needs a Revision: line for it somewhere in the same
+// NOTICE, which in practice means an entry of its own (review of PR #446, P2 2).
+// A source named only in words, such as "Trail of Bits' skill" or a web site's
+// name, cannot be told from the rest of the prose by a pattern; review covers
+// those. Which sources are repositories is otherwise the NOTICE's to say, not
+// this test's.
+
+const SOURCES_HEADING = /^# Sources and licences\s*$/m;
+
+/**
+ * The source entries of a NOTICE's text: each `- **…**` bullet under "# Sources
+ * and licences", with its continuation lines (indented, up to a blank line or
+ * a line that is not), as `{ name, line, lines }`, `line` its line number in
+ * the file, since one NOTICE can name the same source in several entries.
+ * `outside` is every other line under the heading, with its line number: what
+ * the NOTICE says around its entries.
+ */
+function sourceEntries(text) {
+  const heading = SOURCES_HEADING.exec(text);
+  if (heading === null) return Object.assign([], { outside: [] });
+  const first = text.slice(0, heading.index).split('\n').length;
+  const lines = text.slice(heading.index).split('\n');
+  const entries = [];
+  const outside = [];
+  let current;
+  for (const [index, line] of lines.entries()) {
+    if (/^- \*\*/.test(line)) {
+      const name = /^- \*\*(.+?)\*\*/.exec(line)?.[1] ?? line.slice(4);
+      current = { name, line: first + index, lines: [line] };
+      entries.push(current);
+    } else if (current !== undefined && /^\s+\S/.test(line)) {
+      current.lines.push(line);
+    } else {
+      current = undefined;
+      outside.push({ line: first + index, text: line });
+    }
+  }
+  return Object.assign(entries, { outside });
+}
+
+const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const COMMIT = /^[0-9a-f]{40}$/;
+
+/**
+ * Every span a text puts in bold, and the repository each names, when it begins
+ * with one written `owner/repo` (in backticks or not): `**mattpocock/skills**`,
+ * `` **`citypaul/.dotfiles`, `claude/…`** ``. A name that is not in that form,
+ * `**Cursor pstack**` or `**The GDS Way**`, names no repository here.
+ */
+function boldIn(text) {
+  return [...text.matchAll(/\*\*(.+?)\*\*/g)].map((match) => ({
+    text: match[1],
+    repo: /^`?([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)`?(?=$|[\s,;:'’`)])/.exec(match[1])?.[1],
+  }));
+}
+
+/** Whether `text` is a real calendar date written YYYY-MM-DD. */
+function isDate(text) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
+  const date = new Date(`${text}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === text;
+}
+
+/** What is wrong with one `Revision:` or `Read:` statement, read whole, or undefined; and the repository it names. */
+function statementTrouble(said) {
+  const read = /^Read: (\S+) \((.+?)\)/.exec(said);
+  if (said.startsWith('Read:')) {
+    if (read === null) return { trouble: `has a Read: line not in the form "Read: <YYYY-MM-DD> (<how>)": ${said}` };
+    if (!isDate(read[1])) return { trouble: `has a Read: line whose date is not a real YYYY-MM-DD: ${read[1]}` };
+    if (read[2].trim() === '') return { trouble: 'has a Read: line with nothing said in its parentheses' };
+    return {};
+  }
+  const revision = /^Revision: (\S+) \((.+?)\)/.exec(said);
+  if (revision === null) return { trouble: `has a Revision: line not in the form "Revision: <owner/repo>@<commit> (<how>)" or "Revision: none (<why>)": ${said}` };
+  if (revision[2].trim() === '') return { trouble: 'has a Revision: line with nothing said in its parentheses' };
+  if (revision[1] === 'none') return {};
+  const [repo, commit, ...rest] = revision[1].split('@');
+  if (rest.length > 0 || commit === undefined) return { trouble: `has a Revision: that is not <owner/repo>@<commit>: ${revision[1]}` };
+  if (!REPO.test(repo)) return { trouble: `has a Revision: whose repository is not owner/repo: ${repo}` };
+  if (!COMMIT.test(commit)) return { trouble: `has a Revision: whose commit is not a full 40-hex sha: ${commit}` };
+  return { repo };
+}
+
+/** The repositories named by the Revision: lines anywhere in a NOTICE, lower-cased, as GitHub reads them. */
+const revisedIn = (text) => new Set([...text.matchAll(/^\s+Revision: ([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)@/gm)].map((match) => match[1].toLowerCase()));
+
+/**
+ * What is wrong with one source entry's revisions: each line starting
+ * `Revision:` or `Read:` is read with the lines after it, up to the next such
+ * line, so that a wrapped `(<how>)` is whole.
+ */
+function revisionTroubles(entry) {
+  const at = entry.lines.flatMap((line, index) => (/^\s+(?:Revision|Read):/.test(line) ? [index] : []));
+  if (at.length === 0) return ['has no Revision: or Read: line'];
+  const troubles = [];
+  const named = new Set();
+  at.forEach((from, n) => {
+    const said = entry.lines.slice(from, at[n + 1]).join(' ').replace(/\s+/g, ' ').trim();
+    const { trouble, repo } = statementTrouble(said);
+    if (trouble !== undefined) troubles.push(trouble);
+    if (repo !== undefined) named.add(repo.toLowerCase());
+  });
+  const head = entry.lines.slice(0, at[0]).join('\n');
+  const bold = boldIn(head);
+  if (at.length > bold.length) {
+    troubles.push(`has ${at.length} Revision: or Read: lines for ${bold.length} source${bold.length === 1 ? '' : 's'} named in bold`);
+  }
+  for (const repo of new Set(bold.flatMap((one) => (one.repo === undefined ? [] : [one.repo])))) {
+    if (!named.has(repo.toLowerCase())) troubles.push(`names ${repo} in bold, and has no Revision: line of its own naming it`);
+  }
+  return troubles;
+}
+
+/** Every NOTICE problem, as `<file>:<line>, <entry or repository>: <what>`. */
+function noticeTrouble(file, text) {
+  const entries = sourceEntries(text);
+  const inEntries = entries.flatMap((entry) => revisionTroubles(entry).map((trouble) => `${file}:${entry.line}, ${entry.name}: ${trouble}`));
+  const revised = revisedIn(text);
+  const credited = entries.outside.flatMap(({ line, text: said }) => boldIn(said)
+    .filter((one) => one.repo !== undefined && !revised.has(one.repo.toLowerCase()))
+    .map((one) => `${file}:${line}, ${one.repo}: is credited in bold outside any source entry, and this NOTICE has no Revision: line naming it`));
+  return [...inEntries, ...credited];
+}
+
+test('every source in every skill\'s NOTICE names the revision read: a commit, a date, or none with why (#280)', async () => {
+  const notices = (await skills()).flatMap((skill) => skill.files.filter((file) => path.basename(file.abs) === 'NOTICE.md'));
+  assert.ok(notices.length > 0, 'the kit\'s skills have NOTICE files to check');
+
+  const trouble = notices.flatMap((notice) => noticeTrouble(notice.file, notice.text));
+
+  assert.deepEqual(trouble, [], 'each source needs a Revision: or Read: line of its own (see the comment above this test)');
+});
+
+test('the NOTICE check finds a source with no revision, a short sha, a date that is not one, and more lines than sources (#280)', () => {
+  const sha = 'a'.repeat(40);
+  const notice = (...entries) => ['# Sources and licences', '', 'From these:', '', ...entries, '', '## Later', '', 'Prose.', ''].join('\n');
+
+  assert.deepEqual(noticeTrouble('N.md', notice(
+    '- **mattpocock/skills**, `tdd`: what was taken, over',
+    '  two lines.',
+    `  Revision: mattpocock/skills@${sha} (reconstructed: the repo's head when this`,
+    '  notice was written, 2026-09-20; the revision read was not recorded)',
+    '- **A blog post**, "Its title".',
+    '  Read: 2026-09-20 (read by)',
+    '- **The research pack**, our own notes.',
+    '  Revision: none (a research pack of our own, not a repository)',
+  )), [], 'three good entries, one with its reason wrapped');
+
+  assert.deepEqual(noticeTrouble('N.md', notice(
+    '- **obra/superpowers**, `debugging`: what was taken.',
+    '- **garrytan/gstack**, `investigate`.',
+    '  Revision: garrytan/gstack@abc1234 (checked 2026-09-29)',
+    '- **A page**, somewhere.',
+    '  Read: 2026-02-30 (read by)',
+    '- **citypaul/.dotfiles**, `tdd`.',
+    `  Revision: citypaul/.dotfiles@${sha} (checked 2026-09-29)`,
+    '  Read: 2026-09-20 (read by)',
+    '- **A built-in**, observed.',
+    '  Revision: none',
+    '- **nizos/tdd-guard**.',
+    `  Revision: ${sha} (no repository named)`,
+  )), [
+    'N.md:5, obra/superpowers: has no Revision: or Read: line',
+    'N.md:6, garrytan/gstack: has a Revision: whose commit is not a full 40-hex sha: abc1234',
+    'N.md:6, garrytan/gstack: names garrytan/gstack in bold, and has no Revision: line of its own naming it',
+    'N.md:8, A page: has a Read: line whose date is not a real YYYY-MM-DD: 2026-02-30',
+    'N.md:10, citypaul/.dotfiles: has 2 Revision: or Read: lines for 1 source named in bold',
+    'N.md:13, A built-in: has a Revision: line not in the form "Revision: <owner/repo>@<commit> (<how>)" or "Revision: none (<why>)": Revision: none',
+    `N.md:15, nizos/tdd-guard: has a Revision: that is not <owner/repo>@<commit>: ${sha}`,
+    'N.md:15, nizos/tdd-guard: names nizos/tdd-guard in bold, and has no Revision: line of its own naming it',
+  ]);
+
+  assert.deepEqual(noticeTrouble('N.md', '# Something else\n\n- **Not a source**, here.\n'), [], 'bullets outside "# Sources and licences" are not sources');
+  assert.deepEqual(
+    noticeTrouble('N.md', notice('- **One**, then a paragraph.', '', '  Revision: none (too late: after a blank line it is not the entry\'s)')),
+    ['N.md:5, One: has no Revision: or Read: line'],
+    'a line after the entry has ended is not the entry\'s',
+  );
+  assert.deepEqual(
+    noticeTrouble('N.md', `<!-- a comment\n     of two lines -->\n\n${notice('- **Two**, here.')}`),
+    ['N.md:8, Two: has no Revision: or Read: line'],
+    'the line number is the file\'s, counted from its top',
+  );
+});
+
+test('the NOTICE check wants a Revision: line for each repository an entry names in bold (#280, review of PR #446)', () => {
+  const [first, second] = ['a'.repeat(40), 'b'.repeat(40)];
+  const notice = (...entries) => ['# Sources and licences', '', ...entries, ''].join('\n');
+  const twoRepos = [
+    '- **`addyosmani/agent-skills`, `skills/doubt-driven-development`** and',
+    '  **`citypaul/.dotfiles`, `claude/.claude/skills/double-check`**: MIT. What was taken.',
+    `  Revision: addyosmani/agent-skills@${first}`,
+  ];
+
+  assert.deepEqual(noticeTrouble('N.md', notice(
+    ...twoRepos,
+    `  (reconstructed; and citypaul/.dotfiles@${second}, the same way)`,
+  )), [
+    'N.md:3, `addyosmani/agent-skills`, `skills/doubt-driven-development`: names citypaul/.dotfiles in bold, and has no Revision: line of its own naming it',
+  ], 'the second repository\'s commit in the first one\'s parentheses does not count');
+
+  assert.deepEqual(noticeTrouble('N.md', notice(
+    ...twoRepos,
+    '  (reconstructed)',
+    `  Revision: citypaul/.dotfiles@${second} (reconstructed)`,
+  )), [], 'a Revision: line of its own for each repository named');
+
+  assert.deepEqual(noticeTrouble('N.md', notice(
+    '- **mattpocock/skills**, `tdd`.',
+    `  Revision: MattPocock/Skills@${first} (checked 2026-09-29)`,
+  )), [], 'a repository is named the way GitHub reads it, whatever its case');
+
+  assert.deepEqual(noticeTrouble('N.md', notice(
+    '- **The GDS Way**, "Documenting architecture decisions", and **GOV.UK**, "A framework",',
+    '  and **Google Cloud Architecture Center**, "An overview". What was taken.',
+    '  Read: 2026-09-24 (read by)',
+  )), [], 'pages read together on one date may share one Read: line');
+
+  assert.deepEqual(noticeTrouble('N.md', notice(
+    '- **mattpocock/skills**, `tdd`. It quotes **obra/superpowers** by name.',
+    `  Revision: mattpocock/skills@${first} (checked 2026-09-29)`,
+  )), [
+    'N.md:3, mattpocock/skills: names obra/superpowers in bold, and has no Revision: line of its own naming it',
+  ], 'a repository named in bold anywhere before the entry\'s first Revision: line is one of its sources');
+});
+
+test('the NOTICE check finds a repository credited in bold outside any source entry with no Revision: line in the NOTICE (#280, review of PR #446)', () => {
+  const sha = 'a'.repeat(40);
+  const around = (...lines) => [
+    '# Sources and licences',
+    '',
+    '- **mattpocock/skills**, `tdd`.',
+    `  Revision: mattpocock/skills@${sha} (checked 2026-09-29)`,
+    '',
+    'Two things come from the research pack rather than from a repository:',
+    '',
+    ...lines,
+    '',
+  ].join('\n');
+
+  assert.deepEqual(noticeTrouble('N.md', around(
+    '- The label pair is quoted there from **tw93/Waza**\'s `rules/anti-patterns.md`,',
+    '  taken from the book\'s verbatim quote.',
+  )), ['N.md:8, tw93/Waza: is credited in bold outside any source entry, and this NOTICE has no Revision: line naming it']);
+
+  assert.deepEqual(noticeTrouble('N.md', around(
+    'As the entry above says, **mattpocock/skills** is where the ladder is from.',
+  )), [], 'a repository that has its Revision: line in the NOTICE is credited already');
+
+  assert.deepEqual(noticeTrouble('N.md', around(
+    '**Left out on a licence.** Trail of Bits\' skill and alexop.dev, named in words.',
+  )), [], 'bold that names no owner/repo, and sources named only in words, are review\'s to find');
+});

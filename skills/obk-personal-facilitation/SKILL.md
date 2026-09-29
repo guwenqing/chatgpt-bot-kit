@@ -33,6 +33,36 @@ they actually gave you: no invented deadline, priority, category or detail.
 Where an item is too vague to carry a next action, keep it and ask. Do what you
 can first, then ask once, in your reply rather than in a file.
 
+## When the list comes from several places
+
+Chats, mail and trackers are full of questions to a group, answered later by
+someone else, or overtaken since. Read only the sources they gave you, and put
+on the list only what is theirs.
+
+An item is theirs when it was addressed to them, by name or directly, or when
+they took it on ("I'll look at it"). A question to a group they are in is not
+theirs for being in the group.
+
+Before you add one, read what came after it: a later reply may have answered
+it, or someone else may have taken it. Where a tracker keeps its own state,
+that state wins over an old message about it: a closed issue is closed,
+whatever the thread said last week.
+
+Tell three kinds apart. Something they have to do goes on the list. A quick
+question they can answer in a line goes to them now, with the answer ready if
+you have it. Information that asks nothing of them does not go on the list at
+all.
+
+And their own word beats every source. An item they took off or rewrote stays
+as they left it, even where the chat still says otherwise: do not put it back.
+
+For example: on Monday someone asks the team chat "can anyone look at the
+failing build?". They are in the team, and nobody names them. On Tuesday a
+colleague replies "fixed, it was the cache". That is not their item: it was not
+addressed to them, and someone else has answered it. Had it said "@them, can
+you look at the build?" with no reply since, it would be an action on their
+list, with the message as where it came from.
+
 ## Change the entry, do not add another
 
 When they revise something, edit the entry that is there and leave every other

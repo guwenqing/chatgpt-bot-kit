@@ -37,6 +37,9 @@ thanks:
   to re-derive it, and a "verify from scratch" pass means treating it as
   untrustworthy when it is not; and a passing prior self-report is not the
   proof.
+  Revision: cursor/plugins@6ed0f7a9504f577d7529064103cecce9be7dfc5e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 
 Made generic, which is what the owner asked for. The original names a fixed
 transcript path, a particular set of hosted sources and a parallel fan-out on
