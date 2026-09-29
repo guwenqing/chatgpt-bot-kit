@@ -43,6 +43,21 @@ export function functionCallsIn(text) {
   return found;
 }
 
+/**
+ * What each turn of a rollout ran on, in its order: `{ at, model, effort }` out
+ * of every `turn_context` entry, `at` in milliseconds, a field Codex did not
+ * write as a string null (#238's live check). Nothing else of the entry is read.
+ */
+export function turnSettingsIn(text) {
+  return entriesOf(text)
+    .filter((entry) => entry?.type === 'turn_context')
+    .map((entry) => ({
+      at: Date.parse(entry.timestamp),
+      model: typeof entry.payload?.model === 'string' ? entry.payload.model : null,
+      effort: typeof entry.payload?.effort === 'string' ? entry.payload.effort : null,
+    }));
+}
+
 /** Whether a tool is Codex's sleep: `sleep`, or `sleep` under a namespace such as `clock.sleep`. */
 const isSleep = (name) => typeof name === 'string' && /(?:^|\.)sleep$/.test(name);
 

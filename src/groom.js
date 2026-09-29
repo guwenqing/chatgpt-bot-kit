@@ -25,12 +25,20 @@
 // asked for, or none. Run in any order, the last one typed is what holds
 // (review of PR #322).
 //
+// A job can make its runs on Codex instead (#238, PRD 6.8): the session stays the
+// Claude Code one, the clock and the reader, and at each fire it makes the run
+// as a temporary Codex session of its own (`obk temp make`), with the job's
+// model and effort on the run's launch line. The run does the grooming, sends
+// its report back by the kit's mail and is retired by the session, which first
+// retires any run an earlier fire left. What the runs are on is in the job's
+// prompt and nowhere else, so the kit reads it back from there.
+//
 // Claude Code ends a recurring job a week after it was made, so the job's own
 // prompt ends by renewing it. A renewal that fails either way shows here: no
 // job means the fleet has quietly stopped being groomed, two mean it is groomed
 // twice, and both are said plainly.
 
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { botDir, readBot, requireBotsFolder } from './bot.js';
@@ -38,7 +46,7 @@ import { readBook } from './book.js';
 import { claudeTranscript } from './conversations.js';
 import { harnessOf, ownCli, shellWord } from './launch.js';
 import { tabs, tabToTypeInto, typeIntoTab } from './orca.js';
-import { BOT_FATHER } from './up.js';
+import { BOT_FATHER, promptPath } from './up.js';
 import { lines } from './usage.js';
 
 /** Bot Father's session the grooming runs in. */
@@ -49,6 +57,12 @@ const AT = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 /** A daily cron as the kit writes one: minute, hour, every day. */
 const DAILY = /^(\d{1,2}) (\d{1,2}) \* \* \*$/;
+
+/** The harnesses a job can make its runs on, besides running them in the session itself (#238). */
+const RUN_ON = ['codex'];
+
+/** The name each run is given, filled in by the session at the fire it makes it. */
+const RUN_NAME = 'groom-<YYYYMMDD-HHMM>';
 
 /** How long Claude Code keeps a recurring job after it was made (tech notes, section 2). */
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -79,8 +93,9 @@ export const markerOf = (bots) => `obk grooming for ${bots}`;
  * (or null), the grooming jobs alive in its conversation as the command found
  * them, before anything it typed was done, and what it typed (or null).
  */
-export function grooming(bots, { at, ask } = {}) {
+export function grooming(bots, { at, ask, run } = {}) {
   requireBotsFolder(bots);
+  refuseRun(run, ask);
 
   // The folder as the file system knows it: Claude Code files a transcript
   // under the real path, and Orca knows a tab's project by it.
@@ -108,7 +123,7 @@ export function grooming(bots, { at, ask } = {}) {
     ? groomingJobs(ofThisProcess(home, entry), markerOf(bots), Date.now())
     : [];
 
-  const line = ask === undefined ? undefined : lineFor(ask, { bots, session, jobs, at });
+  const line = ask === undefined ? undefined : lineFor(ask, { bots, session, jobs, at, run });
   if (line !== undefined) typeInto(bots, home, session, tab, line);
 
   // A move is turning it on at another time, and is typed as one.
@@ -120,7 +135,7 @@ export function grooming(bots, { at, ask } = {}) {
  * nothing to ask. Everything that makes the ask impossible refuses here, before
  * Orca is asked for anything.
  */
-function lineFor(ask, { bots, session, jobs, at }) {
+function lineFor(ask, { bots, session, jobs, at, run }) {
   // Nothing to turn off is an answer, unless a session is there to be told: an
   // `--on` typed a moment ago may still be waiting in its tab.
   if (ask === 'off' && jobs.length === 0 && !(session?.harness === 'claude' && session.up)) return undefined;
@@ -147,7 +162,28 @@ function lineFor(ask, { bots, session, jobs, at }) {
       ? `grooming is off, so there is no time to keep. Say when: ${groomCommand(bots)} --on --at <HH:MM>.`
       : `the grooming jobs there run at different times (${times.join(', ')}). Say which one to keep: ${groomCommand(bots)} --on --at <HH:MM>.`);
   }
-  return onLine(bots, cronOf(when), jobs);
+  // A move keeps what the runs are on, when every job there says the same.
+  const runs = [...new Set(jobs.map((job) => JSON.stringify(job.run ?? null)))];
+  const keep = ask === 'move' && runs.length === 1 ? JSON.parse(runs[0]) ?? undefined : undefined;
+  return onLine(bots, cronOf(when), jobs, run ?? keep);
+}
+
+/**
+ * Refuse what the run was given before anything else is looked at: its flags
+ * go with --on, --run-on takes codex, and a model, an effort or an extra
+ * argument is the run's, so it goes with --run-on codex.
+ */
+function refuseRun(run, ask) {
+  if (run === undefined) return;
+  if (run.harness === undefined) {
+    throw new Error('--model, --effort and --extra-arg are what each grooming run is launched with when it runs on Codex, and go with --run-on codex. The grooming session\'s own runs use its own settings. Nothing was typed.');
+  }
+  if (!RUN_ON.includes(run.harness)) {
+    throw new Error(`--run-on takes codex: grooming runs either in its Claude Code session, as it does without --run-on, or as a temporary Codex session made at each fire. Got: ${run.harness === '' ? 'nothing' : run.harness}. Nothing was typed.`);
+  }
+  if (ask !== 'on') {
+    throw new Error('--run-on says what the grooming runs are on, and goes with --on. Nothing was typed.');
+  }
 }
 
 /**
@@ -230,13 +266,35 @@ export function groomingJobs(entries, marker, now) {
       const { cron, prompt, recurring } = call.input ?? {};
       const made = Date.parse(entry.timestamp ?? '');
       if (recurring === false || typeof prompt !== 'string' || !prompt.startsWith(marker) || Number.isNaN(made)) continue;
-      alive.set(result.id, { id: result.id, at: timeOf(cron), cron, made, expires: made + WEEK_MS });
+      const run = runIn(prompt);
+      alive.set(result.id, { id: result.id, at: timeOf(cron), cron, made, expires: made + WEEK_MS, ...(run === undefined ? {} : { run }) });
     }
   }
   return [...alive.values()]
     .filter((job) => job.expires > now)
     .sort((left, right) => left.made - right.made)
     .map((job) => ({ ...job, made: new Date(job.made).toISOString(), expires: new Date(job.expires).toISOString() }));
+}
+
+/**
+ * What a job's runs are on, read out of its prompt: the harness, model and
+ * effort its \`temp make\` is given, each left out when it was not; undefined
+ * for a job whose runs are the session's own.
+ */
+function runIn(prompt) {
+  const make = / temp make ([^`]*)`/.exec(prompt);
+  if (make === null) return undefined;
+  const value = (flag) => {
+    const found = new RegExp(`(?:^| )--${flag}(?:=| )('[^']*'|\\S+)`).exec(make[1]);
+    return found === null ? undefined : found[1].replace(/^'(.*)'$/, '$1');
+  };
+  const run = { harness: value('harness') };
+  if (run.harness === undefined) return undefined;
+  for (const field of ['model', 'effort']) {
+    const got = value(field);
+    if (got !== undefined) run[field] = got;
+  }
+  return run;
 }
 
 /** `HH:MM` as the daily cron Claude Code takes: `04:00` is `0 4 * * *`. */
@@ -268,10 +326,61 @@ const run = (bots) =>
  * fired with, so the job carries itself on; the one that fired is then the
  * older of the two.
  */
-const jobPrompt = (bots, cron) =>
-  `${run(bots)} When the report is sent, renew this schedule, which Claude Code ends a week after it was made: `
+const jobPrompt = (bots, cron, onRun) =>
+  `${onRun === undefined ? run(bots) : runElsewhere(bots, onRun)} When the report is sent, renew this schedule, which Claude Code ends a week after it was made: `
   + `call CronCreate with cron "${cron}", recurring true, and this whole prompt, word for word, as its prompt; `
   + `then call CronList and CronDelete every other job there whose prompt starts with "${PREFIX}".`;
+
+/**
+ * The part of a job whose runs are on Codex (#238): clear what an earlier run
+ * left, make this fire's run, and read its report when it comes. Each command
+ * is the kit by its own path, as the run above names it, because a Claude Code
+ * allow rule matches a command as written (#344). The run's task goes in a file
+ * the kit writes now, beside the bots folder, as it leaves every prompt.
+ */
+function runElsewhere(bots, onRun) {
+  const kit = shellWord(ownCli());
+  const folder = shellWord(bots);
+  const retire = `\`${kit} temp retire --bots ${folder} --name ${RUN_NAME}\``;
+  const make = [
+    `${kit} temp make --bots ${folder} --name ${RUN_NAME} --harness ${onRun.harness}`,
+    ...(onRun.model === undefined ? [] : [`--model ${shellWord(onRun.model)}`]),
+    ...(onRun.effort === undefined ? [] : [`--effort ${shellWord(onRun.effort)}`]),
+    ...(onRun.extraArgs ?? []).map((arg) => `--extra-arg=${shellWord(arg)}`),
+    `--prompt-file ${shellWord(writeRunTask(bots))}`,
+  ].join(' ');
+  return `${markerOf(bots)}: the daily grooming for this fleet, run on ${onRun.harness} as a temporary session of yours `
+    + `that does the work and reports back to you. First, if any of your temporary sessions whose names start with groom- `
+    + `is still there (${BOT_FATHER}'s bot.yaml lists them), a run an earlier fire left, retire each with ${retire}, `
+    + `its own name in place of ${RUN_NAME}. Then make this fire's run with \`${make}\`, `
+    + `where ${RUN_NAME} is this fire's date and time, and end your turn. `
+    + `When a line comes saying fleet mail from that run is waiting, read the mail the way the line says: it is the grooming report. `
+    + `Send it on, as it is, to ${BOT_FATHER}'s management session, as a grooming run's report goes, `
+    + `and then retire the run with ${retire}, its name in place of ${RUN_NAME}.`;
+}
+
+/**
+ * Write the task a Codex run is started with, and answer where: do the daily
+ * grooming with the obk-grooming skill, send the report to the grooming session
+ * by the kit's mail, and stop. It schedules nothing: the schedule is the
+ * grooming session's.
+ */
+function writeRunTask(bots) {
+  const real = realHome(bots);
+  const kit = shellWord(ownCli());
+  const file = path.resolve(promptPath(real, BOT_FATHER, `${GROOMING}-run`));
+  const task = `You are one run of the daily grooming of the fleet in ${real}, made by ${BOT_FATHER}'s ${GROOMING} session. `
+    + 'Run the daily grooming for this fleet, with the obk-grooming skill. Fix this run\'s end now and read what has happened '
+    + `since the last run's end up to it, counting with ${kit} usage --since <last end> --until <this end>, and write this end down for the next run. `
+    + 'Work out what it cost with obk-finops, and keep each bot\'s profile notes. '
+    + `The kit here is ${kit}: run it wherever a skill says obk. The bots folder is ${real}. `
+    + `When the grooming is done, send one short report to ${BOT_FATHER}/${GROOMING} by the kit's mail: `
+    + `ask for the road with ${kit} message to --bots ${shellWord(real)} --to ${BOT_FATHER}/${GROOMING}, then send it with the message send command its answer names. `
+    + 'Then stop: schedule nothing, make no session, and say nothing more.\n';
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, task);
+  return file;
+}
 
 /**
  * The part of a line that clears the grooming jobs the session has when it runs
@@ -281,11 +390,11 @@ const clearing = (jobs) =>
   `call CronList, and call CronDelete on every job there whose prompt starts with "${PREFIX}"`
   + (jobs.length === 0 ? '' : ` (when this was typed they were ${jobs.map((job) => job.id).join(', ')})`);
 
-const onLine = (bots, cron, jobs) =>
+const onLine = (bots, cron, jobs, onRun) =>
   `obk groom asks you to schedule the daily grooming. First ${clearing(jobs)}. `
   + `Then call CronCreate once, with cron "${cron}", recurring true, and as its prompt everything after "Prompt:" `
   + 'at the end of this line, word for word. Do not run the grooming now; say in one line what you scheduled. '
-  + `Prompt: ${jobPrompt(bots, cron)}`;
+  + `Prompt: ${jobPrompt(bots, cron, onRun)}`;
 
 const offLine = (jobs) =>
   `obk groom asks you to turn the daily grooming off: ${clearing(jobs)}. `

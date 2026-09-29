@@ -3,7 +3,8 @@
 // Bot Father.
 //
 //   obk temp make --bots <path> --name <session> (--prompt <text> | --prompt-file <path>)
-//                 [--harness …] [--model …] [--effort …] [--context …] [--approval …] [--json]
+//                 [--harness …] [--model …] [--effort …] [--context …] [--approval …]
+//                 [--extra-arg=<arg>]… [--json]
 //   obk temp retire --bots <path> --name <session> [--json]
 //
 // Both are run in a session's own Orca tab. The kit knows the caller from
@@ -15,7 +16,12 @@
 // approval, as the maker's entry in bot.yaml has them (the harness being the
 // session's own or else the bot's), unless a flag says otherwise. Not the
 // maker's prompt, work dir or extra arguments: its prompt is the task, its
-// work dir `work/<name>`. It goes into bot.yaml and is brought up as
+// work dir `work/<name>`. On a harness other than the maker's it takes only
+// the approval: model, effort and context belong to a harness, so they fall to
+// the new harness's own defaults unless a flag gives them (#238, the
+// architect's ruling (3)). `--extra-arg`, once per argument, gives it extra
+// arguments of its own, stored as `session add --extra-arg` stores them (#238,
+// ruling (4)). It goes into bot.yaml and is brought up as
 // `obk up --session` would bring it up, tab, mailbox and all, and the book
 // records `temporary: { maker, made }` for it, which stays through later
 // writes and onto its retired entry.
@@ -527,6 +533,102 @@ test('TM8 a temporary session cannot make one of its own, and nothing is written
   assert.ok(await entryIn(bots, BOT, 'scout-helper'), 'the same make from a long-lived session works');
 });
 
+// ------------------------------------------- making on another harness (#238)
+
+test('TM9 a session made on a harness other than the maker\'s takes only its approval: model, effort and context are the harness\'s own', async (t) => {
+  // planner is Claude on opus, xhigh, a 1m context and approval ask. A 1m
+  // context on Codex is refused outright, so a make that carried it over could
+  // not make a Codex session from planner at all.
+  const box = await createSandbox(t);
+  const { bots, planner } = await fleet(box);
+
+  await made(box, planner, ['--name', 'scout', '--prompt', TASK, '--harness', 'codex']);
+
+  assert.deepEqual(
+    await settingsOf(bots, BOT, 'scout'),
+    { harness: 'codex', model: undefined, effort: undefined, context: undefined, approval: 'ask' },
+    'planner\'s approval, and none of its Claude settings',
+  );
+  const [line] = typedInto(await liveTab(box, bots, BOT, 'scout'));
+  const fake = await fakeProgram(box, 'codex', {});
+  const argv = await argvOf(box, line, fake);
+  assert.ok(argv.join('\n').includes('-a\non-request'), `Codex asks, as planner does: ${JSON.stringify(argv)}`);
+  for (const claude of ['opus', 'xhigh', '1m']) {
+    assert.ok(!argv.some((word) => word.includes(claude)), `nothing of planner's ${claude} on the launch line: ${JSON.stringify(argv)}`);
+  }
+});
+
+test('TM9 on another harness, a model, effort or context given is used, and what is not given is still not the maker\'s', async (t) => {
+  const box = await createSandbox(t);
+  const { bots, planner } = await fleet(box);
+
+  await made(box, planner, ['--name', 'scout', '--prompt', TASK, '--harness', 'codex', '--model', 'gpt-6-sol', '--effort', 'high']);
+
+  assert.deepEqual(
+    await settingsOf(bots, BOT, 'scout'),
+    { harness: 'codex', model: 'gpt-6-sol', effort: 'high', context: undefined, approval: 'ask' },
+  );
+});
+
+test('TM9 a Codex maker making a Claude session passes on none of its Codex model, effort or context', async (t) => {
+  // nightly is on its bot's Codex, with gpt-6-sol, low and a 200000 context.
+  const box = await createSandbox(t);
+  const { bots, nightly } = await fleet(box);
+
+  await made(box, nightly, ['--name', 'sweeper', '--prompt', TASK, '--harness', 'claude']);
+
+  assert.deepEqual(
+    await settingsOf(bots, BOT, 'sweeper'),
+    { harness: 'claude', model: undefined, effort: undefined, context: undefined, approval: 'auto' },
+  );
+});
+
+test('TM9 naming the maker\'s own harness changes nothing: the maker\'s settings are taken as before', async (t) => {
+  const box = await createSandbox(t);
+  const { bots, planner } = await fleet(box);
+
+  await made(box, planner, ['--name', 'scout', '--prompt', TASK, '--harness', 'claude']);
+
+  assert.deepEqual(
+    await settingsOf(bots, BOT, 'scout'),
+    { harness: 'claude', model: 'opus', effort: 'xhigh', context: '1m', approval: 'ask' },
+  );
+});
+
+// ------------------------------------------- extra arguments of its own (#238)
+
+/** Extra arguments that show a word quoted or split the wrong way: a dash first, spaces and quotes, a dollar. */
+const EXTRA = ['-c', 'projects={"/tmp/a b"={trust_level="trusted"}}', '$HOME stays'];
+
+test('TM10 --extra-arg, once per argument, gives the made session extra arguments of its own, stored as session add stores them', async (t) => {
+  // Made by nightly, on its own Codex, so that nothing but the extra arguments
+  // is new here.
+  const box = await createSandbox(t);
+  const { bots, nightly } = await fleet(box);
+  const flags = EXTRA.map((arg) => `--extra-arg=${arg}`);
+
+  await made(box, nightly, ['--name', 'scout', '--prompt', TASK, ...flags]);
+  const added = await box.run(['session', 'add', '--bots', 'bots', '--bot', BOT, '--name', 'by-hand', '--prompt', TASK, ...flags]);
+  assert.equal(added.code, 0, added.stderr);
+
+  const entry = await entryIn(bots, BOT, 'scout');
+  assert.deepEqual(entry.extra_args, EXTRA, `each argument whole and in order, got: ${JSON.stringify(entry)}`);
+  assert.deepEqual(entry.extra_args, (await entryIn(bots, BOT, 'by-hand')).extra_args, 'as session add stores the same flags');
+  const [line] = typedInto(await liveTab(box, bots, BOT, 'scout'));
+  const fake = await fakeProgram(box, 'codex', {});
+  const argv = await argvOf(box, line, fake);
+  assert.ok(argv.join('\n').includes(EXTRA.join('\n')), `the launch line hands Codex each one, in order: ${JSON.stringify(argv)}`);
+});
+
+test('TM10 the made session\'s extra arguments are its own: the maker\'s are not added to them', async (t) => {
+  const box = await createSandbox(t);
+  const { bots, planner } = await fleet(box);
+
+  await made(box, planner, ['--name', 'scout', '--prompt', TASK, '--extra-arg=--search']);
+
+  assert.deepEqual((await entryIn(bots, BOT, 'scout')).extra_args, ['--search'], 'not planner\'s --verbose beside it');
+});
+
 // ------------------------------------------- making, when the bring-up fails
 
 // A start prompt too long for the launch line goes to the harness from a file
@@ -644,8 +746,8 @@ test('TP2 a make whose bring-up fails after the session is written says it was m
 const REFUSED_SETTINGS = [
   ['an approval the kit does not know', [...SCOUT, '--approval', 'sometimes']],
   ['a harness the kit does not know', [...SCOUT, '--harness', 'emacs']],
-  // planner's context is 1m, which Codex cannot read: it counts tokens.
-  ['Codex, which cannot take the context inherited from a Claude maker', [...SCOUT, '--harness', 'codex']],
+  // A context of 1m is Claude's; Codex counts tokens, and cannot read it.
+  ['Codex given a context of 1m, which it cannot take', [...SCOUT, '--harness', 'codex', '--context', '1m']],
   ['a prompt file that is not there', ['--name', 'scout', '--prompt-file', '/nowhere/obk-temp-sessions/no-such-task.md']],
 ];
 

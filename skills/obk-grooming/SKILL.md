@@ -244,6 +244,16 @@ at: `obk session add --bots <folder> --bot bot-father --name grooming --model
 <m> --effort <e>`, with `--harness claude` where Bot Father runs on Codex, then
 `obk up`. Its launch line carries them, so they are what every run uses.
 
+The runs can be done on Codex instead. The session stays this Claude Code one,
+the clock and the reader, and `obk groom --on --at <HH:MM> --run-on codex
+--model <m> --effort <e>` schedules it: each fire makes a temporary Codex
+session, `groom-<date and time>`, with that model and effort, which does the
+pass with this skill, mails its report to the grooming session and is retired
+by it; the grooming session sends the report on to the management session. A
+run an earlier fire left behind is retired at the next fire. If you are such a
+run, do the pass, send the report as your task says, and stop: schedule
+nothing and make no session.
+
 Do not schedule a pass nobody has watched. `obk groom --now` runs it once in its
 tab; read what it produced, and fix the run rather than the report. Then, after
 one explicit yes from the user who has read a run, `obk groom --on --at <HH:MM>`

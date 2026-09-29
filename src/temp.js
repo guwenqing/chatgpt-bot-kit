@@ -25,7 +25,7 @@ import path from 'node:path';
 
 import { readBook, updateBook } from './book.js';
 import { addSession, dropSession, NAME, readBot } from './bot.js';
-import { isShortPrompt, ownCli, shellWord, startPrompt, workDirOf } from './launch.js';
+import { harnessOf, isShortPrompt, ownCli, shellWord, startPrompt, workDirOf } from './launch.js';
 import { sessionInTab } from './message.js';
 import { retireSession } from './retire.js';
 import { bringUp, promptPath } from './up.js';
@@ -61,10 +61,14 @@ export async function makeTemp(bots, { tab, ...given }) {
   const settings = { name: given.name };
   const harness = given.harness ?? maker?.harness;
   if (harness !== undefined) settings.harness = harness;
+  // On another harness than its maker's, the model, the effort and the context
+  // are that harness's own, and only the approval carries over (#238, PRD 6.4).
+  const same = (harness ?? bot.harness) === harnessOf(maker ?? {}, bot.harness);
   for (const field of INHERITED) {
-    const value = given[field] ?? maker?.[field];
+    const value = given[field] ?? (same || field === 'approval' ? maker?.[field] : undefined);
     if (value !== undefined) settings[field] = value;
   }
+  if (given.extra_args !== undefined) settings.extra_args = given.extra_args;
   if (given.prompt !== undefined) settings.prompt = given.prompt;
   else settings.prompt_file = given.prompt_file;
   settings.work_dir = `work/${given.name}`;

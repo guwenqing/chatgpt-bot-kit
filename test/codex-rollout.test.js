@@ -2,7 +2,8 @@
 // probe makes (test/helpers/codex-rollout.js): the tool calls the session made
 // and the answers they got, by call id, with their times, and nothing else in
 // the file. A rollout also holds everything the session and the user said, so
-// only `function_call` and `function_call_output` entries are ever read.
+// only `function_call` and `function_call_output` entries are ever read, and,
+// for #238's live check, the model and effort of each `turn_context`.
 //
 // Seen in #240's live set (Codex 0.158.0, gpt-6-astra, the rollout named on
 // #432): a bot told to wait called `sleep` with `{"duration_ms":43200000}` and
@@ -14,7 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { functionCallsIn, rolloutFilesOf, sleepCallsIn } from './helpers/codex-rollout.js';
+import { functionCallsIn, rolloutFilesOf, sleepCallsIn, turnSettingsIn } from './helpers/codex-rollout.js';
 
 /** A secret word in what the session said: the reading must never hand it back. */
 const SECRET = 'SECRET-SAID-7713';
@@ -60,6 +61,26 @@ test('each sleep call, however its tool is named, with its duration, and when it
   const notANumber = line('2026-09-28T20:18:30.000Z', 'response_item', { type: 'function_call', name: 'sleep', arguments: '{"duration_ms":"soon"}', call_id: 'call_sleep4' });
   assert.equal(sleepCallsIn(notANumber)[0].durationMs, null, 'and so is one that is not a number');
   assert.deepEqual(sleepCallsIn(line('2026-09-28T20:19:00.000Z', 'response_item', { type: 'function_call', name: 'sleepy_tool', arguments: '{}', call_id: 'x' })), [], 'a tool whose name only begins with sleep is not one');
+});
+
+test('what each turn ran on: the model and effort of every turn_context, in order, and nothing else of it', () => {
+  const rollout = [
+    line('2026-09-29T04:00:05.000Z', 'turn_context', { cwd: '/tmp/x', model: 'gpt-6-sol', effort: 'low', user_instructions: SECRET, approval_policy: 'on-request' }),
+    line('2026-09-29T04:00:06.000Z', 'response_item', { type: 'message', role: 'user', content: [{ type: 'input_text', text: SECRET }] }),
+    line('2026-09-29T04:03:00.000Z', 'turn_context', { model: 'gpt-6-astra', summary: SECRET }),
+    line('2026-09-29T04:04:00.000Z', 'turn_context', { model: 7, effort: { level: 'high' } }),
+    '{"timestamp":"2026-09-29T04:05:00.000Z","type":"turn_context","payload":{"model":"cut',
+  ].join('\n');
+
+  const found = turnSettingsIn(rollout);
+
+  assert.deepEqual(found, [
+    { at: Date.parse('2026-09-29T04:00:05.000Z'), model: 'gpt-6-sol', effort: 'low' },
+    { at: Date.parse('2026-09-29T04:03:00.000Z'), model: 'gpt-6-astra', effort: null },
+    { at: Date.parse('2026-09-29T04:04:00.000Z'), model: null, effort: null },
+  ], 'a field not written as a string is null, and a line cut off is left out');
+  assert.ok(!JSON.stringify(found).includes(SECRET), 'no word of what was said or instructed');
+  assert.deepEqual(turnSettingsIn(ROLLOUT), [], 'a rollout with no turn_context has none');
 });
 
 test('the rollout files of one conversation are found by its id, under any day, and no other', async (t) => {
