@@ -32,8 +32,11 @@ import { parse, stringify } from 'yaml';
 
 import {
   bookOf,
+  botHomeOf,
+  conversationOnRecord,
   createSandbox,
   sessionIn,
+  sh,
   shellWord,
   spellingsOf,
 } from './helpers/cli.js';
@@ -267,3 +270,96 @@ for (const [label, address] of [['the bare web-bot.daily', 'web-bot.daily'], ['a
     assert.deepEqual(answer.found, [], `and nothing else in this fleet, got: ${JSON.stringify(answer.found, null, 2)}`);
   });
 }
+
+// ---------------------------------------------------------------------------
+// A4 — the advice works when followed (review of PR #452)
+// ---------------------------------------------------------------------------
+//
+// `obk restart` refuses a session whose tab is open when the book does not say
+// which conversation is in it (src/restart.js): closing the tab would be the
+// end of it. So a finding about a session with no conversation id in its book
+// has to say that the id is written into the book first, naming the book file
+// and the session, before its restart; and the restart it prints, once that is
+// done, has to work. Both are checked by doing what the finding says.
+
+/** A conversation id, shaped as Claude Code shapes them. */
+const CONVERSATION = '0199b2c0-0450-4444-8888-cccccccccccc';
+
+/**
+ * The restart the finding prints, as a shell would be handed it: the kit's own
+ * CLI, `restart`, and each `--flag value` after it, up to the first word that
+ * is not a flag. Values are single-quoted or bare, as the kit prints them.
+ */
+function printedRestart(box, says) {
+  const spelling = spellingsOf(box.cli).find((cli) => says.includes(`${cli} restart `));
+  assert.ok(spelling !== undefined, `the finding prints the kit's own restart, got: ${says}`);
+  const words = [spelling, 'restart'];
+  let rest = says.slice(says.indexOf(`${spelling} restart `) + `${spelling} restart `.length);
+  const word = /^(?:'(?:[^']|'\\'')*'|[^\s'`]+)+/;
+  for (;;) {
+    const flag = /^(--[a-z-]+)\s+/.exec(rest);
+    if (flag === null) break;
+    rest = rest.slice(flag[0].length);
+    const value = word.exec(rest);
+    if (value === null) break;
+    words.push(flag[1], value[0].replace(/[.,;:]+$/, ''));
+    rest = rest.slice(value[0].length).replace(/^\s+/, '');
+  }
+  return words.join(' ');
+}
+
+/** Write the conversation `id` into one session's book entry as `session: <id>`, as the finding says to. */
+async function conversationIs(bots, bot, session, id) {
+  const file = bookOf(bots, bot);
+  const book = parse(await readFile(file, 'utf8'));
+  book.sessions[session].session = id;
+  await writeFile(file, stringify(book));
+}
+
+/** Run the printed restart as a person would, in a shell, and hold it to working and to moving the session to an address the kit made. */
+async function followRestart(box, bots, bot, session, command) {
+  const ran = await sh(command, { cwd: box.cwd, env: box.env });
+  assert.equal(ran.code, 0, `the restart the finding printed should work: ${command}\n${ran.stdout}${ran.stderr}`);
+  const address = (await sessionIn(bots, bot, session))?.address;
+  assert.match(String(address), kitMade(bot, session), `and the session is then on an address the kit made, got: ${address}`);
+}
+
+test('A4 with no conversation id in the book, the finding says to write it into the book first, naming the file and the session; done, its restart works', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await fleet(box);
+  await addressIs(bots, 'api-bot', 'daily', 'api-bot.daily');
+  assert.equal((await sessionIn(bots, 'api-bot', 'daily'))?.session, undefined, 'the premise: the book names no conversation for daily');
+
+  const answer = await found(box);
+
+  const finding = assertNamedAddress(answer, box, bots, 'api-bot', 'daily', 'api-bot.daily');
+  const book = bookOf(bots, 'api-bot');
+  const bookAt = Math.max(...spellingsOf(book).map((spelling) => finding.says.indexOf(spelling)));
+  assert.ok(bookAt >= 0, `it names the book file, ${book}, where the id goes, got: ${finding.says}`);
+  assert.match(finding.says, /\bsession:\s*<id>/, `and says the id goes in as session: <id>, got: ${finding.says}`);
+  const restartAt = Math.max(...spellingsOf(box.cli).map((cli) => finding.says.indexOf(`${cli} restart `)));
+  assert.ok(bookAt < restartAt, `the id is written first, then the restart, got: ${finding.says}`);
+
+  // The premise of the advice: run before the id is written, the restart is refused and closes nothing.
+  const tooSoon = await sh(printedRestart(box, finding.says), { cwd: box.cwd, env: box.env });
+  assert.notEqual(tooSoon.code, 0, `the premise: with no id in the book the restart refuses, got:\n${tooSoon.stdout}${tooSoon.stderr}`);
+  assert.equal((await sessionIn(bots, 'api-bot', 'daily'))?.address, 'api-bot.daily', 'and changes nothing');
+
+  // Done as it says: the conversation on the harness's own record, its id in the book, and the printed restart run.
+  await conversationOnRecord(box, { harness: 'claude', cwd: botHomeOf(bots, 'api-bot'), id: CONVERSATION });
+  await conversationIs(bots, 'api-bot', 'daily', CONVERSATION);
+  await followRestart(box, bots, 'api-bot', 'daily', printedRestart(box, finding.says));
+});
+
+test('A4 with a conversation id in the book, the restart the finding prints works as it stands', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await fleet(box);
+  await conversationOnRecord(box, { harness: 'claude', cwd: botHomeOf(bots, 'api-bot'), id: CONVERSATION });
+  await conversationIs(bots, 'api-bot', 'daily', CONVERSATION);
+  await addressIs(bots, 'api-bot', 'daily', 'api-bot.daily');
+
+  const answer = await found(box);
+
+  const finding = assertNamedAddress(answer, box, bots, 'api-bot', 'daily', 'api-bot.daily');
+  await followRestart(box, bots, 'api-bot', 'daily', printedRestart(box, finding.says));
+});
