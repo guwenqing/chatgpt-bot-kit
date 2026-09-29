@@ -30,6 +30,9 @@ Each licence below was read from the file named beside it.
   read machine-written when every sentence is clipped to the same length; its
   heading rule, that a heading carries the point rather than the topic; its
   list rules; and the instruction to call each thing by one name everywhere.
+  Revision: cursor/plugins@6ed0f7a9504f577d7529064103cecce9be7dfc5e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **Cursor `plugins`, `pstack/skills/unslop`**: same licence. Two of its rules
   are load-bearing here. Say what it does rather than how it feels, with its
   test: ask what the sentence tells the reader to do or know, restate it as a
@@ -44,6 +47,9 @@ Each licence below was read from the file named beside it.
   named above are kept in their positive form, not every rule in the catalogue,
   and the word list is left where it is, as something to review against rather
   than to load.
+  Revision: cursor/plugins@6ed0f7a9504f577d7529064103cecce9be7dfc5e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **`citypaul/.dotfiles`, `claude/.claude/skills/technical-writing`**: MIT,
   that skill's own nested `LICENSE`, "Copyright (c) 2025 Adam Bulmer", which
   governs its directory rather than the repository root's MIT licence in
@@ -63,6 +69,9 @@ Each licence below was read from the file named beside it.
   leads with the decision requested. And from `resources/formatting.md`, bold
   for the one phrase a skimmer must not miss, and a numbered list claiming that
   order matters.
+  Revision: citypaul/.dotfiles@a109f9972bb46671c624fc05752031523e1cf6fc
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **`mattpocock/skills`, `skills/in-progress/writing-shape`**: MIT,
   `mattpocock_skills/LICENSE`, "Copyright (c) 2026 Matt Pocock". The grounding
   idea, which nothing else in the sources has: every concept a block leans on
@@ -73,6 +82,9 @@ Each licence below was read from the file named beside it.
   drowns the opening. Its format arguments are also taken: prose carries an
   argument and lists carry parallel items, a table where the same shape repeats
   three times or more, and quoting where the original wording is the point.
+  Revision: mattpocock/skills@c55ee46073ed923f86ce59a5eb3b6d895095d1b7
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **`anthropics/skills`, `skills/internal-comms`**: Apache 2.0, that skill's
   own `LICENSE.txt`, "Copyright 2026 Anthropic, PBC." The only source here that
   is explicitly about audience, platform and register for non-engineering
@@ -83,11 +95,17 @@ Each licence below was read from the file named beside it.
   read is a constraint on the writing rather than a detail: something meant to
   be read in under a minute by people with some but not much context is a
   different piece from the same facts written to be landed on.
+  Revision: anthropics/skills@34040c9c568585f6929bedeaad110ad08f079624
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **`garrytan/gstack`, `document-generate/SKILL.md`**: MIT,
   `garrytan_gstack/LICENSE`, "Copyright (c) 2026 Garry Tan". Its voice section:
   lead with the point, be concrete, name the real thing and the real number.
   Its rule to gloss a piece of jargon on first use even where the user
   introduced the term.
+  Revision: garrytan/gstack@a6b3a57512ca6d5c6aa5b68f74f736195021f96e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **`addyosmani/agent-skills`, `skills/doubt-driven-development`** and
   **`citypaul/.dotfiles`, `claude/.claude/skills/double-check`**: MIT,
   `addyosmani_agent-skills/LICENSE` ("Copyright (c) 2025 Addy Osmani") and
@@ -99,6 +117,10 @@ Each licence below was read from the file named beside it.
   than deferring, since a fresh reader can be wrong for want of context; and
   stop when a pass finds only small or known things, bounded at about three
   passes, with a piece still failing then reported as not ready.
+  Revision: addyosmani/agent-skills@dc27a9c2e13721158157632de61b4106c6c2a2a1
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded; and
+  citypaul/.dotfiles@a109f9972bb46671c624fc05752031523e1cf6fc, the same way)
 
 **Left out on a licence.** `anthropics/skills`' `doc-coauthoring` has the best
 statement of reader testing in the corpus, but its directory holds no licence

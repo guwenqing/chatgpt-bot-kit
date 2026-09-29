@@ -45,6 +45,9 @@ thanks:
   print, and the reply being the explanation itself rather than a report about
   it). Its worked density example is not carried; the rules it illustrates
   are.
+  Revision: cursor/plugins@6ed0f7a9504f577d7529064103cecce9be7dfc5e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 
 Made generic, which is what the owner asked for. The original is built on top
 of two other skills it invokes by name, and a kit skill carries what it needs

@@ -29,6 +29,9 @@ below.
   hatches in the types, the lock reflex where nothing was meant to be shared,
   callers needing the internal rules), with deviations treated as signal and a
   few edge cases not condemning a design.
+  Revision: cursor/plugins@6ed0f7a9504f577d7529064103cecce9be7dfc5e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **Cursor pstack**, `architect`'s `runner-prompt` further to the above.
   Grounding the design in what the code actually touches before sketching, and
   what a sketch is (types and signatures with unimplemented bodies, a reader
@@ -37,17 +40,26 @@ below.
   and trusting types inside; one source of truth per invariant, derived rather
   than kept in step; and asking what happens if an operation runs twice or
   crashes halfway.
+  Revision: cursor/plugins@6ed0f7a9504f577d7529064103cecce9be7dfc5e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **Cursor pstack**, `figure-it-out` further to the above. Capturing the
   baseline before the change so the check reads as the old value against the
   new; verdicts of verified, not verified or inconclusive with inconclusive not
   being a pass; inspecting the artefact rather than a report of it; and
   suspecting the observation method when something passes too easily.
+  Revision: cursor/plugins@6ed0f7a9504f577d7529064103cecce9be7dfc5e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **Cursor pstack**, `blast-radius` further to the above. Looking where a
   symbol search stops: the library's own source and its pinned version, when
   things run, the shape of what an interface returns, a column, a wire format,
   another language reading the same bytes, a feature flag; giving each risk a
   real likelihood and a real cost; and listing separately what was checked and
   cleared, since a search that finds nothing is still a result.
+  Revision: cursor/plugins@6ed0f7a9504f577d7529064103cecce9be7dfc5e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **Cursor pstack**, `create-verification-skill`. The whole of making a thing
   runnable and drivable, which the owner asked to live inside this skill rather
   than have one of its own: interviewing the repository rather than the user
@@ -69,6 +81,9 @@ below.
   which that skill's own users praised most because an agent stops searching
   the codebase for where things are. Kept here in that reduced form rather than
   as its own generated directory.
+  Revision: cursor/plugins@6ed0f7a9504f577d7529064103cecce9be7dfc5e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **Cursor pstack**, `principle-sequence-verifiable-units`, `figure-it-out`,
   `blast-radius`, `principle-foundational-thinking`, `principle-model-the-domain`,
   `principle-exhaust-the-design-space` and the `poteto-mode` planning playbooks.
@@ -90,6 +105,9 @@ below.
   cannot happen, ran it, reproduced it) with "listing the callers is not the
   job", the one fact a change is safe because of, and anything short of
   running it said rather than written up as settled.
+  Revision: cursor/plugins@6ed0f7a9504f577d7529064103cecce9be7dfc5e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **mattpocock/skills**, `codebase-design` with `DEEPENING` and
   `DESIGN-IT-TWICE`, `domain-modeling` with its `ADR-FORMAT`, `prototype` and
   `to-tickets`. The three questions to put to an interface (fewer ways in,
@@ -116,6 +134,9 @@ below.
   the exception for a change that has to happen everywhere; and a prototype
   being throwaway code that answers a question, with the polish skipped on
   purpose.
+  Revision: mattpocock/skills@c55ee46073ed923f86ce59a5eb3b6d895095d1b7
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **mattpocock/skills**, `triage` with its `AGENT-BRIEF`, and `to-tickets`
   further to the above. Handing work over behavioural rather than procedural,
   what the system should do and not how, the builder exploring fresh and
@@ -132,6 +153,9 @@ below.
   it was turned down before, asking the reporter specific questions rather
   than for more information, and noting when a piece needs a person's
   judgement rather than being delegated.
+  Revision: mattpocock/skills@c55ee46073ed923f86ce59a5eb3b6d895095d1b7
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 
 Left behind on purpose: the multi-model arena and its runners, fixed model
 choices, the phase todolist and its ceremony, tracker and pull-request
@@ -173,11 +197,15 @@ Words were copied only from the two sources whose licences waive all rights:
   one or two pages, since nobody reads large documents; records numbered in
   sequence with numbers never reused; and a superseded record kept, because it
   is still worth knowing that it was the decision.
+  Read: 2026-09-24 (reconstructed: read by this date, when the entry was
+  written; the day it was read was not recorded)
 - **MADR 4.0.0** (adr.github.io/madr; MIT or CC0-1.0 at the reader's choice,
   taken here under CC0). The people who decided and the people consulted as
   fields of the record, "rejected" among the statuses, consequences written as
   good and bad, and a way to confirm the decision is kept (MADR's
   Confirmation, here "Checked by").
+  Revision: adr/madr@2475fe1973f66a12aaf58a91d8fa7b42c0f5ea3d (the 4.0.0 release
+  this entry names)
 
 Taken as ideas only, in this skill's own words, because their licences do not
 allow the text to be reused (all rights reserved unless noted):
@@ -193,23 +221,38 @@ allow the text to be reused (all rights reserved unless noted):
   decision; the confidence level; and the definition of done (evidence, at
   least two options compared on criteria, challenged and agreed, written and
   shared, a plan to check and revisit it).
+  Read: 2026-09-24 (reconstructed: read by this date, when the entry was
+  written; the day it was read was not recorded)
 - **Martin Fowler**, bliki "Architecture Decision Record". Writing the record
   as a way to bring disagreement into the open; most important first; the
   confidence and what should trigger a re-evaluation; an accepted record never
   reopened, only superseded.
+  Read: 2026-09-24 (reconstructed: read by this date, when the entry was
+  written; the day it was read was not recorded)
 - **AWS Prescriptive Guidance**, "Using architectural decision records…". A
   rejected record kept with its reason so the topic is not argued again; an
   accepted record not changed, a change being a new record noted in the
   record's change history.
+  Read: 2026-09-24 (reconstructed: read by this date, when the entry was
+  written; the day it was read was not recorded)
 - **Microsoft Azure Well-Architected Framework**, "Maintain an architecture
   decision record" (Microsoft Learn terms of use). Not editing accepted records
   but superseding them and linking the two; a record not being a design guide,
   standing on its own with detail linked; consequences never hidden.
+  Read: 2026-09-24 (reconstructed: read by this date, when the entry was
+  written; the day it was read was not recorded)
 - **Joel Parker Henderson**, `architecture-decision-record` (CC BY-NC-SA 4.0,
   which does not fit this use). Dating a fact that will change.
+  Revision:
+  joelparkerhenderson/architecture-decision-record@b1de91256a57110b655ff3572ce1fc41fbc2dac6
+  (reconstructed: the source's head when this entry was written, 2026-09-24; the
+  revision actually read was not recorded)
 - **adr-tools** (Nat Pryce; the tool is GPL-3.0, the content it adds to a
   project CC BY 4.0). Superseding changes only the old record's status, to a
   link to the new one.
+  Revision: npryce/adr-tools@b3279baf9be2207d1a4f4bbd608fd0b591c72aee
+  (reconstructed: the source's head when this entry was written, 2026-09-24; the
+  revision actually read was not recorded)
 - **The GDS Way**, "Documenting architecture decisions", and **GOV.UK**,
   "Architectural Decision Record Framework" (both Open Government Licence
   v3.0), and **Google Cloud Architecture Center**, "Architecture decision
@@ -218,6 +261,8 @@ allow the text to be reused (all rights reserved unless noted):
   names the decision rather than the problem, a superseded status with a link
   to the new record, records kept findable (GDS Way); and a change carrying the
   previous decision and why it changed (Google).
+  Read: 2026-09-24 (reconstructed: read by this date, when the entry was
+  written; the day it was read was not recorded)
 
 What the owner said, and how it shaped this part (issue #264, 2026-09-24): a
 record that partly replaces an older one replaces it with a new one, and he

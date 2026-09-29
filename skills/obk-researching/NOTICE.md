@@ -43,6 +43,9 @@ thanks. Each licence below was read from the file named beside it.
   - `why/SKILL.md` adds coverage rather than minimalism, documenting the null
     instead of skipping the search, and the high bar for skipping a source:
     provably irrelevant rather than probably irrelevant.
+  Revision: cursor/plugins@6ed0f7a9504f577d7529064103cecce9be7dfc5e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **`addyosmani/agent-skills`, `skills/source-driven-development`**: MIT,
   `addyosmani_agent-skills/LICENSE`, "Copyright (c) 2025 Addy Osmani". The
   source hierarchy and what sits outside it: model-written summaries and your
@@ -60,6 +63,9 @@ thanks. Each licence below was read from the file named beside it.
   could not find documentation. And the rule this skill takes whole, that
   hedging is the worst of the three options: either verify and cite, or mark it
   unverified, because a disclaimer in a subordinate clause reads as confidence.
+  Revision: addyosmani/agent-skills@dc27a9c2e13721158157632de61b4106c6c2a2a1
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **`garrytan/gstack`, `ETHOS.md`**: MIT, `garrytan_gstack/LICENSE`,
   "Copyright (c) 2026 Garry Tan". The three layers of what you find and how
   much weight each bears: the settled and well-trodden, where the risk is
@@ -71,6 +77,9 @@ thanks. Each licence below was read from the file named beside it.
   look things up by general category rather than by the private thing you are
   working on, and strip names, addresses, paths and anything that looks like a
   secret from a query before it leaves the machine.
+  Revision: garrytan/gstack@a6b3a57512ca6d5c6aa5b68f74f736195021f96e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **`openai/skills`, `skills/.curated/notion-research-documentation`**: MIT,
   that skill's own `LICENSE.txt`, "Copyright 2025 Notion Labs, Inc." The search
   strategy, which is the only material of its kind in the sources: broad to
@@ -83,16 +92,26 @@ thanks. Each licence below was read from the file named beside it.
   citing every sentence, put the citation beside what it supports, mark a
   quotation as a quotation, keep a sources section that includes what held
   nothing, and flag a superseded source where it stands.
+  Revision: openai/skills@49f948faa9258a0c61caceaf225e179651397431
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **`mattpocock/skills`, `skills/engineering/research`**: MIT,
   `mattpocock_skills/LICENSE`, "Copyright (c) 2026 Matt Pocock". Twelve lines,
   one of which the research pack singled out and this skill is built around:
   follow every claim back to the source that owns it, and go to primary
   material rather than a secondary write-up of it.
+  Revision: mattpocock/skills@c55ee46073ed923f86ce59a5eb3b6d895095d1b7
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **Cloudflare's security-audit skill**: MIT,
   `cloudflare_security-audit-skill/LICENSE`, "Copyright (c) 2025-2026
   Cloudflare, Inc." Coverage honesty: never imply that one pass exhausts the
   subject, and a scoped piece of work presents itself as partial rather than
   letting silence read as "the rest is fine".
+  Revision:
+  cloudflare/security-audit-skill@c1c8a8c1471069fb0e188eeaff69b8e8db6564a8
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 
 Two things come from the research pack rather than from a repository, and are
 marked here because the difference matters:

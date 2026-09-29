@@ -22,6 +22,8 @@ contribute a piece each.
   scheduling for a reminder and verifying what was set, a line in a to-do file
   or a saved skill not being a scheduled reminder, and reporting a missing host
   capability instead of claiming something will run later.
+  Revision: guwenqing/orca-bot-kit@51a42a3e61711b0f33b00482657499de9afee16e (the
+  commit the `git show` above names)
 - **The research pack's `grok-bot-lessons.md`**, our own read of the owner's
   knowledge base on running a personal helper bot. "36 drafts queued, 0 sent":
   finish every reversible step and stop at the irreversible one (BNK-2920 §09,
@@ -29,13 +31,20 @@ contribute a piece each.
   (BNK-2921); here scoped to a routine that does work, since a plain reminder
   has nothing to run by hand. The time zone and the end date in a routine's
   checklist.
+  Revision: none (the kit's own research pack, not a published source)
 - **`mattpocock/skills`, `skills/in-progress/loop-me`** (MIT): do the most you
   can before involving the person, so they are asked once, late; and hand back
   something decision-ready that points at the thing rather than reproducing it.
+  Revision: mattpocock/skills@c55ee46073ed923f86ce59a5eb3b6d895095d1b7
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **Cursor `plugins`, `third_party/x/skills/x-chat`** (MIT, `third_party/x/
   LICENSE`, "Copyright (c) 2026 Cursor"): outbound text needs the person's
   approval unless they already said to send it ("reply that I'll be there"),
   and a vague "check my inbox" is not that.
+  Revision: cursor/plugins@6ed0f7a9504f577d7529064103cecce9be7dfc5e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 
 Written differently from the old skill, on purpose: no fixed path (PRD 7.1
 assumes no way of working); a vague item stays on the list and is asked about,

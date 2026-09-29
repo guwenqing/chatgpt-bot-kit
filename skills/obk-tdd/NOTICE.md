@@ -14,6 +14,9 @@ thanks:
   `to-spec`: the existing seam preferred, the highest one, and the fewer the
   better. Its `diagnosing-bugs`: the correct seam for a bug test, and no
   correct seam being the finding.
+  Revision: mattpocock/skills@c55ee46073ed923f86ce59a5eb3b6d895095d1b7
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **obra/superpowers**, `test-driven-development` and its `writing-good-tests`:
   naming the break a test catches, deriving the expected value by hand, change
   detectors, behaviour rather than text, your contract rather than the
@@ -21,16 +24,25 @@ thanks:
   the mutation classes. Its `verification-before-completion`: the
   revert-the-fix proof. Its `writing-plans`: a requirement's silence not being
   permission, and the few uncovered input classes most likely to bite.
+  Revision: obra/superpowers@5bf4e78011075bcfc0dc295f0724994cd123ee71
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **Cursor pstack**, `tdd` and `principle-test-behavior-not-implementation`:
   the five shapes that observe no behaviour and the fix for each (asserting
   what a stand-in received rather than that it was called, and the relation
   across rows of data that is kept), "prefer no
   new test over a bad test", the honest exit when a test is impractical, and
   the report that names the failing-before and passing-after runs.
+  Revision: cursor/plugins@6ed0f7a9504f577d7529064103cecce9be7dfc5e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **addyosmani/agent-skills**, `test-driven-development` and
   `constraint-driven-development`: finding out how the project tests before
   writing anything, repetition being no fault in a test, a subagent for the
   reproduction test, and the cheap roads to green.
+  Revision: addyosmani/agent-skills@dc27a9c2e13721158157632de61b4106c6c2a2a1
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **citypaul/.dotfiles**, `tdd` and `mutation-testing` with its
   `mutator-rules`: the mutation loop, survivor triage into killed, equivalent
   or named and deferred, the equivalence question, the high-value logic worth
@@ -38,10 +50,18 @@ thanks:
   mixed true and false, no identity values), the tool-run mechanics in
   `mutation-tools.md`, keeping the harness out of the inner loop, triangulating
   after a fake, and refusing to manufacture a red.
+  Revision: citypaul/.dotfiles@a109f9972bb46671c624fc05752031523e1cf6fc
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **Kent Beck's own rules file**: one test at a time, the smallest code that
   passes, structure and behaviour kept apart, and the two-level test for a
   defect.
+  Revision: KentBeck/BPlusTree3@ca80e4d85a99cd0af2effe717f709d43e80403bc
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **nizos/tdd-guard**: the ladder to a clean red.
+  Revision: nizos/tdd-guard@2579ec1823fac5f4afb73be678d9c500b19885ac (as
+  recorded in the research pack's source-book-2.md, read 2026-09-19)
 
 Ideas paraphrased, with no text taken: Trail of Bits' mutation-testing skill
 (CC BY-SA 4.0) on equivalent mutants, Anthropic's Claude Code documentation on
