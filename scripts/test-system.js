@@ -15,7 +15,7 @@
 // tests, and does not answer as though it had.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -289,14 +289,15 @@ const KNOWN_WRITERS = [
 const writerOf = (key) => KNOWN_WRITERS.find((one) => runFolderOf(key).startsWith(one.prefix));
 
 /**
- * What the run left in the harness configs under its own throwaway folders
- * (#240). A system test must leave nothing in the owner's Codex config, so an
- * added key there fails the run; the known writers' own (KNOWN_WRITERS) are
- * their known writes, named and not failed on. Claude Code writes a folder into its record
- * whenever a session starts there, and what to do about that is the owner's
- * call, so those are only named. Keys that were there before, and keys outside
- * the run's folders, are not this run's to answer for. Answers whether the run
- * left a key it must not.
+ * What the run left in the harness configs under its own throwaway folders,
+ * taken out again (#240, the owner's (b)): only keys that were not there
+ * before the run and that name a folder the run made, from Codex's config and
+ * Claude Code's record alike, the known writers' (KNOWN_WRITERS) included.
+ * Everything else in both files stays as it was. A Codex key from a test that
+ * is not a known writer still fails the run, removed or not: a system test
+ * gives Codex its trust at launch (#433). Keys that were there before, and keys
+ * outside the run's folders, are not this run's to answer for. Answers whether
+ * the run failed on what it left.
  */
 function reportConfigsLeft(before, foldersBefore) {
   const after = trustKeys();
@@ -318,10 +319,21 @@ function reportConfigsLeft(before, foldersBefore) {
   const left = codex.filter((key) => !known.includes(key));
   const claude = added('claude');
 
+  // What the run added is taken out again, and only that (#240, the owner's
+  // (b)). Each file is read, changed and written straight away, so the window
+  // in which a running harness could write it too is as short as it can be.
+  const removed = {
+    codex: removeKeys(after.codex.file, codex, withoutTables),
+    claude: removeKeys(after.claude.file, claude, withoutProjects),
+  };
+  const gone = (side) => (removed[side].why === undefined
+    ? 'They were removed again:'
+    : `They could not be removed (${removed[side].why}), so they are the owner's to clear:`);
+
   if (left.length > 0) {
     lines.push(
       `The run left ${left.length} trust key${left.length === 1 ? '' : 's'} in ${after.codex.file} under its own folders,`,
-      'which a system test must not do (#240). They are the owner\'s to clear:',
+      `which a system test must not do (#240). ${gone('codex')}`,
       ...left.map((key) => `  ${key}`),
     );
   }
@@ -329,14 +341,13 @@ function reportConfigsLeft(before, foldersBefore) {
     const its = known.filter((key) => writerOf(key) === writer);
     if (its.length === 0) continue;
     lines.push(
-      `${writer.test} ${writer.does}, and left its known writes in ${after.codex.file} (${writer.issue}):`,
+      `${writer.test} ${writer.does}, and wrote its known keys in ${after.codex.file} (${writer.issue}). ${gone('codex')}`,
       ...its.map((key) => `  ${key}`),
     );
   }
   if (claude.length > 0) {
     lines.push(
-      `Claude Code recorded ${claude.length === 1 ? 'one of the run\'s folders' : `${claude.length} of the run's folders`} in ${after.claude.file}.`,
-      'Reported only, until the owner decides what the tests do about it (#240):',
+      `Claude Code recorded ${claude.length === 1 ? 'one of the run\'s folders' : `${claude.length} of the run's folders`} in ${after.claude.file} (#240). ${gone('claude')}`,
       ...claude.map((key) => `  ${key}`),
     );
   }
@@ -348,7 +359,73 @@ function reportConfigsLeft(before, foldersBefore) {
   }
 
   process.stdout.write(`\n${lines.join('\n')}\n`);
-  return left.length > 0;
+  return left.length > 0 || removed.codex.why !== undefined || removed.claude.why !== undefined;
+}
+
+/**
+ * Take `keys` out of `file` with `without`, a change to its text, and write it
+ * back through a temp file beside it and a rename, with the file's own mode.
+ * `{}` when that was done or there was nothing to take out; `{ why }`, which
+ * never quotes the file, when it could not be.
+ */
+function removeKeys(file, keys, without) {
+  if (keys.length === 0) return {};
+  const temp = path.join(path.dirname(file), `.${path.basename(file)}.obk-${process.pid}`);
+  try {
+    const text = without(readFileSync(file, 'utf8'), new Set(keys));
+    writeFileSync(temp, text, { mode: statSync(file).mode & 0o7777 });
+    renameSync(temp, file);
+    return {};
+  } catch (error) {
+    try {
+      if (existsSync(temp)) rmSync(temp);
+    } catch {
+      // Left beside the file; said below with the rest.
+    }
+    return { why: error instanceof SyntaxError ? 'it is not JSON' : (error.code ?? error.message) };
+  }
+}
+
+/** Any TOML table header: a table's, or an array of tables'. */
+const TABLE_HEADER = /^[ \t]*\[/;
+
+/**
+ * config.toml's text without the trust tables `gone` names, and with every
+ * other line as it was. A table goes from its header to the next table's,
+ * less the comment lines right above that header, which are the next table's
+ * own; the last table goes to the end of the file.
+ */
+function withoutTables(text, gone) {
+  const lines = text.split('\n');
+  const kept = [];
+  for (let at = 0; at < lines.length;) {
+    const header = TRUST_HEADER.exec(lines[at]);
+    if (header === null || !gone.has(tomlKey(header[2]))) {
+      kept.push(lines[at]);
+      at += 1;
+      continue;
+    }
+    let next = at + 1;
+    while (next < lines.length && !TABLE_HEADER.test(lines[next])) next += 1;
+    let end = next;
+    if (next < lines.length) while (end > at + 1 && /^[ \t]*#/.test(lines[end - 1])) end -= 1;
+    kept.push(...lines.slice(end, next));
+    // A table cut to the end of the file takes its final newline with it.
+    if (next === lines.length && text.endsWith('\n')) kept.push('');
+    at = next;
+  }
+  return kept.join('\n');
+}
+
+/**
+ * Claude Code's record without the `projects` keys `gone` names, written in
+ * the file's own layout: its indentation, and a final newline if it had one.
+ */
+function withoutProjects(text, gone) {
+  const record = JSON.parse(text);
+  for (const key of gone) delete record.projects[key];
+  const indent = /^\{\r?\n([ \t]+)"/.exec(text)?.[1] ?? '';
+  return JSON.stringify(record, null, indent) + (text.endsWith('\n') ? '\n' : '');
 }
 
 /**
