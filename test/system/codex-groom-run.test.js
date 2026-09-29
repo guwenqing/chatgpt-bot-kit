@@ -97,14 +97,28 @@
 //
 // **It is attended, a little.** A bot folder nobody has opened before asks
 // questions before the harness is running in it, and this test answers none of
-// them (PRD 6.5), but one. The person answers only these:
+// them (PRD 6.5), but two. The person answers only this:
 //
-//   1. Claude Code's folder-trust list in `Bot Father daily`: its selection
-//      starts on `No, exit`, so it takes a down-arrow and then return.
-//   2. Either Claude tab, after a turn: "Teach auto mode about your
-//      environment?". Esc cancels it (#416).
+//   - Either Claude tab, after a turn: "Teach auto mode about your
+//     environment?". Esc cancels it (#416).
 //
-// The one exception: the grooming tab's folder trust, which this test answers
+// The first exception: `Bot Father daily`'s folder trust, which this test
+// answers itself. The grooming session sends its report to daily, and a daily
+// with no conversation is not among the sessions Claude Code lists: in live run
+// 6, with daily's trust unanswered, the grooming session sent its report to the
+// nearest listed name instead, the owner's real `bot-father.daily`, whose bare
+// name is from before #286 (#450). A test reached outside its space (#220). The
+// architect's ruling on #238: the test answers "Yes, I trust this folder" in
+// its own throwaway daily tab only, only when the screen is the plain folder
+// trust for this test's `bots/bot-father` folder (no pre-approved permission,
+// since daily comes up before the rule is set; the pointer on "No, exit"; the
+// "Yes" choice there), and at most once. Any other screen gets no answer, and
+// the test fails saying what it saw. Then daily has to report its conversation
+// and hold an address the kit made for it before the job is scheduled, and at
+// the end every message the grooming session sent by Claude Code's own
+// messaging since the fire has to have gone to that address and no other.
+//
+// The second exception: the grooming tab's folder trust, which this test answers
 // itself. Bot Father's settings pre-approve the test's trust-hooks rule, set
 // above through `obk bot change --allow`, so Claude Code asks for the folder's
 // trust again when the grooming session starts, naming that permission (live
@@ -172,6 +186,17 @@ const ANSWER_MS = 240000;
 
 /** How long a tab is given to be ready for a question: a person may be answering a screen on it. */
 const READY_MS = 180000;
+
+/**
+ * How long Bot Father daily is given, once its folder trust is answered, to
+ * report its conversation: the kit's hook runs as soon as the folder is
+ * trusted, so this is short, and a daily not live by then fails the test
+ * before anything is scheduled.
+ */
+const LIVE_MS = 60000;
+
+/** An address the kit made for Bot Father's daily (src/launch.js `addressOf`). */
+const DAILY_ADDRESS = /^bot-father\.daily\.[a-z0-9]{8}$/;
 
 /** How long a recurring job may fire late: Claude Code's documentation says up to thirty minutes. */
 const JITTER_MS = 30 * 60000;
@@ -321,6 +346,24 @@ function trustAsksOnly(rows, rule, settingsFile) {
     return `${settingsFile} could not be read: ${error.message}`;
   }
   if (!Array.isArray(allow) || allow.length !== 1 || allow[0] !== rule) return `${settingsFile} allows ${JSON.stringify(allow)}, not exactly [${rule}]`;
+  return undefined;
+}
+
+/**
+ * Whether Claude Code's folder trust in the tab is the plain one for `folder`,
+ * and may be answered (the ruling on #238 after #450): undefined when it may,
+ * or what makes it a screen this test leaves alone. No permission is
+ * pre-approved, the folder shown is `folder` in either spelling of a macOS
+ * temp path, and the pointer is on "No, exit" with "Yes, I trust this folder"
+ * below it.
+ */
+function plainTrustOf(rows, folder) {
+  if (rows.some((row) => /\bpre-approves\b/.test(row))) return 'it names a pre-approved permission, and this folder should have none yet';
+  const bare = folder.replace(/^\/private(?=\/)/, '');
+  const spellings = new Set([folder, bare, `/private${bare}`]);
+  if (!rows.some((row) => spellings.has(row.trim()))) return `it does not show this test's folder, ${folder}`;
+  if (!rows.some((row) => /^\s*❯\s*No, exit\s*$/.test(row))) return 'its pointer is not on "No, exit", where down-and-return would mean "Yes, I trust this folder"';
+  if (!rows.some((row) => /^\s*Yes, I trust this folder\s*$/.test(row))) return 'it has no "Yes, I trust this folder" choice';
   return undefined;
 }
 
@@ -541,6 +584,43 @@ test('a grooming job with --run-on codex starts one Codex run at its fire, on th
   const daily = tabOf(init, 'daily');
   assert.equal(daily.harnessStarted, true, `no claude came up in ${daily.title}: \`orca terminal read --terminal ${daily.terminal} --screen\``);
 
+  // The first screen this test answers itself (see the header): daily's plain
+  // folder trust. Daily is where the report goes, and it has to be live, under
+  // an address of its own, before anything is scheduled (#450).
+  const dailyAsked = await until(
+    'Bot Father daily to show Claude Code\'s folder trust, or report its session id',
+    READY_MS,
+    async () => {
+      if (typeof sessionIn(home, 'daily').session === 'string') return { rows: null };
+      const rows = rowsOf(daily.terminal);
+      return rows !== undefined && rows.some((row) => row.includes('Yes, I trust this folder')) ? { rows } : undefined;
+    },
+    () => whatIsUp(daily.terminal),
+  );
+  if (dailyAsked.rows !== null) {
+    const wrong = plainTrustOf(dailyAsked.rows, home);
+    assert.equal(
+      wrong,
+      undefined,
+      `Bot Father daily's folder trust is not the plain one this test may answer, so it answered nothing: ${wrong}.`
+      + `\n  what it showed:\n    ${dailyAsked.rows.join('\n    ')}`,
+    );
+    const sent = orca(['terminal', 'send', '--terminal', daily.terminal, '--text', '\x1b[B\r']);
+    assert.equal(sent.ok, true, `answering Bot Father daily's folder trust failed: ${JSON.stringify(sent.error)}`);
+    t.diagnostic('answered Bot Father daily\'s plain folder trust (the ruling on #238 after #450)');
+  }
+  const dailyEntry = await until(
+    'Bot Father daily to report its conversation and hold an address the kit made for it',
+    LIVE_MS,
+    async () => {
+      const entry = sessionIn(home, 'daily');
+      return typeof entry.session === 'string' && DAILY_ADDRESS.test(String(entry.address)) ? entry : undefined;
+    },
+    () => ` The book's entry for daily: ${JSON.stringify(sessionIn(home, 'daily'))}.${whatIsUp(daily.terminal)}`,
+    POLL_MS,
+  );
+  const dailyAddress = dailyEntry.address;
+
   // The one permission the owner chose to allow (#238, (b)), in this fleet's
   // own Bot Father, before the grooming session starts and reads its settings.
   const trustRule = `Bash(${cliEntry} temp trust-hooks:*)`;
@@ -736,6 +816,21 @@ test('a grooming job with --run-on codex starts one Codex run at its fire, on th
       + `\n  the grooming conversation since the notice:\n${tailOf(after(groomingLines(home), noticeAt))}${whatIsUp(handle)}`,
     POLL_MS,
   );
+  // Where the report went: every message the grooming session sent by Claude
+  // Code's own messaging since the fire went to daily's own address, the one
+  // the kit gave it, and to no other session on this machine (#450, #220). A
+  // name Claude Code lists may carry a ` [xxxxxx]` after it; the name is what
+  // counts.
+  const sends = after(groomingLines(home), firedAt).flatMap(toolUses).filter((use) => use.name === 'SendMessage');
+  const elsewhere = sends.map((use) => String(use.input?.to ?? '')).filter((to) => to.replace(/\s*\[[^\]]*\]\s*$/, '').trim() !== dailyAddress);
+  assert.deepEqual(
+    elsewhere,
+    [],
+    `the grooming session sent by Claude Code's own messaging to somewhere other than this test's daily, ${dailyAddress}: `
+    + 'a test reached outside its own fleet (#450, #220)',
+  );
+  t.diagnostic(`the grooming session's messages since the fire by Claude Code's own messaging: ${sends.length}, all to ${dailyAddress}`);
+
   const retired = (bookOf(home).retired ?? []).filter((entry) => entry?.name === runName);
   assert.equal(retired.length, 1, `the book's retired list keeps the run: ${JSON.stringify(bookOf(home).retired)}`);
   assert.equal(retired[0].temporary?.maker, 'grooming', `as the grooming session's: ${JSON.stringify(retired[0])}`);
