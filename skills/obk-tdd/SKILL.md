@@ -410,6 +410,36 @@ check, untested guard clauses and early returns, error branches, boundaries
 mutable state, order dependence, the clock, the timezone, the real network, a
 sleep, an assertion on the order of something unordered.
 
+## Generated inputs: is there one the code gets wrong?
+
+The mutation check asks whether the tests would notice if the code were wrong.
+This asks the other question: is there an input the code gets wrong? Example
+tests only try the inputs someone thought of. Generated ones try many more.
+
+They earn their place where the inputs are many and a rule holds for all of
+them: parsers, encoders and decoders, anything with a round trip, normalisers,
+sorting and merging, and code with an invariant. A function with three cases
+is better served by three example tests.
+
+State the property first, as a sentence true of every input: decoding what was
+encoded gives the input back; the output is sorted and holds the same elements;
+running it twice gives what running it once gave; it agrees with a slow, obvious
+version of itself. A property that restates the implementation proves nothing.
+
+Generate the inputs with a small loop and a seeded generator. No library is
+needed, and none should become a dependency for this. Weight them towards the
+edges (empty, one element, the largest, odd characters, the boundaries the
+requirement names), bound the count and the time, and print the seed, so a
+failure can be run again exactly.
+
+When one fails, make the input as small as it will go while it still fails, and
+keep it as an ordinary example test: red first, then the fix. The generated test
+stays too, but the example is what guards that bug from now on.
+
+Report what was generated, how many, the seed, and the property. Say what failed
+and which example tests it became. "Two thousand inputs, seed 7, no failure" is
+evidence for those inputs, not a proof, so say it that way.
+
 ## The mutation check before you call it done
 
 The question is the whole point: if a real mistake were made in this code,
