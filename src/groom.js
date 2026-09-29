@@ -294,6 +294,11 @@ function runIn(prompt) {
     const got = value(field);
     if (got !== undefined) run[field] = got;
   }
+  // Each extra argument as the job wrote it, one shell word, read back to what
+  // it was given as, so a move keeps them all (review of PR #439).
+  const extra = [...make[1].matchAll(/(?:^| )--extra-arg=('(?:[^']|'\\'')*'|[A-Za-z0-9,._+:@%/=-]+)/g)]
+    .map((found) => (found[1].startsWith('\'') ? found[1].slice(1, -1).replaceAll(`'\\''`, '\'') : found[1]));
+  if (extra.length > 0) run.extra_args = extra;
   return run;
 }
 
@@ -326,8 +331,16 @@ const run = (bots) =>
  * fired with, so the job carries itself on; the one that fired is then the
  * older of the two.
  */
-const jobPrompt = (bots, cron, onRun) =>
-  `${onRun === undefined ? run(bots) : runElsewhere(bots, onRun)} When the report is sent, renew this schedule, which Claude Code ends a week after it was made: `
+const jobPrompt = (bots, cron, onRun) => (onRun === undefined
+  ? `${run(bots)} When the report is sent, ${renewal(cron)}`
+  // A run on Codex reports in a later turn, and may never: the job renews at
+  // the fire, once the run is made, so a run that never reports does not end
+  // the schedule with it (review of PR #439).
+  : `${runElsewhere(bots, onRun)} Then ${renewal(cron)} Then end your turn. ${readReport(bots)}`);
+
+/** The part of a job that renews it, which Claude Code would otherwise end a week after it was made. */
+const renewal = (cron) =>
+  'renew this schedule, which Claude Code ends a week after it was made: '
   + `call CronCreate with cron "${cron}", recurring true, and this whole prompt, word for word, as its prompt; `
   + `then call CronList and CronDelete every other job there whose prompt starts with "${PREFIX}".`;
 
@@ -346,7 +359,7 @@ function runElsewhere(bots, onRun) {
     `${kit} temp make --bots ${folder} --name ${RUN_NAME} --harness ${onRun.harness}`,
     ...(onRun.model === undefined ? [] : [`--model ${shellWord(onRun.model)}`]),
     ...(onRun.effort === undefined ? [] : [`--effort ${shellWord(onRun.effort)}`]),
-    ...(onRun.extraArgs ?? []).map((arg) => `--extra-arg=${shellWord(arg)}`),
+    ...(onRun.extra_args ?? []).map((arg) => `--extra-arg=${shellWord(arg)}`),
     `--prompt-file ${shellWord(writeRunTask(bots))}`,
   ].join(' ');
   return `${markerOf(bots)}: the daily grooming for this fleet, run on ${onRun.harness} as a temporary session of yours `
@@ -354,10 +367,15 @@ function runElsewhere(bots, onRun) {
     + `is still there (${BOT_FATHER}'s bot.yaml lists them), a run an earlier fire left, retire each with ${retire}, `
     + `its own name in place of ${RUN_NAME}. Then make this fire's run with \`${make}\`, `
     + `where ${RUN_NAME} is this fire's date and time. Its tab can stop on Codex's first-run screens (its folder trust, `
-    + 'the review of its hooks): answer them yourself, as the make\'s output and your rules say, and then end your turn. '
-    + `When a line comes saying fleet mail from that run is waiting, read the mail the way the line says: it is the grooming report. `
+    + 'the review of its hooks): answer them yourself, as the make\'s output and your rules say.';
+}
+
+/** The part of a Codex job for the later turn its run's report comes in: read it, send it on, retire the run. */
+function readReport(bots) {
+  const retire = `\`${shellWord(ownCli())} temp retire --bots ${shellWord(bots)} --name ${RUN_NAME}\``;
+  return `When a line comes saying fleet mail from that run is waiting, read the mail the way the line says: it is the grooming report. `
     + `Send it on, as it is, to ${BOT_FATHER}'s management session, as a grooming run's report goes, `
-    + `and then retire the run with ${retire}, its name in place of ${RUN_NAME}.`;
+    + `and then retire the run with ${retire}, its name in place of ${RUN_NAME}. Schedule nothing then: the job renewed itself when it fired.`;
 }
 
 /**

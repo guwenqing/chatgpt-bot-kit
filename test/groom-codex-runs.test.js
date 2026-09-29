@@ -308,6 +308,26 @@ test('C1 the job tells the session to answer its run\'s first-run screens itself
   assert.match(sentence, /yourself|answer/i, `and tells the session to answer them itself: ${sentence}`);
 });
 
+test('C1 the Codex job renews itself at the fire, after making the run and before the part about its mail; the run is retired after that part', async (t) => {
+  // The run's report comes in a later turn than the fire's, and may never come,
+  // so a renewal that waits on it can be left undone (review of PR #439, P2-2:
+  // the live run made no second CronCreate). So the job renews in the fire's own
+  // turn, once the run is made, and the mail's turn only reads it and retires.
+  const box = await createSandbox(t);
+  const bots = await fleet(box);
+
+  const job = await codexJob(box, bots, ['--model', MODEL, '--effort', EFFORT]);
+
+  const make = theMake(box, job);
+  const mail = job.search(/fleet mail/i);
+  assert.ok(mail > make.at, `the job has a part about the run's mail, after the make: ${job}`);
+  const renew = job.indexOf('CronCreate', make.at);
+  assert.ok(renew > make.at && renew < mail, `the renewal's CronCreate comes after the make and before the mail part, got it at ${renew} (make ${make.at}, mail ${mail}): ${job}`);
+  const reported = commandsOf(box, job).retires.find((one) => one.at > make.at);
+  assert.ok(reported !== undefined && reported.at > mail, `the run's retire comes after the mail part: ${job}`);
+  assert.equal(job.indexOf('CronCreate', mail), -1, `and nothing is renewed after the mail part, or it would be renewed twice: ${job}`);
+});
+
 test('C1 the make, read by a real shell, asks for a Codex run with the model, the effort and every extra argument as given', async (t) => {
   const box = await createSandbox(t);
   const bots = await fleet(box);
@@ -428,6 +448,9 @@ test('C4 without --run-on the --on line is #237\'s: no temporary session in it',
   const line = await theLineTyped(box, bots, before);
   assert.deepEqual(commandsIn(line, spellingsOf(box.cli), 'temp make'), [], `no run is made: ${line}`);
   assert.ok(!/codex/i.test(line), `and nothing of Codex: ${line}`);
+  const job = jobIn(line);
+  const report = job.search(/report/i);
+  assert.ok(report >= 0 && report < job.lastIndexOf('CronCreate'), `and its renewal still comes after its report, as #237 has it: ${job}`);
 });
 
 test('C5 --model, --effort or --extra-arg without --run-on codex is refused, says --run-on, and types nothing', async (t) => {
@@ -508,7 +531,8 @@ test('C6 obk groom reports the run\'s harness, model and effort for a job that m
 
   const [job] = (await groom(box)).groom.jobs;
   assert.equal(job?.id, 'c0de0001', 'the job is listed as #237 lists one');
-  assert.deepEqual(job.run, { harness: 'codex', model: MODEL, effort: EFFORT }, `read from the job: ${JSON.stringify(job)}`);
+  // The extra arguments too, since each run is given them (review of PR #439, P2-1).
+  assert.deepEqual(job.run, { harness: 'codex', model: MODEL, effort: EFFORT, extra_args: EXTRA }, `read from the job: ${JSON.stringify(job)}`);
 
   const plain = await box.run(['groom', '--bots', 'bots']);
   assert.equal(plain.code, 0, plain.stderr);
@@ -536,4 +560,39 @@ test('C6 a Codex job given no model or effort reports its runs on Codex with nei
   assert.equal(job?.run?.harness, 'codex', `got: ${JSON.stringify(job)}`);
   assert.equal(job.run.model ?? null, null, 'no model: Codex\'s own');
   assert.equal(job.run.effort ?? null, null, 'no effort: Codex\'s own');
+});
+
+test('C7 moving a Codex job keeps every extra argument, as given and in order, and takes the new time', async (t) => {
+  // Review of PR #439, P2-1: the move retyped the job from what the report
+  // reads out of it, which kept the harness, the model and the effort and lost
+  // the extra arguments.
+  const box = await createSandbox(t);
+  const bots = await fleet(box);
+  await transcriptOf(box, bots, await jobMadeWith(box, bots, 'c0de0007', ['--model', MODEL, '--effort', EFFORT, ...extraFlags(EXTRA)]));
+  const before = await sendsByTab(box);
+
+  const answer = await groom(box, '--at', '06:30');
+
+  assert.equal(answer.groom.asked, 'on', 'a move is typed as an --on');
+  const line = await theLineTyped(box, bots, before);
+  assert.match(line, /(?:^|[^0-9])30 6 \* \* \*(?![0-9])/, `at the new time, 06:30: ${line}`);
+  const argv = await argvOf(theMake(box, jobIn(line)), RUN);
+  assert.deepEqual(valuesOf(argv, '--harness'), ['codex']);
+  assert.deepEqual(valuesOf(argv, '--model'), [MODEL]);
+  assert.deepEqual(valuesOf(argv, '--effort'), [EFFORT]);
+  assert.deepEqual(valuesOf(argv, '--extra-arg'), EXTRA, 'every extra argument whole, in order, its quotes and dollar kept');
+});
+
+test('C7 a Codex job with no extra arguments reports none, and a move of it adds none', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await fleet(box);
+  await transcriptOf(box, bots, await jobMadeWith(box, bots, 'c0de0008', ['--model', MODEL]));
+
+  const [job] = (await groom(box)).groom.jobs;
+  assert.equal(job.run.extra_args ?? null, null, `no extra arguments were given: ${JSON.stringify(job)}`);
+  const before = await sendsByTab(box);
+  await groom(box, '--at', '06:30');
+  const argv = await argvOf(theMake(box, jobIn(await theLineTyped(box, bots, before))), RUN);
+  assert.deepEqual(valuesOf(argv, '--extra-arg'), [], `and the move adds none: ${JSON.stringify(argv)}`);
+  assert.deepEqual(valuesOf(argv, '--model'), [MODEL]);
 });

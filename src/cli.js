@@ -836,7 +836,7 @@ const commands = {
       harness: values['run-on'],
       ...(values.model === undefined ? {} : { model: values.model }),
       ...(values.effort === undefined ? {} : { effort: values.effort }),
-      ...(values['extra-arg'] === undefined ? {} : { extraArgs: values['extra-arg'] }),
+      ...(values['extra-arg'] === undefined ? {} : { extra_args: values['extra-arg'] }),
     };
     const groom = grooming(bots, { at: values.at, ask, run });
     return { answer: { bots, groom }, lines: groomLines(groom, bots) };

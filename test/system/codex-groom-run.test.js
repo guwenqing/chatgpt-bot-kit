@@ -40,6 +40,9 @@
 //   4. After the run no temporary session is left: not in bot.yaml, not among
 //      the book's sessions, and not in Orca. The book's retired list keeps the
 //      run, with the grooming session as its maker.
+//   5. The fire renewed its job, in its own turn: after the run is retired
+//      `obk groom` lists one job, not the one `--on` made, ending later than
+//      it, at the same time and with the same runs (review of PR #439).
 //
 // It runs the real flow, the job a user would have: `--run-on codex` with no
 // `--extra-arg` at all, so no trust given at launch and no sleep flag (a
@@ -618,8 +621,23 @@ test('a grooming job with --run-on codex starts one Codex run at its fire, on th
     'and no groom-* tab in Orca',
   );
 
-  // The job is still there, renewed by the fire, with its runs as before.
-  const { jobs } = obkJson(['groom', '--bots', bots]).groom;
-  assert.equal(jobs.length, 1, `one grooming job after the run: ${JSON.stringify(jobs)}`);
-  assert.deepEqual(jobs[0].run, { harness: 'codex', model: CODEX_MODEL, effort: CODEX_EFFORT });
+  // 5. Renewed: the fire replaced its job with a new one, in its own turn,
+  // right after making the run (review of PR #439, P2-2: a renewal left to the
+  // report's turn was never made). One job, not the one --on made, ending later
+  // than it, with the same runs. By now it is long made; the wait is for the
+  // listing to catch up, and for a fire whose turn was slow.
+  const replaced = await until(
+    'the fire to renew its job: one job, a new one, ending later than the first',
+    Math.max(ANSWER_MS, firedAt + ANSWER_MS - Date.now()),
+    async () => {
+      const { jobs } = obkJson(['groom', '--bots', bots]).groom;
+      return jobs.length === 1 && jobs[0].id !== made.id && Date.parse(jobs[0].expires) > Date.parse(listed.expires) ? jobs[0] : undefined;
+    },
+    () => ` obk groom lists: ${JSON.stringify(obkJson(['groom', '--bots', bots]).groom.jobs)}; the first was ${made.id}, ending ${listed.expires}.`
+      + ` CronCreates since the fire: ${JSON.stringify(jobsMadeIn(after(groomingLines(home), firedAt), marker))}.`
+      + `${refusedIn(after(groomingLines(home), firedAt))}\n  the grooming conversation since the fire:\n${tailOf(after(groomingLines(home), firedAt))}`,
+    POLL_MS,
+  );
+  assert.deepEqual(replaced.run, { harness: 'codex', model: CODEX_MODEL, effort: CODEX_EFFORT }, `with the same runs: ${JSON.stringify(replaced)}`);
+  assert.equal(replaced.cron, cron, 'at the same time');
 });
