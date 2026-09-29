@@ -262,3 +262,151 @@ test('the published package ships the skills directory', async () => {
     `package.json files should include the skills directory, got: ${pkg.files.join(', ')}`,
   );
 });
+
+// ------------------------------------------------------------ the revision of each source (#280)
+//
+// A NOTICE says what was taken from each source; it also says which revision
+// was read, so a later refresh can tell what changed upstream since. Each
+// source entry, a `- **…**` bullet anywhere under "# Sources and licences",
+// carries exactly one line of its own among its continuation lines:
+//
+//   Revision: <owner/repo>@<40-hex commit> (<how>)   a repository source
+//   Read: <YYYY-MM-DD> (<how>)                        a page
+//   Revision: none (<why>)                            neither: the kit's own
+//                                                     earlier skill, a research
+//                                                     pack, a built-in behaviour
+//
+// `<how>` and `<why>` are free text and may wrap onto the entry's next lines.
+// Which sources are repositories is the NOTICE's to say, not this test's.
+
+const SOURCES_HEADING = /^# Sources and licences\s*$/m;
+
+/**
+ * The source entries of a NOTICE's text: each `- **…**` bullet under "# Sources
+ * and licences", with its continuation lines (indented, up to a blank line or
+ * a line that is not), as `{ name, line, lines }`, `line` its line number in
+ * the file, since one NOTICE can name the same source in several entries.
+ */
+function sourceEntries(text) {
+  const heading = SOURCES_HEADING.exec(text);
+  if (heading === null) return [];
+  const first = text.slice(0, heading.index).split('\n').length;
+  const lines = text.slice(heading.index).split('\n');
+  const entries = [];
+  let current;
+  for (const [index, line] of lines.entries()) {
+    if (/^- \*\*/.test(line)) {
+      const name = /^- \*\*(.+?)\*\*/.exec(line)?.[1] ?? line.slice(4);
+      current = { name, line: first + index, lines: [line] };
+      entries.push(current);
+    } else if (current !== undefined && /^\s+\S/.test(line)) {
+      current.lines.push(line);
+    } else {
+      current = undefined;
+    }
+  }
+  return entries;
+}
+
+const REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const COMMIT = /^[0-9a-f]{40}$/;
+
+/** Whether `text` is a real calendar date written YYYY-MM-DD. */
+function isDate(text) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
+  const date = new Date(`${text}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === text;
+}
+
+/**
+ * What is wrong with one source entry's revision, or undefined when nothing is:
+ * exactly one line starting `Revision:` or `Read:`, read with the lines after
+ * it so that a wrapped `(<how>)` is whole.
+ */
+function revisionTrouble(entry) {
+  const at = entry.lines.flatMap((line, index) => (/^\s+(?:Revision|Read):/.test(line) ? [index] : []));
+  if (at.length === 0) return 'has no Revision: or Read: line';
+  if (at.length > 1) return `has ${at.length} Revision: or Read: lines, and a source gets one`;
+  const said = entry.lines.slice(at[0]).join(' ').replace(/\s+/g, ' ').trim();
+  const read = /^Read: (\S+) \((.+?)\)/.exec(said);
+  if (said.startsWith('Read:')) {
+    if (read === null) return `has a Read: line not in the form "Read: <YYYY-MM-DD> (<how>)": ${said}`;
+    if (!isDate(read[1])) return `has a Read: line whose date is not a real YYYY-MM-DD: ${read[1]}`;
+    if (read[2].trim() === '') return 'has a Read: line with nothing said in its parentheses';
+    return undefined;
+  }
+  const revision = /^Revision: (\S+) \((.+?)\)/.exec(said);
+  if (revision === null) return `has a Revision: line not in the form "Revision: <owner/repo>@<commit> (<how>)" or "Revision: none (<why>)": ${said}`;
+  if (revision[2].trim() === '') return 'has a Revision: line with nothing said in its parentheses';
+  if (revision[1] === 'none') return undefined;
+  const [repo, commit, ...rest] = revision[1].split('@');
+  if (rest.length > 0 || commit === undefined) return `has a Revision: that is not <owner/repo>@<commit>: ${revision[1]}`;
+  if (!REPO.test(repo)) return `has a Revision: whose repository is not owner/repo: ${repo}`;
+  if (!COMMIT.test(commit)) return `has a Revision: whose commit is not a full 40-hex sha: ${commit}`;
+  return undefined;
+}
+
+/** Every NOTICE problem, as `<file>:<line>, <entry>: <what>`. */
+const noticeTrouble = (file, text) => sourceEntries(text).flatMap((entry) => {
+  const trouble = revisionTrouble(entry);
+  return trouble === undefined ? [] : [`${file}:${entry.line}, ${entry.name}: ${trouble}`];
+});
+
+test('every source in every skill\'s NOTICE names the revision read: a commit, a date, or none with why (#280)', async () => {
+  const notices = (await skills()).flatMap((skill) => skill.files.filter((file) => path.basename(file.abs) === 'NOTICE.md'));
+  assert.ok(notices.length > 0, 'the kit\'s skills have NOTICE files to check');
+
+  const trouble = notices.flatMap((notice) => noticeTrouble(notice.file, notice.text));
+
+  assert.deepEqual(trouble, [], 'each source entry needs one Revision: or Read: line (see the comment above this test)');
+});
+
+test('the NOTICE check finds a source with no revision, a short sha, a date that is not one, and two lines for one source (#280)', () => {
+  const sha = 'a'.repeat(40);
+  const notice = (...entries) => ['# Sources and licences', '', 'From these:', '', ...entries, '', '## Later', '', 'Prose.', ''].join('\n');
+
+  assert.deepEqual(noticeTrouble('N.md', notice(
+    '- **mattpocock/skills**, `tdd`: what was taken, over',
+    '  two lines.',
+    `  Revision: mattpocock/skills@${sha} (reconstructed: the repo's head when this`,
+    '  notice was written, 2026-09-20; the revision read was not recorded)',
+    '- **A blog post**, "Its title".',
+    '  Read: 2026-09-20 (read by)',
+    '- **The research pack**, our own notes.',
+    '  Revision: none (a research pack of our own, not a repository)',
+  )), [], 'three good entries, one with its reason wrapped');
+
+  assert.deepEqual(noticeTrouble('N.md', notice(
+    '- **obra/superpowers**, `debugging`: what was taken.',
+    '- **garrytan/gstack**, `investigate`.',
+    '  Revision: garrytan/gstack@abc1234 (checked 2026-09-29)',
+    '- **A page**, somewhere.',
+    '  Read: 2026-02-30 (read by)',
+    '- **citypaul/.dotfiles**, `tdd`.',
+    `  Revision: citypaul/.dotfiles@${sha} (checked 2026-09-29)`,
+    '  Read: 2026-09-20 (read by)',
+    '- **A built-in**, observed.',
+    '  Revision: none',
+    '- **nizos/tdd-guard**.',
+    `  Revision: ${sha} (no repository named)`,
+  )), [
+    'N.md:5, obra/superpowers: has no Revision: or Read: line',
+    'N.md:6, garrytan/gstack: has a Revision: whose commit is not a full 40-hex sha: abc1234',
+    'N.md:8, A page: has a Read: line whose date is not a real YYYY-MM-DD: 2026-02-30',
+    'N.md:10, citypaul/.dotfiles: has 2 Revision: or Read: lines, and a source gets one',
+    'N.md:13, A built-in: has a Revision: line not in the form "Revision: <owner/repo>@<commit> (<how>)" or "Revision: none (<why>)": Revision: none',
+    `N.md:15, nizos/tdd-guard: has a Revision: that is not <owner/repo>@<commit>: ${sha}`,
+  ]);
+
+  assert.deepEqual(noticeTrouble('N.md', '# Something else\n\n- **Not a source**, here.\n'), [], 'bullets outside "# Sources and licences" are not sources');
+  assert.deepEqual(
+    noticeTrouble('N.md', `<!-- a comment\n     of two lines -->\n\n${notice('- **Two**, here.')}`),
+    ['N.md:8, Two: has no Revision: or Read: line'],
+    'the line number is the file\'s, counted from its top',
+  );
+  assert.deepEqual(
+    noticeTrouble('N.md', notice('- **One**, then a paragraph.', '', '  Revision: none (too late: after a blank line it is not the entry\'s)')),
+    ['N.md:5, One: has no Revision: or Read: line'],
+    'a line after the entry has ended is not the entry\'s',
+  );
+});
