@@ -63,10 +63,21 @@ thanks:
   Revision: nizos/tdd-guard@2579ec1823fac5f4afb73be678d9c500b19885ac (as
   recorded in the research pack's source-book-2.md, read 2026-09-19)
 
-Ideas paraphrased, with no text taken: Trail of Bits' mutation-testing skill
-(CC BY-SA 4.0) on equivalent mutants, Anthropic's Claude Code documentation on
-separate test authorship, alexop.dev on why one context cannot hold both
-halves, and the published work on mutation testing at scale.
+Ideas paraphrased, with no text taken:
+
+- **Trail of Bits' mutation-testing skill**, in `trailofbits/skills` (CC BY-SA
+  4.0), on equivalent mutants.
+  Revision: trailofbits/skills@123037ec8aed26f0d86327cc39137ee5043e5deb (as
+  recorded in the research pack's source-book-2.md, read 2026-09-19)
+- **Anthropic's Claude Code documentation**, "Claude Code: Best practices", on
+  separate test authorship.
+  Read: 2026-09-19 (read for the research pack's source-book-1.md, of that date)
+- **alexop.dev**, "A Claude Code TDD Skill: Forcing Red-Green-Refactor", on why
+  one context cannot hold both halves.
+  Read: 2026-09-19 (read for the research pack's source-book-1.md, of that date)
+- **The published work on mutation testing at scale**, Petrović and others,
+  "Practical Mutation Testing at Scale" (arXiv 2102.11378).
+  Read: 2026-09-19 (read for the research pack's source-book-1.md, of that date)
 
 Our own, with no source behind them: the order to break things in, the red
 from an archived baseline for behaviour that already existed, checking that an

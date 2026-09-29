@@ -119,8 +119,10 @@ Each licence below was read from the file named beside it.
   passes, with a piece still failing then reported as not ready.
   Revision: addyosmani/agent-skills@dc27a9c2e13721158157632de61b4106c6c2a2a1
   (reconstructed: the research pack's 2026-09-20 clone the skills were built
-  from; the revision actually read was not recorded; and
-  citypaul/.dotfiles@a109f9972bb46671c624fc05752031523e1cf6fc, the same way)
+  from; the revision actually read was not recorded)
+  Revision: citypaul/.dotfiles@a109f9972bb46671c624fc05752031523e1cf6fc
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 
 **Left out on a licence.** `anthropics/skills`' `doc-coauthoring` has the best
 statement of reader testing in the corpus, but its directory holds no licence

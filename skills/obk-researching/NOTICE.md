@@ -116,16 +116,18 @@ thanks. Each licence below was read from the file named beside it.
 Two things come from the research pack rather than from a repository, and are
 marked here because the difference matters:
 
-- The evidence-label pair `(verified: <command>)` and `(inferred: did not
-  run)`, which `source-book-2.md:139` calls the single best sentence in its
-  whole survey, is quoted there from **tw93/Waza**'s `rules/anti-patterns.md`
+- **tw93/Waza**, `rules/anti-patterns.md`: the evidence-label pair `(verified:
+  <command>)` and `(inferred: did not run)`, which `source-book-2.md:139` calls
+  the single best sentence in its whole survey, is quoted there from it
   (recorded as MIT in the same book's source table). Waza is not among the
   clones in the research pack, so this is taken from the book's verbatim quote
   rather than from the repository. The label's checkable form is kept as the
   source has it, because being able to audit the label is the whole of its
-  value; the prose around it is ours. The source applies `inferred` to
-  reasoning from code, so this skill keeps it for an inference and asks for
-  `not checked` where the claim is somebody else's unchecked account.
+  value; the prose around it is ours. The source applies `inferred` to reasoning
+  from code, so this skill keeps it for an inference and asks for `not checked`
+  where the claim is somebody else's unchecked account.
+  Revision: tw93/Waza@59323dee82b04fa8b9ad97a8ee503ca8aee7eb3c (as recorded
+  in the research pack's source-book-2.md, read 2026-09-19)
 - The pack's own reports label each claim by where it came from and whether it
   was checked, and keep a section of gaps and cautions at the end. That habit,
   rather than any source, is why this skill treats a claim's support and the

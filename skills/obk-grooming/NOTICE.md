@@ -66,6 +66,11 @@ only a summary. The facts about Claude Code's scheduler are in the tech notes.
 
 ## Ideas taken from material with no licence
 
+- **The Grok Bot pages**, docs.x.ai/grok-bot and x.ai/bot/marketplace, as the
+  research pack's `grok-bot-lessons.md` gathers them.
+  Read: 2026-09-19 (as recorded in grok-bot-lessons.md, which fetched them that
+  day)
+
 The research pack's account of how one hosted bot product runs its fleet
 suggested the daily pass over every bot and the habit of routing each finding
 to a single kind of fix. Those pages carry no licence and the pack holds only

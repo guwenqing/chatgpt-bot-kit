@@ -44,6 +44,11 @@ hooks means (PRD 6.7).
 
 ## Ideas taken from material with no licence
 
+- **The Grok Bot pages**, docs.x.ai/grok-bot and x.ai/bot/marketplace, as the
+  research pack's `grok-bot-lessons.md` gathers them.
+  Read: 2026-09-19 (as recorded in grok-bot-lessons.md, which fetched them that
+  day)
+
 The research pack's `grok-bot-lessons.md` gathers how one hosted bot product is
 run. Its material comes from a knowledge base and from that product's own
 marketplace and documentation pages. No licence is attached to those pages, and
