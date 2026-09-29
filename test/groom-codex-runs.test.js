@@ -328,6 +328,26 @@ test('C1 the Codex job renews itself at the fire, after making the run and befor
   assert.equal(job.indexOf('CronCreate', mail), -1, `and nothing is renewed after the mail part, or it would be renewed twice: ${job}`);
 });
 
+test('C1 the job tells the session to answer its run\'s hooks review with the kit\'s temp trust-hooks, for this fleet and the run it made', async (t) => {
+  // Claude Code's auto mode refused a raw `orca terminal send` of that answer,
+  // so the kit has one command for it, under a permission rule of its own
+  // (#238, the owner's choice (b)).
+  const box = await createSandbox(t);
+  const bots = await fleet(box);
+
+  const job = await codexJob(box, bots, ['--model', MODEL, '--effort', EFFORT]);
+
+  const make = theMake(box, job);
+  const trusts = commandsIn(job, spellingsOf(box.cli), 'temp trust-hooks');
+  assert.equal(trusts.length, 1, `the job names the kit's temp trust-hooks once, by the kit's own path ${box.cli}: ${job}`);
+  const [trust] = trusts;
+  assert.ok(trust.at > make.at, `after the make, whose run it answers: ${job}`);
+  const folder = flagValue(trust.words, '--bots');
+  assert.equal(typeof folder, 'string', `with --bots: ${trust.words.map((word) => word.raw).join(' ')}`);
+  assert.equal(await realpath(folder), await realpath(bots), 'this bots folder');
+  assert.equal(typeof flagValue(trust.words, '--name'), 'string', `and --name, the run: ${trust.words.map((word) => word.raw).join(' ')}`);
+});
+
 test('C1 the make, read by a real shell, asks for a Codex run with the model, the effort and every extra argument as given', async (t) => {
   const box = await createSandbox(t);
   const bots = await fleet(box);

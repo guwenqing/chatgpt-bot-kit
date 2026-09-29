@@ -56,6 +56,15 @@
 // If Claude Code's check refuses the maker that, that is the finding: the test
 // fails and says so, with what was refused, rather than answering for it.
 //
+// The hooks review is answered through the kit's `temp trust-hooks`, not a raw
+// `orca terminal send`: auto mode refused the raw send in live run 3, and the
+// owner chose to allow the one answer by an explicit permission rule (#238,
+// (b)). So the throwaway fleet's Bot Father is given that rule, `Bash(<the kit
+// this test runs> temp trust-hooks:*)`, through `obk bot change --allow`, before
+// its grooming session comes up, and the test checks that the grooming
+// conversation answered the review through that command. This fleet's rule is
+// the test's own; the owner's Bot Father gets it only on his yes.
+//
 // So the run's Codex writes this test's folder into the user's
 // ~/.codex/config.toml: a `[projects."…"]` table and a `[hooks.state."…"]` one.
 // The runner names keys under an `obk-system-codex-groom-*` folder as this
@@ -466,6 +475,11 @@ test('a grooming job with --run-on codex starts one Codex run at its fire, on th
   const daily = tabOf(init, 'daily');
   assert.equal(daily.harnessStarted, true, `no claude came up in ${daily.title}: \`orca terminal read --terminal ${daily.terminal} --screen\``);
 
+  // The one permission the owner chose to allow (#238, (b)), in this fleet's
+  // own Bot Father, before the grooming session starts and reads its settings.
+  const trustRule = `Bash(${cliEntry} temp trust-hooks:*)`;
+  obkJson(['bot', 'change', '--bots', bots, '--bot', 'bot-father', '--allow', trustRule]);
+
   obkJson(['session', 'add', '--bots', bots, '--bot', 'bot-father', '--name', 'grooming', '--model', MODEL, '--effort', EFFORT]);
   const opened = tabOf(openedBy(obkJson(['up', '--bots', bots, '--bot', 'bot-father'])), 'grooming');
   assert.equal(opened.created, true, 'up opened a tab for the grooming session');
@@ -555,6 +569,20 @@ test('a grooming job with --run-on codex starts one Codex run at its fire, on th
     POLL_MS,
   );
   t.diagnostic(`${runName}'s Codex was past its first-run screens ${Math.round((Date.now() - madeRunAt) / 1000)} s after the test saw it made`);
+
+  // And the hooks review was answered through the kit's command, under the
+  // rule: a Bash call of `temp trust-hooks` for this run that did not fail.
+  const sinceFire = after(groomingLines(home), firedAt);
+  const trustCalls = new Map(sinceFire.flatMap(toolUses)
+    .filter((use) => use.name === 'Bash' && String(use.input?.command ?? '').includes('temp trust-hooks') && String(use.input?.command ?? '').includes(runName))
+    .map((use) => [use.id, use]));
+  const trusted = sinceFire.some((line) => toolResults(line).some((result) => trustCalls.has(result.tool_use_id) && result.is_error !== true));
+  assert.ok(
+    trusted,
+    `the grooming session should have answered ${runName}'s hooks review with the kit's temp trust-hooks, allowed by ${trustRule}.`
+    + ` Its calls of it since the fire: ${JSON.stringify([...trustCalls.values()].map((use) => use.input?.command))}.`
+    + `${refusedIn(sinceFire)}\n  the grooming conversation since the fire:\n${tailOf(sinceFire)}`,
+  );
 
   // 2. What the run ran on, from its rollout's turn_context and nothing else.
   const settings = await until(
