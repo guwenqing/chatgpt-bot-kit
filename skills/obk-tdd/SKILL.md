@@ -424,9 +424,17 @@ make a test fail, each one put back. Stop when another break would add no
 evidence, and say why the set you ran was enough: two meaningful breaks beat five
 padded ones. Reported in three lines.
 
-One break at a time, never two at once: note the original, apply the break, run
-the tests, record killed or survived, restore the code immediately, then the
-next one.
+Make the breaks in a disposable copy of the change, never in the working tree:
+a git worktree, or a copy of the folder, made for the check and thrown away
+after it. A run that is interrupted, a restore that fails, or a second writer in
+the same checkout would otherwise leave a planted defect in real code. Before you
+start, note what `git status` and `git diff` say about the real tree.
+
+One break at a time, never two at once: in the copy, note the original, apply
+the break, run the tests there, record killed or survived, put the code back,
+then the next one. When the check is done, remove the copy, and confirm the
+working tree is untouched: `git status` and `git diff` say what they said before
+the check.
 
 What to break, in this order: boundaries (`<` for `<=`, one off), boolean logic
 (`&&` for `||`, a dropped `not`), returned values (an empty or default return,
