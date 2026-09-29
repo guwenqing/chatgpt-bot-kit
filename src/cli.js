@@ -28,7 +28,7 @@ import { readRoster } from './roster.js';
 import { buildAgents, buildRules, CODEX_CAP } from './rules.js';
 import { addSkill, buildSkills, linkSkills, removeSkill } from './skills.js';
 import { addSource, fetchSources } from './sources.js';
-import { makeTemp, retireTemp } from './temp.js';
+import { makeTemp, retireTemp, trustHooks } from './temp.js';
 import { readUsage } from './usage.js';
 import { BOT_FATHER, bringUp, ownMailbox } from './up.js';
 
@@ -112,6 +112,12 @@ Usage:
                             Run in the maker's own tab: retire a temporary
                             session it made, as obk retire does. It refuses a
                             long-lived session, or one another session made.
+  obk temp trust-hooks --bots <path> --name <session>
+                            Run in the maker's own tab: answer the hooks review
+                            of a Codex temporary session it made with "Trust
+                            all and continue", and check the review went. It
+                            refuses anything else on that screen, and types
+                            nothing then.
   obk rules build --bots <path> [--bot <bot>]
                             Build every bot's AGENTS.md from its charter and
                             the rule units it carries, or just the one you
@@ -266,6 +272,7 @@ const COMMANDS = {
   'session mailbox': ['bots', 'bot', 'session'],
   'temp make': ['bots', 'name'],
   'temp retire': ['bots', 'name'],
+  'temp trust-hooks': ['bots', 'name'],
 };
 
 /** What each flag is for, in the sentence a caller reads when it is missing. */
@@ -630,6 +637,16 @@ const commands = {
         `retired    ${retired.bot} ${retired.session}, a temporary session of ${retired.maker}'s: off ${path.join('bots', retired.bot, 'bot.yaml')}, and its conversations kept in the book under retired`,
         ...leftLines(retired.promptsLeft),
       ],
+    };
+  },
+
+  async 'temp trust-hooks'(bots, values) {
+    const tab = callerTab(bots, true);
+    refuseWhenOrcaIsDown();
+    const trusted = await trustHooks(bots, { tab, name: values.name });
+    return {
+      answer: { bots, ...trusted },
+      lines: [`trusted    ${trusted.bot} ${trusted.session}'s hooks, a temporary session of ${trusted.maker}'s: chose "Trust all and continue" on its hooks review, and the review has gone`],
     };
   },
 

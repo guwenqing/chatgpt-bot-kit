@@ -369,16 +369,26 @@ export const QUESTION_ON_SCREEN = 'question-on-screen';
  * section 1).
  */
 function screenOf(handle, readMs) {
+  const read = screenRows(handle, readMs);
+  return read.rows === undefined ? { screenUnreadable: read.unreadable } : { question: questionIn(read.rows) };
+}
+
+/**
+ * The rows the tab `handle` renders, `{ rows }`, or `{ unreadable: <why> }`.
+ * Orca refusing, or answering with anything but the rendered screen, is a
+ * screen that cannot be read, not an error.
+ */
+export function screenRows(handle, readMs) {
   let read;
   try {
     read = orca(['terminal', 'read', '--terminal', handle, '--screen'], { timeoutMs: readMs }).terminal;
   } catch (error) {
-    return { screenUnreadable: `Orca would not read its screen: ${error.message}` };
+    return { unreadable: `Orca would not read its screen: ${error.message}` };
   }
   if (read?.source !== 'screen' || !Array.isArray(read.tail)) {
-    return { screenUnreadable: `Orca gave no rendered screen for it (source: ${read?.source ?? 'none'})` };
+    return { unreadable: `Orca gave no rendered screen for it (source: ${read?.source ?? 'none'})` };
   }
-  return { question: questionIn(read.tail) };
+  return { rows: read.tail };
 }
 
 /** A row the harness starts with its selection pointer: `›` on Codex, `❯` on Claude Code. */
