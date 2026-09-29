@@ -353,7 +353,8 @@ function runElsewhere(bots, onRun) {
     + `that does the work and reports back to you. First, if any of your temporary sessions whose names start with groom- `
     + `is still there (${BOT_FATHER}'s bot.yaml lists them), a run an earlier fire left, retire each with ${retire}, `
     + `its own name in place of ${RUN_NAME}. Then make this fire's run with \`${make}\`, `
-    + `where ${RUN_NAME} is this fire's date and time, and end your turn. `
+    + `where ${RUN_NAME} is this fire's date and time. Its tab can stop on Codex's first-run screens (its folder trust, `
+    + 'the review of its hooks): answer them yourself, as the make\'s output and your rules say, and then end your turn. '
     + `When a line comes saying fleet mail from that run is waiting, read the mail the way the line says: it is the grooming report. `
     + `Send it on, as it is, to ${BOT_FATHER}'s management session, as a grooming run's report goes, `
     + `and then retire the run with ${retire}, its name in place of ${RUN_NAME}.`;

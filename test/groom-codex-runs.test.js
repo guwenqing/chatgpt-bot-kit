@@ -289,6 +289,25 @@ test('C1 the job retires the session\'s own groom-* runs, then makes the run, th
   }
 });
 
+test('C1 the job tells the session to answer its run\'s first-run screens itself, after making it and before the report', async (t) => {
+  // The run's Codex starts on its folder trust and its hooks review, which its
+  // maker answers, as the kit's rules tell a maker to (rules/temporary.md,
+  // #251): no trust is given at launch (#238, the architect's ruling).
+  const box = await createSandbox(t);
+  const bots = await fleet(box);
+
+  const job = await codexJob(box, bots, ['--model', MODEL, '--effort', EFFORT]);
+
+  const make = theMake(box, job);
+  const reported = commandsOf(box, job).retires.find((one) => one.at > make.at);
+  assert.ok(reported, `a temp retire after the make, for the run once it has reported: ${job}`);
+  const between = job.slice(make.at, reported.at);
+  const screens = between.search(/first-run/i);
+  assert.ok(screens >= 0, `between the make and the run's retire, the job names the run's first-run screens: ${between}`);
+  const sentence = between.slice(screens).split(/[.!?](?:\s|$)/)[0];
+  assert.match(sentence, /yourself|answer/i, `and tells the session to answer them itself: ${sentence}`);
+});
+
 test('C1 the make, read by a real shell, asks for a Codex run with the model, the effort and every extra argument as given', async (t) => {
   const box = await createSandbox(t);
   const bots = await fleet(box);

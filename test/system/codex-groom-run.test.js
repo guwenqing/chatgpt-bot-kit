@@ -16,6 +16,7 @@
 //   the job made         4 min after --on, and before its own time
 //   the fire             up to 32 min after its time: 30 of jitter, 2 to be written down
 //   the run made         4 min after the fire
+//   past its screens     4 min after the run was made: its maker answers them
 //   its report arrives   20 min after the run was made
 //   the report read      4 min after it arrived
 //   the run retired      4 min after the report was read
@@ -40,11 +41,26 @@
 //      the book's sessions, and not in Orca. The book's retired list keeps the
 //      run, with the grooming session as its maker.
 //
-// The run's own launch line carries codexTrustArgs, through `--extra-arg` on
-// `obk groom` (#238, the architect's ruling (4)): the bots folder is trusted
-// at launch, the hooks review is bypassed, and Codex's sleep tool is off, so
-// Codex writes nothing about this folder into the user's ~/.codex/config.toml
-// (#240) and a run told to wait for nothing does not sleep in its turn (#432).
+// It runs the real flow, the job a user would have: `--run-on codex` with no
+// `--extra-arg` at all, so no trust given at launch and no sleep flag (a
+// grooming task does not tell the run to wait). The architect's ruling on #238:
+// trust given at launch, by the bypass or by a precomputed hooks.state hash,
+// starts a Codex agent with its trust bypassed, which Claude Code's auto mode
+// refused when the grooming session was asked to schedule it (live run 1). So
+// the run's Codex shows its folder trust and its hooks review, and the grooming
+// session, the run's maker, answers them itself, from the table, as the kit's
+// rules tell a maker to (rules/temporary.md, #251) and as the job's prompt says.
+// If Claude Code's check refuses the maker that, that is the finding: the test
+// fails and says so, with what was refused, rather than answering for it.
+//
+// So the run's Codex writes this test's folder into the user's
+// ~/.codex/config.toml: a `[projects."…"]` table and a `[hooks.state."…"]` one.
+// The runner names keys under an `obk-system-codex-groom-*` folder as this
+// test's known writes (#238), as it does codex-first-run-screens' (#240), and
+// what to do about them is the owner's. This test prints, as a diagnostic and
+// not a failure, which keys the file gained under its own folder and which
+// elsewhere; the file is read by those table headers only
+// (helpers/codex-trust.js `trustKeysIn`), never written.
 //
 // Not proved here, and said when it happens: whether the run found the
 // obk-grooming skill by name (the architect's ruling (7)). What the run said is
@@ -67,22 +83,22 @@
 // Father's orchestration Runs and the run's behind, which Orca offers no way to
 // delete; the runner lists them.
 //
-// **It is attended.** A bot folder nobody has opened before asks questions
-// before the harness is running in it, and this test answers none of them
-// (PRD 6.5). What to expect on this machine:
+// **It is attended, a little.** A bot folder nobody has opened before asks
+// questions before the harness is running in it, and this test answers none of
+// them (PRD 6.5). The person answers only these:
 //
-//   1. `Bot Father daily`: Claude Code's folder-trust list. Its selection starts
-//      on `No, exit`, so it takes a down-arrow and then return.
-//   2. The grooming tab, the same list, if it asks.
-//   3. Either Claude tab, if Claude Code offers an update: accept it.
-//   4. `Bot Father ops` is a plain shell. If zsh asks to update itself, `n`.
-//   5. Either Claude tab, after a turn: "Teach auto mode about your
+//   1. Claude Code's folder-trust list in Bot Father's tabs, `Bot Father daily`
+//      and the grooming tab: its selection starts on `No, exit`, so it takes a
+//      down-arrow and then return.
+//   2. Either Claude tab, after a turn: "Teach auto mode about your
 //      environment?". Esc cancels it (#416).
-//   6. The grooming tab, at the fire: if Claude Code asks to run the kit's
-//      `temp make`, `temp retire` or `message check`, allow it. The run can be
-//      made only when that is answered.
-//   7. The run's Codex tab should ask nothing: its trust is given at launch.
-//      If it does, answer it; the run waits on it.
+//
+// And not these, which are what the test is about:
+//
+//   - a permission question in the grooming tab, at the fire or after it: what
+//     Claude Code's auto mode lets the grooming session do alone is the point;
+//   - the run's Codex screens, its folder trust and its hooks review: its maker
+//     answers them. If it does not, the run waits, and the test says so.
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -95,7 +111,7 @@ import { setTimeout } from 'node:timers/promises';
 import { parse } from 'yaml';
 
 import { cliEntry } from '../helpers/cli.js';
-import { codexTrustArgs } from '../helpers/codex-trust.js';
+import { trustKeysIn } from '../helpers/codex-trust.js';
 import { rolloutFilesOf, turnSettingsIn } from '../helpers/codex-rollout.js';
 import { waitingOn } from '../helpers/screens.js';
 import { tabGuard } from '../helpers/tab-guard.js';
@@ -172,6 +188,23 @@ async function terminalsAfterClosing(home, closed, within = 5000) {
   }
   return left;
 }
+
+/**
+ * A terminal's real tab id. Orca lists a tab whose pane the window has not
+ * loaded as orphaned, under `pty:<ptyId>` rather than its id, and a tab the kit
+ * opens from inside another session is one (tech notes, section 1); `terminal
+ * show` still answers with the real id, as src/orca.js `tabs` asks it. The
+ * handle stays the same either way, so once a tab is found it is followed by
+ * its handle.
+ */
+function tabIdOf(terminal) {
+  if (terminal.orphaned !== true) return terminal.tabId;
+  const answer = orca(['terminal', 'show', '--terminal', terminal.handle]);
+  return answer.ok === true ? answer.result?.terminal?.tabId : undefined;
+}
+
+/** The terminal Orca has at `home` for the tab id a book holds, orphaned or not; undefined when there is none. */
+const terminalOfTab = (home, tabId) => terminalsAt(home).find((one) => tabIdOf(one) === tabId);
 
 /** Every workspace Orca knows about right now. */
 function allSetups() {
@@ -346,10 +379,39 @@ const hhmm = (date) => `${String(date.getHours()).padStart(2, '0')}:${String(dat
 /** Codex's own folder of rollouts, read only. */
 const CODEX_SESSIONS = path.join(os.homedir(), '.codex', 'sessions');
 
+/** The user's own Codex config: read by its table headers only, never written. */
+const CODEX_CONFIG = path.join(os.homedir(), '.codex', 'config.toml');
+
+/** Its `[projects."…"]` and `[hooks.state."…"]` keys right now; none when there is no file. */
+const trustNow = () => trustKeysIn(existsSync(CODEX_CONFIG) ? readFileSync(CODEX_CONFIG, 'utf8') : '');
+
+/** Whether a key names `folder` or a path under it, in either spelling of a macOS temp path. */
+function isUnder(key, folder) {
+  const bare = folder.replace(/^\/private(?=\/)/, '');
+  return [...new Set([folder, bare, `/private${bare}`])].some((one) => key === one || key.startsWith(`${one}/`));
+}
+
+/**
+ * The tool calls in a stretch of transcript that came back as errors, a
+ * refusal by Claude Code's permission check among them, each with what was
+ * asked and the answer's words: for the message of a wait that ran out.
+ */
+function refusedIn(lines) {
+  const uses = new Map(lines.flatMap(toolUses).map((use) => [use.id, use]));
+  const refused = lines.flatMap((line) => toolResults(line).filter((result) => result.is_error === true).map((result) => {
+    const use = uses.get(result.tool_use_id);
+    const asked = use === undefined ? '(call not seen)' : `${use.name} ${JSON.stringify(use.input?.command ?? use.input ?? '').slice(0, 300)}`;
+    const said = typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
+    return `    ${line.timestamp ?? '-'}  ${asked}\n      refused or failed: ${String(said).slice(0, 600)}`;
+  }));
+  return refused.length === 0 ? '\n  no tool call of the grooming session\'s was refused or failed.' : `\n  tool calls of the grooming session\'s that were refused or failed:\n${refused.join('\n')}`;
+}
+
 test('a grooming job with --run-on codex starts one Codex run at its fire, on the chosen model and effort, whose report reaches the grooming session, and which is retired', async (t) => {
   const before = {
     handles: new Set(allTerminals().map((terminal) => terminal.handle)),
     setups: new Set(allSetups().map((setup) => setup.id)),
+    trust: trustNow(),
   };
 
   const bots = await realpath(await mkdtemp(path.join(os.tmpdir(), 'obk-system-codex-groom-')));
@@ -359,6 +421,23 @@ test('a grooming job with --run-on codex starts one Codex run at its fire, on th
 
   // Registered before anything is created, so it runs however this test ends.
   t.after(async () => {
+    // What the run's Codex wrote into the user's config: the run's keys are
+    // expected under this test's folder, and are the runner's to name (#238).
+    // Said, not judged: another session on this machine may write the file
+    // while this runs.
+    try {
+      const now = trustNow();
+      for (const kind of ['projects', 'hooks']) {
+        const added = now[kind].filter((key) => !before.trust[kind].includes(key));
+        const mine = added.filter((key) => isUnder(key, bots));
+        const elsewhere = added.filter((key) => !isUnder(key, bots));
+        t.diagnostic(`${CODEX_CONFIG} gained ${mine.length} ${kind} key(s) under this test's folder${mine.length === 0 ? '' : `: ${mine.join(', ')}`}`);
+        if (elsewhere.length > 0) t.diagnostic(`and ${elsewhere.length} ${kind} key(s) elsewhere, not this test's to answer for: ${elsewhere.join(', ')}`);
+      }
+    } catch (error) {
+      t.diagnostic(`${CODEX_CONFIG} could not be read by its table headers: ${error.message}`);
+    }
+
     const { closed, foreign } = guard.closeOwnAt([home]);
     const held = new Set(foreign.map((one) => one.home));
     let deleted = 0;
@@ -406,7 +485,7 @@ test('a grooming job with --run-on codex starts one Codex run at its fire, on th
   const onAt = Date.now();
   const on = obkJson([
     'groom', '--bots', bots, '--on', '--at', at,
-    '--run-on', 'codex', '--model', CODEX_MODEL, '--effort', CODEX_EFFORT, ...codexTrustArgs(bots),
+    '--run-on', 'codex', '--model', CODEX_MODEL, '--effort', CODEX_EFFORT,
   ]).groom;
   assert.equal(on.asked, 'on', `--on types the line that schedules it: ${JSON.stringify(on)}`);
 
@@ -414,7 +493,7 @@ test('a grooming job with --run-on codex starts one Codex run at its fire, on th
     `the grooming session to make its job for ${at}`,
     ANSWER_MS,
     async () => jobsMadeIn(after(groomingLines(home), onAt), marker)[0],
-    () => `\n  its conversation since --on:\n${tailOf(after(groomingLines(home), onAt))}${whatIsUp(handle)}`,
+    () => `${refusedIn(after(groomingLines(home), onAt))}\n  its conversation since --on:\n${tailOf(after(groomingLines(home), onAt))}${whatIsUp(handle)}`,
     POLL_MS,
   );
   const madeAt = Date.parse(made.made);
@@ -447,16 +526,32 @@ test('a grooming job with --run-on codex starts one Codex run at its fire, on th
       if (runs.length === 0) return undefined;
       assert.equal(runs.length, 1, `one run per fire: ${JSON.stringify(runs)}`);
       const [, entry] = runs[0];
-      return typeof entry.tab === 'string' && allTerminals().some((one) => one.tabId === entry.tab) ? runs[0] : undefined;
+      return typeof entry.tab === 'string' && terminalOfTab(home, entry.tab) !== undefined ? runs[0] : undefined;
     },
-    () => ` Temporary sessions in the book: ${JSON.stringify(temporaries(home))}.`
+    () => ` Temporary sessions in the book: ${JSON.stringify(temporaries(home))}.${refusedIn(after(groomingLines(home), firedAt))}`
       + `\n  the grooming conversation since the fire:\n${tailOf(after(groomingLines(home), firedAt))}${whatIsUp(handle)}`,
     POLL_MS,
   );
-  const runTab = allTerminals().find((one) => one.tabId === runEntry.tab);
+  const runTab = terminalOfTab(home, runEntry.tab);
   guard.openedByKit({ tabs: [{ created: true, terminal: runTab.handle }] });
   assert.equal(runEntry.temporary.maker, 'grooming', `the run is the grooming session's: ${JSON.stringify(runEntry)}`);
   assert.equal(firesIn(groomingLines(home), marker, madeAt).length, 1, 'the job fired once');
+
+  // Its Codex starts on its folder trust and its hooks review, and the grooming
+  // session, its maker, answers them. The kit's hook runs once both are past,
+  // and the book then names the run's conversation.
+  const madeRunAt = Date.now();
+  await until(
+    `the run ${runName}'s Codex to be past its first-run screens, which its maker, the grooming session, is to answer`,
+    ANSWER_MS,
+    async () => (typeof sessionIn(home, runName).session === 'string' ? true : undefined),
+    () => ' This test answers none of them: that the maker does is part of what it checks.'
+      + `${refusedIn(after(groomingLines(home), firedAt))}`
+      + `\n  the grooming conversation since the fire:\n${tailOf(after(groomingLines(home), firedAt))}`
+      + `\n  the run's tab:${whatIsUp(runTab.handle)}`,
+    POLL_MS,
+  );
+  t.diagnostic(`${runName}'s Codex was past its first-run screens ${Math.round((Date.now() - madeRunAt) / 1000)} s after the test saw it made`);
 
   // 2. What the run ran on, from its rollout's turn_context and nothing else.
   const settings = await until(
@@ -509,7 +604,7 @@ test('a grooming job with --run-on codex starts one Codex run at its fire, on th
     ANSWER_MS,
     async () => (temporaries(home).length === 0
       && !sessionsInBotYaml(home).includes(runName)
-      && !allTerminals().some((one) => one.tabId === runEntry.tab) ? true : undefined),
+      && !terminalsAt(home).some((one) => one.handle === runTab.handle) ? true : undefined),
     () => ` Temporary sessions in the book: ${JSON.stringify(temporaries(home))}; bot.yaml's sessions: ${JSON.stringify(sessionsInBotYaml(home))}.`
       + `\n  the grooming conversation since the notice:\n${tailOf(after(groomingLines(home), noticeAt))}${whatIsUp(handle)}`,
     POLL_MS,
@@ -518,7 +613,7 @@ test('a grooming job with --run-on codex starts one Codex run at its fire, on th
   assert.equal(retired.length, 1, `the book's retired list keeps the run: ${JSON.stringify(bookOf(home).retired)}`);
   assert.equal(retired[0].temporary?.maker, 'grooming', `as the grooming session's: ${JSON.stringify(retired[0])}`);
   assert.deepEqual(
-    terminalsAt(home).filter((one) => one.tabId === runEntry.tab || String(one.title ?? '').includes('groom-')),
+    terminalsAt(home).filter((one) => one.handle === runTab.handle || String(one.title ?? '').includes('groom-')),
     [],
     'and no groom-* tab in Orca',
   );
