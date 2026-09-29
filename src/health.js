@@ -25,7 +25,7 @@ import { bookFile, readBook, sessionIdsIn, tabIdsIn } from './book.js';
 import { botDir, botNames, botsDir, readBot, unknownKeys } from './bot.js';
 import { transcriptsIn } from './conversations.js';
 import { hookTrouble } from './hooks.js';
-import { bypassFlags, harnessOf, HARNESSES, ownCli, sessionTrouble, SHELL_ENV, shellWord } from './launch.js';
+import { bypassFlags, harnessOf, HARNESSES, isAddressOf, ownCli, sessionTrouble, SHELL_ENV, shellWord } from './launch.js';
 import { frontOfTab, orcaDefaultArgs, projects, tabs, wordsOfProcess } from './orca.js';
 import { permissionsTrouble } from './permissions.js';
 import { TAB_ENV } from './record.js';
@@ -259,7 +259,26 @@ function runningOn(bots, home, bot, book, handles, sessions) {
     // that is not its own harness, or a front that cannot be read, leaves it
     // unsaid, and nothing unsaid is a finding.
     const restart = `${shellWord(ownCli())} restart --bots ${shellWord(bots)} --bot ${bot.name} --session ${session.name}`;
+    // A Claude session is written to by its name, and Claude Code's own
+    // messaging reaches every session on the machine. One under a name the kit
+    // did not make, such as the bare <bot>.<session> every fleet had before
+    // #286, can be written to by another fleet's session (#450). Its next start
+    // through the kit gives it a name of its own; one that Orca brought back,
+    // or that has run since, keeps the old one until then.
     const front = frontOfTab(handle);
+    const address = entry.address;
+    if (harnessOf(session, bot.harness) === 'claude' && typeof address === 'string' && address !== '' && !isAddressOf(bot.name, session.name, address)) {
+      const shared = address === `${bot.name}.${session.name}`
+        ? `the name every fleet's ${bot.name}/${session.name} was given before #286, so it is shared: a Claude session of another fleet with that bot and session can write to it, thinking it is its own`
+        : `not one the kit made for it, so it may not be this session's alone: another session, in this fleet or another, can go by it too`;
+      // A restart closes the tab, and with no conversation in the book it
+      // refuses rather than end one that is running, so the fix starts there.
+      // With only the shell in front there is nothing to end, and it goes.
+      const fix = typeof entry.session === 'string' || front.front === 'shell'
+        ? `${restart} starts it on an address of its own, <bot>.<session> and a token.`
+        : `The book does not say which conversation it is running, and a restart refuses until it does: write the id into ${bookFile(home)} under ${session.name} as  session: <id>, then ${restart} starts it on an address of its own, <bot>.<session> and a token.`;
+      found.push(finding('session', bookFile(home), `${bot.name}'s session ${session.name} goes by the address ${address}, ${shared}. ${fix}`, bot.name));
+    }
     if (front.front === 'shell') {
       found.push(finding('session', entry.tab, `${bot.name}'s session ${session.name} is not running: its tab ${entry.tab} is open with only the tab's shell in front, so its harness quit or crashed. obk up finds the tab open and types nothing into it, so it does not bring the session back; ${restart} does.`, bot.name));
       continue;
