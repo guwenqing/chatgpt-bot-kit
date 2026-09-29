@@ -374,9 +374,13 @@ function runElsewhere(bots, onRun) {
 /** The part of a Codex job for the later turn its run's report comes in: read it, send it on, retire the run. */
 function readReport(bots) {
   const retire = `\`${shellWord(ownCli())} temp retire --bots ${shellWord(bots)} --name ${RUN_NAME}\``;
+  const road = `\`${shellWord(ownCli())} message to --bots ${shellWord(bots)} --to ${BOT_FATHER}/<that session>\``;
+  // Claude Code's own messaging reaches every session on the machine, so a
+  // name that only looks right can be another fleet's session (#450).
   return `When a line comes saying fleet mail from that run is waiting, read the mail the way the line says: it is the grooming report. `
-    + `Send it on, as it is, to ${BOT_FATHER}'s management session, as a grooming run's report goes, `
-    + `and then retire the run with ${retire}, its name in place of ${RUN_NAME}. Schedule nothing then: the job renewed itself when it fired.`;
+    + `Send it on, as it is, to ${BOT_FATHER}'s management session, as a grooming run's report goes: to exactly the address or mailbox `
+    + `${road} answers, and to no other. If your messaging does not list that address, send the report nowhere else, and say so. `
+    + `Then retire the run with ${retire}, its name in place of ${RUN_NAME}. Schedule nothing then: the job renewed itself when it fired.`;
 }
 
 /**
