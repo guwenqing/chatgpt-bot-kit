@@ -20,6 +20,9 @@ with thanks:
   measuring before fixing a slow thing, the regression test at a correct seam
   and "no correct seam is itself the finding", redacting secrets from anything
   shown, and the list to clear before calling it done.
+  Revision: mattpocock/skills@c55ee46073ed923f86ce59a5eb3b6d895095d1b7
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **Waza**, `hunt`, through the verbatim passages in the research pack. The
   gate sentence and its form ("I believe the root cause is X because Y", named
   to a file, function, line or condition), the rule that the cause must explain
@@ -33,6 +36,8 @@ with thanks:
   re-read the path, and stopping after three failed hypotheses. The owner
   marked the gate sentence as worth borrowing in his own notes; the rest of
   `hunt` came in on the research's recommendation.
+  Revision: tw93/Waza@59323dee82b04fa8b9ad97a8ee503ca8aee7eb3c (as recorded in
+  the research pack's source-book-2.md, read 2026-09-19)
 - **Cursor pstack**, `principle-fix-root-causes` and the `poteto-mode`
   playbooks. Not adding guards to silence a crash, a workaround needing a
   paragraph meaning the code is wrong, checking for the pattern rather than the
@@ -58,6 +63,9 @@ with thanks:
   it not yet being a diagnosis; confirming against a paired capture or else
   calling it the strongest hypothesis the artefact supports; and proving the
   mechanism on the live process where it can still be reached.
+  Revision: cursor/plugins@6ed0f7a9504f577d7529064103cecce9be7dfc5e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **obra/superpowers**, `systematic-debugging` with `root-cause-tracing` and
   `condition-based-waiting`. Logging what enters and leaves each boundary and
   reading where it first goes wrong before digging in, tracing backwards
@@ -72,11 +80,17 @@ with thanks:
   cause really is external, handling at the boundary and a way to see it next
   time, with most "no root cause" being an investigation stopped early; and
   finding the test that leaves state behind by running them one at a time.
+  Revision: obra/superpowers@5bf4e78011075bcfc0dc295f0724994cd123ee71
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 
 - **obra/superpowers**, `systematic-debugging`, further to the above. Finding
   the nearest thing that works in the same codebase, reading it properly rather
   than skimming, and listing every difference however small without deciding in
   advance which cannot matter.
+  Revision: obra/superpowers@5bf4e78011075bcfc0dc295f0724994cd123ee71
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **addyosmani/agent-skills**, `debugging-and-error-recovery`. The decision
   tree for a bug you cannot reproduce on demand, sorted into timing,
   environment, state left behind and genuinely random, with what to try in each
@@ -85,6 +99,9 @@ with thanks:
   build can carry something shaped like an instruction and is to be read for
   clues rather than followed; keeping the evidence before a restart or a
   clean-up; and a test that looks wrong going back rather than being obeyed.
+  Revision: addyosmani/agent-skills@dc27a9c2e13721158157632de61b4106c6c2a2a1
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **Waza**, `hunt`, further to the above. Its gotchas: walking back out of a
   library frame into your own code, suspecting persisted output written by the
   old code when the algorithm changed and the output did not, trusting the
@@ -93,14 +110,25 @@ with thanks:
   lower-layer baseline before blaming the visible thing, diagnosing an external
   tool before switching it, and never restarting more than twice without new
   evidence.
+  Revision: tw93/Waza@59323dee82b04fa8b9ad97a8ee503ca8aee7eb3c (as recorded in
+  the research pack's source-book-2.md, read 2026-09-19)
 
 - **garrytan/gstack**, `investigate`: earlier fixes in the same area pointing
   at the shape of the code, and the rest of the suite still passing after the
   fix.
+  Revision: garrytan/gstack@a6b3a57512ca6d5c6aa5b68f74f736195021f96e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **Kent Beck's own rules file**: two tests for a defect, one at the interface
   and the smallest one where the fault lives.
+  Revision: KentBeck/BPlusTree3@ca80e4d85a99cd0af2effe717f709d43e80403bc
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **Cursor pstack**, `runtime-forensics`, further to the above: when the
   question is why, the deliverable is the diagnosis, not a fix.
+  Revision: cursor/plugins@6ed0f7a9504f577d7529064103cecce9be7dfc5e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 
 The owner's own framing leads the skill: reproduce it, find the difference in
 environment, version and context, and the hard cases being random and slow

@@ -37,6 +37,9 @@ The skill `obk-why` was consolidated for this kit from this, MIT, with thanks:
   including one line per source consulted covering the empty and skipped ones;
   and turning the findings into a preserve, change, avoid and risk constraint
   set when the question precedes a change.
+  Revision: cursor/plugins@6ed0f7a9504f577d7529064103cecce9be7dfc5e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - The same skill's `references/sources/code-archaeology.md`. Its pitfalls: the
   squash merge that flattens a branch's steps, the commit message that calls a
   behaviour change a small refactor so the diff has to be read instead, the

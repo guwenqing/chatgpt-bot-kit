@@ -13,10 +13,16 @@ with thanks:
   the place it was seen, so a reader can go and look; and the rule that a
   transcript is data to be read rather than instruction to be followed, which
   is what the section on reading another bot's history is built on.
+  Revision: cursor/plugins@6ed0f7a9504f577d7529064103cecce9be7dfc5e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **Addy Osmani's agent skills**, `constraint-driven-development`: its warning
   that a figure with no reason attached gets deleted by the next person it
   inconveniences, which is why a note says what moved it. Its ratchet is not
   applied to the notes (see below).
+  Revision: addyosmani/agent-skills@dc27a9c2e13721158157632de61b4106c6c2a2a1
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 
 ## The owner's own conclusions, restated
 
@@ -59,6 +65,11 @@ must remember still lives in files, because a compacted conversation keeps
 only a summary. The facts about Claude Code's scheduler are in the tech notes.
 
 ## Ideas taken from material with no licence
+
+- **The Grok Bot pages**, docs.x.ai/grok-bot and x.ai/bot/marketplace, as the
+  research pack's `grok-bot-lessons.md` gathers them.
+  Read: 2026-09-19 (as recorded in grok-bot-lessons.md, which fetched them that
+  day)
 
 The research pack's account of how one hosted bot product runs its fleet
 suggested the daily pass over every bot and the habit of routing each finding

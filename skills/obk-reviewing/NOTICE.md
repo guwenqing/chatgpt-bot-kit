@@ -16,6 +16,9 @@ noted, with thanks:
   has no caller, premature abstraction, "I would have done it differently",
   about five items, and showing what was set aside. Its `poteto-mode`
   bugbot-triage reference gave fix, dismiss or ask, and "when in doubt, ask".
+  Revision: cursor/plugins@6ed0f7a9504f577d7529064103cecce9be7dfc5e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **obra/superpowers**, `requesting-code-review`, `receiving-code-review` and
   `subagent-driven-development/task-reviewer-prompt.md` (the last for bounded
   reading, "declined to judge", the read-only rule and one focused test only
@@ -27,6 +30,9 @@ noted, with thanks:
   pattern: read, restate, verify, evaluate, respond, implement, with the stop
   on an unclear item, the check for who calls it, the order of fixes, and
   correcting your own pushback without a speech.
+  Revision: obra/superpowers@5bf4e78011075bcfc0dc295f0724994cd123ee71
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **mattpocock/skills**, `code-review`: the smell baseline in full, with its
   own guards: every entry a labelled judgement call, the repo's documented
   standard overriding it, and anything tooling enforces skipped. Also pinning
@@ -34,17 +40,26 @@ noted, with thanks:
   missing, unasked-for and misunderstood, quoting the rule for a standards
   breach, and the two axes staying separate so neither hides the other. The
   smells are Fowler's, from *Refactoring* chapter 3.
+  Revision: mattpocock/skills@c55ee46073ed923f86ce59a5eb3b6d895095d1b7
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **Cursor thermos**, with `thermo-nuclear-review`: scope held to what the
   change touches, not spending the author's time on a breakage the change
   intends, what over-reporting costs you,
   reading the change before the discussion, and never presenting a finding with
   the research unfinished when the answer was there to be read.
+  Revision: cursor/plugins@6ed0f7a9504f577d7529064103cecce9be7dfc5e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **addyosmani/agent-skills**: passing the artefact and the contract without
   the conclusion, the one structural problem outranking ten small ones, and,
   from `doubt-driven-development`, sorting findings into misread, valid,
   trade-off and noise in that order, with the brief fixed first for a misread.
   Its `code-review-and-quality`: not softening a real issue, which pstack's
   `code-quality-review` says too.
+  Revision: addyosmani/agent-skills@dc27a9c2e13721158157632de61b4106c6c2a2a1
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **Anthropic's built-in review**, as behaviour observed rather than text
   taken: the angles worth separating, naming the behaviour a deleted line held
   up, following a change out to its callers, confirmed against plausible
@@ -53,6 +68,10 @@ noted, with thanks:
   bug states its trigger, not collapsing finding into judging,
   correctness outranking cleanup, and saying when a review was less than it was
   meant to be.
+  Revision: none (Claude Code's built-in review, its behaviour observed rather
+  than a text read)
 - **ECC's reviewer prompt**, through the research pack: the four questions
   before a finding, a defensible severity, zero findings being expected,
   consolidating repeats, and the list of findings that are usually wrong.
+  Revision: affaan-m/ECC@07756cee15788a54506031462794ad645719b028 (as recorded
+  in the research pack's source-book-2.md, read 2026-09-19)

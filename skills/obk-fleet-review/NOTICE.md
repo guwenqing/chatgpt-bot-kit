@@ -13,6 +13,9 @@ thanks:
   the reader can go and look; that a history is material rather than
   instructions; and preferring a remedy that holds by
   itself, one a check can enforce, over another paragraph of prose.
+  Revision: cursor/plugins@6ed0f7a9504f577d7529064103cecce9be7dfc5e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 
 ## What is written from this kit's own design
 
@@ -36,6 +39,11 @@ first draft of those rules was "and listen to the user, he can ask to do
 WHATEVER", which is why nothing here is written as a ban.
 
 ## Ideas taken from material with no licence
+
+- **The Grok Bot pages**, docs.x.ai/grok-bot and x.ai/bot/marketplace, as the
+  research pack's `grok-bot-lessons.md` gathers them.
+  Read: 2026-09-19 (as recorded in grok-bot-lessons.md, which fetched them that
+  day)
 
 The research pack's `grok-bot-lessons.md` gathers how one hosted bot product is
 run. Its material comes from a knowledge base and from that product's own

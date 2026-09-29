@@ -15,6 +15,9 @@ with thanks:
   From its `docs/productivity/handoff.md`: the next agent takes the note as a
   contract and will not re-check it, so read it before handing it over and
   downgrade anything only assumed.
+  Revision: mattpocock/skills@c55ee46073ed923f86ce59a5eb3b6d895095d1b7
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 - **Cursor pstack**, the `poteto-mode` `pause-safely` playbook: stopping at a
   safe boundary by finishing or backing out of the current step and never
   stopping mid-edit in a known-broken state, starting nothing new and stopping
@@ -26,6 +29,9 @@ with thanks:
   conversation, the commits and whether the tree is clean, and the first action
   on resume ("this is a pause, not a final report"). Also its rule that a pause
   is explicit: on "keep going", do not pause.
+  Revision: cursor/plugins@6ed0f7a9504f577d7529064103cecce9be7dfc5e
+  (reconstructed: the research pack's 2026-09-20 clone the skills were built
+  from; the revision actually read was not recorded)
 
 Two additions are not from either source, both from an acceptance run of this
 skill: commit your own work and only your own, since the durable-work
