@@ -20,7 +20,7 @@
 
 import assert from 'node:assert/strict';
 import { realpathSync } from 'node:fs';
-import { chmod, copyFile, mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, readdir, readFile, realpath, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, test } from 'node:test';
@@ -2354,5 +2354,248 @@ describe('test-system: what a run leaves in the harness configs (#240)', { concu
     assert.equal(result.code, 0, everything(result));
     const lines = afterTheRun(result).split('\n').filter((line) => /harness|config/i.test(line) && /\b(?:no|none|nothing)\b/i.test(line));
     assert.ok(lines.length > 0, `one line should say the harness configs gained no keys under the run's folders, got:\n${afterTheRun(result)}`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The run takes back exactly what it added (#240, the owner's choice (b))
+// ---------------------------------------------------------------------------
+//
+// The owner chose (b) on 2026-09-29: each system-test run cleans up after
+// itself. After the tests, the runner removes from both harness configs exactly
+// the keys that were not there before the run and that name a path under one of
+// the run's own new folders (the keys the block above names), the known
+// writers' included, and leaves everything else as it was:
+//
+//   config.toml    every other table, key, value, comment and blank line, byte
+//                  for byte. A removed table runs from its header to just
+//                  before the next table header, except that a comment directly
+//                  above that header is the next table's and stays; at the end
+//                  of the file it runs to the end.
+//   .claude.json   every other key and value, in their order, written back in
+//                  the file's own layout: its indentation as found, and a final
+//                  newline only if it had one.
+//
+// Each file is read, changed and written straight away, through a temp file in
+// its own folder and a rename, keeping its mode. The runner says what it
+// removed, per file, by key. A key added during the run outside the run's
+// folders, and one under a folder that was there before the run, stay. A file
+// that cannot be read or parsed is not written, and the report says so. Not
+// ruled, the lead's reading: a Codex key from a test that is not a known writer
+// is removed and still fails the run.
+//
+// Expected files are written out here in full, by hand, never computed from
+// what the runner wrote.
+
+/** The report says it removed `keys` from `file`: the file named, each key whole, and a word for removing. */
+function assertRemovedIn(result, file, keys) {
+  const report = afterTheRun(result);
+  assert.ok(report.includes(file), `the report names ${file}, got:\n${report}`);
+  for (const key of keys) assert.ok(report.includes(key), `and the key it removed, ${key}, whole, got:\n${report}`);
+  assert.match(unwrapped(report), /\bremov/i, `and says it removed them, got:\n${report}`);
+}
+
+describe('test-system: a run removes exactly the config keys it added (#240, the owner\'s (b))', { concurrency: true }, () => {
+  test('config.toml: the run\'s new tables go, whole, and every other byte stays, comments, blank lines and a table at the end included', async (t) => {
+    const owner = '/Users/owner/work/app';
+    const added = '/Users/owner/work/added-while-it-ran';
+    let files;
+    let during;
+    let expected;
+    let runKeys;
+    let old;
+    const built = await withConfigs(t, ({ dir }) => {
+      const mine = `${dir}/obk-system-codex-screens-Rm01`;
+      const theirs = `${dir}/obk-system-old-Aa11`;
+      old = `${theirs}/bots`;
+      const hooks = `${mine}/bots/bots/screens-codex/.codex/hooks.json:session_start:0:0`;
+      const last = `${mine}/bots/bots/other/.codex/hooks.json:session_start:0:0`;
+      runKeys = [`${mine}/bots`, hooks, last];
+      const before = [
+        '# the owner\'s own settings',
+        'model = "gpt-6-luna"',
+        `api_key = "${SECRET}"`,
+        '',
+        `[projects.${JSON.stringify(owner)}]`,
+        'trust_level = "trusted"',
+        '',
+        `[projects.${JSON.stringify(old)}]`,
+        'trust_level = "trusted"',
+        '',
+        '# my notes on the tui',
+        '[tui]',
+        'show_tooltips = false',
+        '',
+      ].join('\n');
+      during = [
+        '# the owner\'s own settings',
+        'model = "gpt-6-luna"',
+        `api_key = "${SECRET}"`,
+        '',
+        `[projects.${JSON.stringify(owner)}]`,
+        'trust_level = "trusted"',
+        '',
+        `[projects.${JSON.stringify(`${mine}/bots`)}]`,
+        'trust_level = "trusted"',
+        '',
+        `[projects.${JSON.stringify(old)}]`,
+        'trust_level = "trusted"',
+        '',
+        '# my notes on the tui',
+        '[tui]',
+        'show_tooltips = false',
+        '',
+        `[hooks.state.${JSON.stringify(hooks)}]`,
+        `trusted_hash = "sha256:${SECRET}"`,
+        '',
+        '  # a note of the owner\'s, directly above the next table',
+        `[projects.${JSON.stringify(added)}]`,
+        'trust_level = "trusted"',
+        '',
+        `[hooks.state.${JSON.stringify(last)}]`,
+        `trusted_hash = "sha256:${SECRET}"`,
+        '',
+      ].join('\n');
+      expected = [
+        '# the owner\'s own settings',
+        'model = "gpt-6-luna"',
+        `api_key = "${SECRET}"`,
+        '',
+        `[projects.${JSON.stringify(owner)}]`,
+        'trust_level = "trusted"',
+        '',
+        `[projects.${JSON.stringify(old)}]`,
+        'trust_level = "trusted"',
+        '',
+        '# my notes on the tui',
+        '[tui]',
+        'show_tooltips = false',
+        '',
+        '  # a note of the owner\'s, directly above the next table',
+        `[projects.${JSON.stringify(added)}]`,
+        'trust_level = "trusted"',
+        '',
+        '',
+      ].join('\n');
+      return { before: { codex: before, makes: [theirs] }, during: { makes: [mine], codex: during } };
+    });
+    ({ files } = built);
+    await chmod(files.codex, 0o600);
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(result.code, 0, `codex-screens is a known writer, so its keys do not fail the run:\n${everything(result)}`);
+    assert.equal(await readFile(files.codex, 'utf8'), expected, 'exactly the run\'s three tables are gone, and every other byte is as it was');
+    assert.equal((await stat(files.codex)).mode & 0o777, 0o600, 'and the file keeps its mode');
+    assert.deepEqual((await readdir(path.dirname(files.codex))).sort(), ['config.toml'], 'with nothing left beside it');
+    assertRemovedIn(result, files.codex, runKeys.map((key) => key.replace(/:session_start:.*$/, '')));
+    assertNoSecrets(result, [owner, added, old]);
+    assert.ok(during.includes(runKeys[0]), 'the premise: the run wrote its keys');
+  });
+
+  test('.claude.json in 2-space JSON: the run\'s new projects go, and the file is byte for byte the same otherwise, key order kept', async (t) => {
+    const owner = '/Users/owner/work/one';
+    const other = '/Users/owner/work/two';
+    const added = '/Users/owner/work/added-while-it-ran';
+    const record = (projects) => ({
+      numStartups: 12,
+      projects: Object.fromEntries(projects.map((key) => [key, { allowedTools: [SECRET], hasTrustDialogAccepted: true }])),
+      oauthAccount: { accessToken: SECRET },
+      tipsHistory: { 'a-tip': 3 },
+    });
+    let runKey;
+    const built = await withConfigs(t, ({ dir }) => {
+      const mine = `${dir}/obk-system-alpha-Cl01`;
+      runKey = `${mine}/bots/bots/bot-father`;
+      return {
+        before: { claude: `${JSON.stringify(record([owner, other]), null, 2)}\n` },
+        during: { makes: [mine], claude: `${JSON.stringify(record([owner, runKey, other, added]), null, 2)}\n` },
+      };
+    });
+    await chmod(built.files.claude, 0o600);
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(result.code, 0, `a Claude key never fails the run:\n${everything(result)}`);
+    assert.equal(
+      await readFile(built.files.claude, 'utf8'),
+      `${JSON.stringify(record([owner, other, added]), null, 2)}\n`,
+      'the run\'s project is gone; the rest, the one added while it ran included, as it was',
+    );
+    assert.equal((await stat(built.files.claude)).mode & 0o777, 0o600, 'and the file keeps its mode');
+    const beside = (await readdir(path.dirname(built.files.claude))).filter((name) => name.startsWith('.claude.json') && name !== '.claude.json');
+    assert.deepEqual(beside, [], 'with nothing left beside it');
+    assertRemovedIn(result, built.files.claude, [runKey]);
+    assertNoSecrets(result, [owner, other, added]);
+  });
+
+  test('.claude.json in 4-space JSON with no final newline is written back the same way', async (t) => {
+    const owner = '/Users/owner/work/one';
+    const record = (projects) => ({ projects: Object.fromEntries(projects.map((key) => [key, { hasTrustDialogAccepted: true }])), numStartups: 3 });
+    let runKey;
+    const built = await withConfigs(t, ({ dir }) => {
+      const mine = `${dir}/obk-system-alpha-Cl02`;
+      runKey = `${mine}/bots/bots/bot-father`;
+      return {
+        before: { claude: JSON.stringify(record([owner]), null, 4) },
+        during: { makes: [mine], claude: JSON.stringify(record([runKey, owner]), null, 4) },
+      };
+    });
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(result.code, 0, everything(result));
+    assert.equal(await readFile(built.files.claude, 'utf8'), JSON.stringify(record([owner]), null, 4), '4 spaces, and no final newline, as it was');
+  });
+
+  test('a run key under a folder that was there before the run stays, in both files, and so does a key the owner added while it ran', async (t) => {
+    const added = '/Users/owner/work/added-while-it-ran';
+    let codex;
+    let claude;
+    const built = await withConfigs(t, ({ dir }) => {
+      const theirs = `${dir}/obk-system-codex-groom-Old9`;
+      codex = codexConfig({ projects: [`${theirs}/bots`, added] });
+      claude = `${JSON.stringify({ projects: { [`${theirs}/bots/bots/bot-father`]: {}, [added]: {} } }, null, 2)}\n`;
+      return { before: { makes: [theirs] }, during: { codex, claude } };
+    });
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(result.code, 0, everything(result));
+    assert.equal(await readFile(built.files.codex, 'utf8'), codex, 'config.toml is not touched: nothing in it is the run\'s');
+    assert.equal(await readFile(built.files.claude, 'utf8'), claude, 'nor is .claude.json');
+  });
+
+  test('a Codex key from a test that is not a known writer is removed, and the run still fails (the lead\'s reading, not ruled)', async (t) => {
+    let key;
+    const built = await withConfigs(t, ({ dir }) => {
+      const mine = `${dir}/obk-system-alpha-Nk01`;
+      key = `${mine}/bots`;
+      return { before: { codex: codexConfig({}) }, during: { makes: [mine], codex: codexConfig({ projects: [key] }) } };
+    });
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(result.code, 1, `a test that is not a known writer wrote a Codex key: a failure, cleaned or not:\n${everything(result)}`);
+    assert.equal(await readFile(built.files.codex, 'utf8'), codexConfig({}), 'and the key is gone all the same');
+    assertRemovedIn(result, built.files.codex, [key]);
+  });
+
+  test('a .claude.json that is not JSON after the run is not written, and the report says it could not be read', async (t) => {
+    let broken;
+    const built = await withConfigs(t, ({ dir }) => {
+      const mine = `${dir}/obk-system-alpha-Bj01`;
+      broken = `{ "projects": { "${mine}/bots/bots/bot-father": { "hasTrustDialogAccepted": tr`;
+      return { before: { claude: `${JSON.stringify({ projects: {} }, null, 2)}\n` }, during: { makes: [mine], claude: broken } };
+    });
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(await readFile(built.files.claude, 'utf8'), broken, 'a file that cannot be parsed is left exactly as it is');
+    const lines = afterTheRun(result).split('\n').filter((line) => line.includes('.claude.json'));
+    assert.ok(
+      lines.some((line) => /could ?n[o']t|cannot|can't|unable|unreadable|not (?:be )?read|not JSON/i.test(line)),
+      `a line says .claude.json could not be read, got:\n${afterTheRun(result)}`,
+    );
   });
 });
