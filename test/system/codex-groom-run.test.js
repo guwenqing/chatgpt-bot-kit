@@ -97,13 +97,25 @@
 //
 // **It is attended, a little.** A bot folder nobody has opened before asks
 // questions before the harness is running in it, and this test answers none of
-// them (PRD 6.5). The person answers only these:
+// them (PRD 6.5), but one. The person answers only these:
 //
-//   1. Claude Code's folder-trust list in Bot Father's tabs, `Bot Father daily`
-//      and the grooming tab: its selection starts on `No, exit`, so it takes a
-//      down-arrow and then return.
+//   1. Claude Code's folder-trust list in `Bot Father daily`: its selection
+//      starts on `No, exit`, so it takes a down-arrow and then return.
 //   2. Either Claude tab, after a turn: "Teach auto mode about your
 //      environment?". Esc cancels it (#416).
+//
+// The one exception: the grooming tab's folder trust, which this test answers
+// itself. Bot Father's settings pre-approve the test's trust-hooks rule, set
+// above through `obk bot change --allow`, so Claude Code asks for the folder's
+// trust again when the grooming session starts, naming that permission (live
+// run 4 stopped there). The architect's ruling (a) on #238: the test answers
+// "Yes, I trust this folder" in its own throwaway grooming tab only, only
+// when the screen's pre-approved permissions are exactly the test's rule, and
+// at most once. The screen cuts the rule short, so what it shows has to be the
+// start of the rule, and Bot Father's `.claude/settings.json` has to allow that
+// rule and nothing else, read before answering. The pointer has to be on "No,
+// exit", where it starts, for the table's down-and-return to mean "Yes". Any
+// other screen gets no answer, and the test fails saying what it saw.
 //
 // And not these, which are what the test is about:
 //
@@ -278,6 +290,38 @@ async function until(what, within, look, note = () => '', every = 1000) {
 function screenOf(handle) {
   const answer = orca(['terminal', 'read', '--terminal', handle, '--screen']);
   return answer.ok === true ? JSON.stringify(answer.result) : '';
+}
+
+/** The rows the tab renders now, or undefined when Orca will not say. */
+function rowsOf(handle) {
+  const answer = orca(['terminal', 'read', '--terminal', handle, '--screen']);
+  const tail = answer.ok === true && answer.result?.terminal?.source === 'screen' ? answer.result.terminal.tail : undefined;
+  return Array.isArray(tail) ? tail : undefined;
+}
+
+/**
+ * Whether Claude Code's folder trust in the tab asks only about this test's
+ * own rule, and may be answered (ruling (a) on #238): undefined when it may, or
+ * what makes it a screen this test leaves alone. `settingsFile` is the bot
+ * folder's `.claude/settings.json`, read now.
+ */
+function trustAsksOnly(rows, rule, settingsFile) {
+  const said = rows.join('\n');
+  if (!/\bpre-approves 1 tool permission\b/.test(said)) return 'it does not say it pre-approves exactly 1 tool permission';
+  const shownRow = rows.slice(rows.findIndex((row) => /\bpre-approves\b/.test(row)) + 1).find((row) => row.includes('Bash('));
+  if (shownRow === undefined) return 'it shows no Bash( permission';
+  const shown = shownRow.slice(shownRow.indexOf('Bash(')).trim().split('…')[0];
+  if (shown.length <= 'Bash('.length || !rule.startsWith(shown)) return `the permission it shows, ${shown}, is not the start of ${rule}`;
+  if (!rows.some((row) => /^\s*❯\s*No, exit\s*$/.test(row))) return 'its pointer is not on "No, exit", where down-and-return would mean "Yes, I trust this folder"';
+  if (!rows.some((row) => /^\s*Yes, I trust this folder\s*$/.test(row))) return 'it has no "Yes, I trust this folder" choice';
+  let allow;
+  try {
+    allow = JSON.parse(readFileSync(settingsFile, 'utf8'))?.permissions?.allow;
+  } catch (error) {
+    return `${settingsFile} could not be read: ${error.message}`;
+  }
+  if (!Array.isArray(allow) || allow.length !== 1 || allow[0] !== rule) return `${settingsFile} allows ${JSON.stringify(allow)}, not exactly [${rule}]`;
+  return undefined;
 }
 
 /** What the tab is showing, for the message of a wait that ran out. */
@@ -485,6 +529,33 @@ test('a grooming job with --run-on codex starts one Codex run at its fire, on th
   assert.equal(opened.created, true, 'up opened a tab for the grooming session');
   assert.equal(opened.harnessStarted, true, `no claude came up in ${opened.title}: \`orca terminal read --terminal ${opened.terminal} --screen\``);
   const handle = opened.terminal;
+
+  // The one screen this test answers itself (see the header): the grooming
+  // tab's folder trust, asking only about the test's own rule. Until either it
+  // shows or the session reports its id, nothing is typed.
+  const settingsFile = path.join(home, '.claude', 'settings.json');
+  const trustAsked = await until(
+    'the grooming tab to show Claude Code\'s folder trust, or its session to report its id',
+    READY_MS,
+    async () => {
+      if (typeof sessionIn(home, 'grooming').session === 'string') return { rows: null };
+      const rows = rowsOf(handle);
+      return rows !== undefined && rows.some((row) => row.includes('Yes, I trust this folder')) ? { rows } : undefined;
+    },
+    () => whatIsUp(handle),
+  );
+  if (trustAsked.rows !== null) {
+    const wrong = trustAsksOnly(trustAsked.rows, trustRule, settingsFile);
+    assert.equal(
+      wrong,
+      undefined,
+      `the grooming tab's folder trust is not the one this test may answer, so it answered nothing: ${wrong}.`
+      + `\n  what it showed:\n    ${trustAsked.rows.join('\n    ')}`,
+    );
+    const sent = orca(['terminal', 'send', '--terminal', handle, '--text', '\x1b[B\r']);
+    assert.equal(sent.ok, true, `answering the grooming tab's folder trust failed: ${JSON.stringify(sent.error)}`);
+    t.diagnostic(`answered the grooming tab's folder trust, which pre-approved only ${trustRule} (ruling (a) on #238)`);
+  }
 
   await until(
     'the grooming session to report its session id',
