@@ -2371,7 +2371,10 @@ describe('test-system: what a run leaves in the harness configs (#240)', { concu
 //                  for byte. A removed table runs from its header to just
 //                  before the next table header, except that a comment directly
 //                  above that header is the next table's and stays; at the end
-//                  of the file it runs to the end.
+//                  of the file it runs to the end, and takes the blank lines
+//                  directly above its header with it, the file keeping one
+//                  final newline: Codex appends a table as a blank line, the
+//                  header and its key (seen live, #240's first cleaning run).
 //   .claude.json   every other key and value, in their order, written back in
 //                  the file's own layout: its indentation as found, and a final
 //                  newline only if it had one.
@@ -2475,7 +2478,6 @@ describe('test-system: a run removes exactly the config keys it added (#240, the
         `[projects.${JSON.stringify(added)}]`,
         'trust_level = "trusted"',
         '',
-        '',
       ].join('\n');
       return { before: { codex: before, makes: [theirs] }, during: { makes: [mine], codex: during } };
     });
@@ -2491,6 +2493,64 @@ describe('test-system: a run removes exactly the config keys it added (#240, the
     assertRemovedIn(result, files.codex, runKeys.map((key) => key.replace(/:session_start:.*$/, '')));
     assertNoSecrets(result, [owner, added, old]);
     assert.ok(during.includes(runKeys[0]), 'the premise: the run wrote its keys');
+  });
+
+  // Seen live on #240's first cleaning run: Codex appends a new trust table
+  // at the end of config.toml as a blank line, the header and its key, so a
+  // cut from the header to the end left one blank line more than the file had.
+  // What the run appended has to go whole: the file ends as it did before.
+  for (const [label, appended] of [
+    ['one projects table', (mine) => [`[projects.${JSON.stringify(`${mine}/bots`)}]`, 'trust_level = "trusted"']],
+    ['two projects tables, one after the other', (mine) => [
+      `[projects.${JSON.stringify(`${mine}/bots`)}]`, 'trust_level = "trusted"', '',
+      `[projects.${JSON.stringify(`${mine}/bots/bots/bot-father`)}]`, 'trust_level = "trusted"',
+    ]],
+    ['a projects table and then a hooks.state table, as a Codex run whose trust and hooks review were answered writes them', (mine) => [
+      `[projects.${JSON.stringify(`${mine}/bots`)}]`, 'trust_level = "trusted"', '',
+      `[hooks.state.${JSON.stringify(`${mine}/bots/bots/bot-father/.codex/hooks.json:session_start:0:0`)}]`, `trusted_hash = "sha256:${SECRET}"`,
+    ]],
+  ]) {
+    test(`config.toml: ${label} appended at the end the way Codex does is taken back to the byte, the file ending as it did`, async (t) => {
+      const before = [
+        'model = "gpt-6-luna"',
+        '',
+        '[projects."/Users/owner/work/app"]',
+        'trust_level = "trusted"',
+        '',
+      ].join('\n');
+      const built = await withConfigs(t, ({ dir }) => {
+        const mine = `${dir}/obk-system-codex-screens-Ap01`;
+        return { before: { codex: before }, during: { makes: [mine], codex: `${before}\n${[...appended(mine), ''].join('\n')}` } };
+      });
+
+      const result = await built.fixture.confirmed({ env: built.env });
+
+      assert.equal(result.code, 0, everything(result));
+      assert.equal(await readFile(built.files.codex, 'utf8'), before, 'byte for byte what it was before the run: no blank line left at the end');
+    });
+  }
+
+  test('config.toml whose owner ended it with a blank line of their own keeps that blank line when a run\'s table appended after it goes', async (t) => {
+    // Not in the lead's rule as stated: "the blank lines directly above its
+    // header go too" would take the owner's own last blank line as well. What
+    // the run appended was one blank line and the table; the file ends as it did.
+    const before = [
+      'model = "gpt-6-luna"',
+      '',
+      '[projects."/Users/owner/work/app"]',
+      'trust_level = "trusted"',
+      '',
+      '',
+    ].join('\n');
+    const built = await withConfigs(t, ({ dir }) => {
+      const mine = `${dir}/obk-system-codex-screens-Ap02`;
+      return { before: { codex: before }, during: { makes: [mine], codex: `${before}\n[projects.${JSON.stringify(`${mine}/bots`)}]\ntrust_level = "trusted"\n` } };
+    });
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(result.code, 0, everything(result));
+    assert.equal(await readFile(built.files.codex, 'utf8'), before, 'byte for byte what it was, the owner\'s own blank line at the end included');
   });
 
   test('.claude.json in 2-space JSON: the run\'s new projects go, and the file is byte for byte the same otherwise, key order kept', async (t) => {
