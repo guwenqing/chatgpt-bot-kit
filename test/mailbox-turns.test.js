@@ -436,6 +436,17 @@ async function acksAfterTheMove(box, a, movedAt) {
     .filter((call) => call.caller === a.handle && orcaFlag(call, '--ack') !== undefined);
 }
 
+/**
+ * The fake Orca's last `count` calls, one a line with the tab that made it, for
+ * the message of a run of `up` that failed: which call it was on, and what the
+ * other `up` was doing beside it (#438).
+ */
+async function callsTail(box, count = 30) {
+  const calls = await box.orca.calls();
+  const shown = calls.slice(-count).map((call) => `  ${call.caller ?? '(outside Orca)'}  ${call.args.join(' ')}`);
+  return `the fake Orca's last ${shown.length} of ${calls.length} calls:\n${shown.join('\n')}`;
+}
+
 test('#321 path 1 (make), two ups at once: the book does not move under A\'s step, and the session ends with one Run, bound to the book\'s tab', async (t) => {
   // Two runs of `up` at the same moment, neither finding coder's tab. The first
   // opens A and A's step asks Orca for a Run; in the middle of that, the second
@@ -454,8 +465,8 @@ test('#321 path 1 (make), two ups at once: the book does not move under A\'s ste
   await second.letGo();
   const later = await second.finished;
 
-  assert.equal(first.code, 0, `the first up works: ${first.stdout}${first.stderr}`);
-  assert.equal(later.code, 0, `and so does the second: ${later.stdout}${later.stderr}`);
+  assert.equal(first.code, 0, `the first up works: ${first.stdout}${first.stderr}\n${await callsTail(box)}`);
+  assert.equal(later.code, 0, `and so does the second: ${later.stdout}${later.stderr}\n${await callsTail(box)}`);
   const then = await bookDuring(box, 'orchestration run-create');
   const a = orcaCallsOf(await box.orca.calls(), 'orchestration run-create')[hooked].caller;
   assert.equal(then, await tabIdOf(box, a), 'while A\'s step was asking Orca, the book still named A');

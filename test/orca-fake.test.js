@@ -4,7 +4,7 @@
 // or a developer's machine — reach the real Orca.
 
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { statSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
@@ -1110,4 +1110,49 @@ test('the fake can refuse one tab\'s close with --tab, keep listing it, and clos
   assert.equal(JSON.parse(close(again.handle, '--tab').stdout).error.code, 'tab_not_found');
   assert.equal(JSON.parse(close(again.handle).stdout).error.message, 'the pane will not close');
   assert.deepEqual(list().map((one) => one.handle), [again.handle], 'a tab whose closes were both refused is still there');
+});
+
+// ---------------------------------------------------------------------------
+// Many callers at once (#438)
+// ---------------------------------------------------------------------------
+
+/** Call the fake Orca without waiting for it, as a second `up` does: `{ code, stdout, stderr }`. */
+function askAtOnce(box, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(box.orca.cli, args, { cwd: box.cwd, env: box.env });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('close', (code) => resolve({ code, stdout, stderr }));
+  });
+}
+
+test('#438 twenty callers that save at once each read the world whole and answer JSON', async (t) => {
+  // Every call reads state.json whole when it starts, and one that changes the
+  // world writes it back. Two `up`s at once make such calls side by side, and a
+  // call that read the file while another was part way through writing it got
+  // half of it, could not parse it, and answered nothing (#438). A world of a
+  // few thousand projects makes each write long enough to be caught in.
+  const box = await createSandbox(t);
+  await box.orca.set({
+    setups: Array.from({ length: 3000 }, (_, n) => ({
+      id: `repo_seed_${n}`, projectId: `proj_seed_${n}`, hostId: 'host_local', repoId: `repo_seed_${n}`,
+      path: `/seed/project-${n}`, displayName: `project-${n}`, kind: 'folder', setupState: 'ready', setupMethod: 'repo-add',
+    })),
+    nextId: 5000,
+  });
+
+  const answers = await Promise.all(Array.from({ length: 20 }, (_, n) => askAtOnce(box, ['repo', 'add', '--path', `/new/project-${n}`, '--json'])));
+
+  const broken = answers.flatMap((done, n) => {
+    try {
+      if (JSON.parse(done.stdout).ok === true) return [];
+    } catch {
+      // Not JSON: said below.
+    }
+    return [`caller ${n}: exit ${done.code}, stdout ${JSON.stringify(done.stdout.slice(0, 200))}, stderr ${JSON.stringify(done.stderr.slice(0, 300))}`];
+  });
+  assert.deepEqual(broken, [], 'every caller answered JSON, having read the world whole');
 });
