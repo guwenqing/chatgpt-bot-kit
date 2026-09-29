@@ -64,6 +64,32 @@ than metered billing, tokens are not money at all, and the honest answer is what
 would have cost metered, and what share of the allowance it used where the
 plan shows that.
 
+## When a bill and an estimate cover the same work
+
+An invoice, a bill or the provider's usage page is better evidence than an
+estimate made from tokens and a price you looked up today. Where both cover
+the same work, report the charge and say that is where the figure came from.
+The estimate is not added to it: it measures the same spending a second time,
+and is worth keeping beside the charge only to show how far the two differ.
+
+Watch for the same thing in smaller pieces. A figure for a whole session
+already includes the calls inside it, so do not add the per-call figures to
+it, or a day's total to the sessions it is made of. Take one level and say
+which.
+
+Keep currencies apart. An invoice in euros and an estimate in dollars are two
+figures, each with its currency, until you have a rate you can name, with its
+date and its source. Converting quietly hides a guess inside a number.
+
+And an unknown stays unknown. A day with no invoice yet and no price you could
+find is a gap, not a zero: a zero says the work was free.
+
+A worked example. For 20 September the provider's invoice says 41.20 USD for
+the API, and the token estimate for the same day, at today's list price, is
+38.90 USD. Report one figure, 41.20 USD, with its source: the invoice. Add
+that the estimate came to 38.90 USD, so a reader can see the estimate runs
+about six per cent low, and leave it out of the total.
+
 ## Cost a result, not a token
 
 Tokens per day tells you nothing about whether the money bought anything. Put
