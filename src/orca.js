@@ -65,10 +65,24 @@ function ask(args, timeoutMs) {
 
   const answer = parse(asked.stdout);
   if (answer === null || typeof answer !== 'object') {
-    throw new Error(`Orca answered ${args.join(' ')} with something that is not JSON.`);
+    // What Orca did say, so the failure shows its cause (#438): its exit, and
+    // each stream cut short and on one line, so a stack trace in it reads as
+    // text and not as the kit's own.
+    const exit = asked.status ?? `signal ${asked.signal}`;
+    throw new Error(`Orca answered ${args.join(' ')} with something that is not JSON (exit ${exit}; `
+      + `stdout ${said(asked.stdout)}; stderr ${said(asked.stderr)}).`);
   }
   return answer;
 }
+
+/** How much of each of Orca's streams an error carries. */
+const SAID = 500;
+
+/** A stream of Orca's as an error carries it: its lines folded into one, cut short with an ellipsis, in quotes. */
+const said = (text) => {
+  const one = String(text ?? '').trim().replace(/\s*\r?\n\s*/g, ' ⏎ ');
+  return `"${one.length > SAID ? `${one.slice(0, SAID)}…` : one}"`;
+};
 
 function parse(text) {
   try {
