@@ -24,7 +24,7 @@ import { chmod, copyFile, mkdir, readdir, readFile, realpath, stat, symlink, wri
 import os from 'node:os';
 import path from 'node:path';
 import { describe, test as nodeTest } from 'node:test';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { assertRefused, createSandbox, node, orcaCallsOf, repoRoot } from './helpers/cli.js';
 
@@ -39,8 +39,9 @@ const scriptEntry = path.join(repoRoot, 'scripts', 'test-system.js');
  * package resolves, they run.
  *
  * Only a package that is not there skips: the resolve finds no module
- * (ERR_MODULE_NOT_FOUND) and there is no `smol-toml` in the repo's
- * node_modules at all, a dangling link counting as there. A smol-toml that is
+ * (ERR_MODULE_NOT_FOUND) and there is no `smol-toml` at all in any node_modules
+ * the resolve searched, this file's folder's and every folder's above it, a
+ * dangling link counting as there. A smol-toml that is
  * there and broken (its package.json unreadable, or its entry file missing,
  * which Node reports as ERR_MODULE_NOT_FOUND too) is not skipped (review of
  * PR #453): the tests run, the runner fails to load, and they fail with its
@@ -53,13 +54,19 @@ const RUNNER_CANNOT_LOAD = (() => {
   } catch (error) {
     if (error?.code !== 'ERR_MODULE_NOT_FOUND') return false;
   }
-  try {
-    lstatSync(path.join(repoRoot, 'node_modules', 'smol-toml'));
-    return false;
-  } catch (error) {
-    if (error?.code !== 'ENOENT') return false;
-    return 'the runner\'s dev dependency smol-toml is not installed, as in a production-only install (npm ci --omit=dev), so scripts/test-system.js cannot load';
+  // Every folder Node's resolve looked in for it: node_modules/smol-toml beside
+  // this file and in each folder above, up to the root of the file system. A
+  // package found in any of them, broken or a dangling link, is there.
+  for (let dir = path.dirname(fileURLToPath(import.meta.url)); ; dir = path.dirname(dir)) {
+    try {
+      lstatSync(path.join(dir, 'node_modules', 'smol-toml'));
+      return false;
+    } catch (error) {
+      if (error?.code !== 'ENOENT') return false;
+    }
+    if (path.dirname(dir) === dir) break;
   }
+  return 'the runner\'s dev dependency smol-toml is not installed, as in a production-only install (npm ci --omit=dev), so scripts/test-system.js cannot load';
 })();
 
 /**
