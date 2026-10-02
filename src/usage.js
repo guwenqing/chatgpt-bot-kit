@@ -91,11 +91,40 @@ export function readUsage(bots, { bot: only, session: onlySession, since, until 
     throw new Error(`--until is before --since, so there is no window between them: ${until} comes before ${since}.`);
   }
 
-  return (only === undefined ? names : [only]).map((name) => forBot(bots, name, onlySession, { from, to }));
+  // Who owns a Codex subagent is a question about the whole fleet, asked once:
+  // one can run in another bot's folder, or be claimed by another bot's book.
+  const fleet = subagentOwners(bots, names);
+  return (only === undefined ? names : [only]).map((name) => forBot(bots, name, onlySession, { from, to }, fleet));
+}
+
+/**
+ * Every conversation any bot's book names, the Codex subagents that hang off
+ * each by their own links, and the ones so attached (#449). A subagent a book
+ * names is that book's, and is never attached under another: the book's word
+ * comes first (ADR 0012). One attached anywhere is no bot's unclaimed.
+ */
+function subagentOwners(bots, names) {
+  const claimed = new Set();
+  for (const name of names) for (const id of sessionIdsIn(readBook(realHome(botDir(bots, name))))) claimed.add(id);
+  const childrenOf = new Map();
+  for (const one of codexSubagents()) {
+    if (claimed.has(one.id)) continue;
+    if (!childrenOf.has(one.parent)) childrenOf.set(one.parent, []);
+    childrenOf.get(one.parent).push(one);
+  }
+  const attached = new Set();
+  const waiting = [...claimed].flatMap((id) => childrenOf.get(id) ?? []);
+  while (waiting.length > 0) {
+    const child = waiting.shift();
+    if (attached.has(child.id)) continue;
+    attached.add(child.id);
+    waiting.push(...(childrenOf.get(child.id) ?? []));
+  }
+  return { childrenOf, attached };
 }
 
 /** One bot: what each of its sessions used, and what nobody claims. */
-function forBot(bots, name, onlySession, window) {
+function forBot(bots, name, onlySession, window, fleet) {
   // The folder as the file system knows it, not as the caller spelled it: a
   // bots folder reached through a symlink is the same fleet, and the harnesses
   // file their transcripts under the real path (as `restart` and `message` do).
@@ -141,16 +170,11 @@ function forBot(bots, name, onlySession, window) {
   // A Codex subagent names the conversation it was started for, and what it
   // spent is that conversation's, at any depth, as a Claude Code subagent's is
   // (#449). It is found by that link wherever it ran, and joined only through
-  // links that end at a conversation the book names: a parent no session
-  // claims leaves its children where they were, and nothing is guessed from
-  // timing or folder. The book's word is enough without the parent's own file,
-  // whose calls are then said to be unreadable.
-  const childrenOf = new Map();
-  for (const one of codexSubagents()) {
-    if (claimed.has(one.id)) continue;
-    if (!childrenOf.has(one.parent)) childrenOf.set(one.parent, []);
-    childrenOf.get(one.parent).push(one);
-  }
+  // links that end at a conversation the book names, as the fleet's owners
+  // say: a parent no session claims leaves its children where they were, and
+  // nothing is guessed from timing or folder. The book's word is enough
+  // without the parent's own file, whose calls are then said to be unreadable.
+  const { childrenOf } = fleet;
   const attached = new Set();
   for (const id of claimed) {
     const own = onRecord.get(id);
@@ -185,7 +209,7 @@ function forBot(bots, name, onlySession, window) {
     .filter(({ name }) => onlySession === undefined || name === onlySession)
     .map(({ name, entry, ...was }) => ({ name, ...('retired' in was ? { retired: was.retired } : {}), ...block(entry) }));
 
-  const unclaimed = all([...onRecord.values()].filter((one) => !claimed.has(one.id) && !attached.has(one.id)), window);
+  const unclaimed = all([...onRecord.values()].filter((one) => !claimed.has(one.id) && !fleet.attached.has(one.id)), window);
 
   return { bot: name, home, sessions, unclaimed: unclaimed.conversations, unclaimed_not_counted: unclaimed.gaps };
 }
