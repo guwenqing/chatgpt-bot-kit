@@ -43,14 +43,27 @@
 // (#220); closes only its own tabs, through the tab guard, and deletes its own
 // workspaces, whatever happened.
 //
-// **It is attended.** A bot folder nobody has opened before asks questions
-// before the harness is running in it, and this test answers none of them
-// (PRD 6.5). The person answers Claude Code's folder trust (a down-arrow, then
-// return) in `Receiver daily` and in `Sender peer`; `Sender daily` runs in the
-// same folder as `peer`, which is trusted by then. Each fleet's `Bot Father
-// daily` shows the same question; nothing here waits on it, so it can be left.
-// After a turn, Claude Code may offer "Teach auto mode about your
-// environment?": Esc cancels it (#416). Nothing else is to be answered.
+// **It is attended, a little.** A bot folder nobody has opened before asks
+// questions before the harness is running in it (PRD 6.5). This test answers
+// one of them itself, Claude Code's folder trust, in its own throwaway Claude
+// tabs alone: `Receiver daily`, `Sender peer`, and `Sender daily` if it shows
+// the screen too, which it should not, sharing `peer`'s folder. The
+// architect's ruling on #451
+// (https://github.com/guwenqing/orca-bot-kit/issues/451#issuecomment-5961132572),
+// the same exception as codex-groom-run's daily under #238: it answers only
+// when the screen names that tab's own throwaway folder, the pointer is on "No,
+// exit", "Yes, I trust this folder" is there, and no line pre-approves a
+// permission (helpers/screens.js `plainTrustOf`, the check codex-groom-run
+// runs), and only when the screen carries no other warning, no line with ⚠ and
+// none that names hooks. Then down and return, once for that tab, with no
+// `--enter`. Any other screen gets no answer, and the test fails printing
+// every row it saw; a hooks line, if one shows, goes to the architect before
+// any rerun.
+//
+// The person still has these, which nothing here waits on: each fleet's `Bot
+// Father daily` shows the same folder trust, and it can be left; and after a
+// turn Claude Code may offer "Teach auto mode about your environment?", where
+// Esc cancels it (#416). Nothing else is to be answered.
 //
 // It takes a few minutes: three Claude sessions, one of them sending two
 // messages.
@@ -66,7 +79,7 @@ import { setTimeout } from 'node:timers/promises';
 import { parse } from 'yaml';
 
 import { addressPattern, cliEntry } from '../helpers/cli.js';
-import { waitingOn } from '../helpers/screens.js';
+import { plainTrustOf, waitingOn } from '../helpers/screens.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
 
@@ -203,6 +216,27 @@ async function until(what, within, look, note = () => '') {
   }
 }
 
+/** The rows the tab renders now, or undefined when Orca will not say. */
+function rowsOf(handle) {
+  const answer = orca(['terminal', 'read', '--terminal', handle, '--screen']);
+  const tail = answer.ok === true && answer.result?.terminal?.source === 'screen' ? answer.result.terminal.tail : undefined;
+  return Array.isArray(tail) ? tail : undefined;
+}
+
+/**
+ * Whether Claude Code's folder trust on a tab's `rows` may be answered by this
+ * test (the ruling on #451): the plain one for that tab's own `folder`, as
+ * codex-groom-run answers it (helpers/screens.js `plainTrustOf`), and no
+ * warning on it: no line with ⚠ and none that names hooks, below "Accessing
+ * workspace:". Undefined when it may, or what makes it a screen left alone.
+ */
+function trustThisTestMayAnswer(rows, folder) {
+  const from = Math.max(0, rows.findIndex((row) => /Accessing workspace:/.test(row)));
+  const odd = rows.slice(from).find((row) => /⚠|\bhooks?\b/i.test(row));
+  if (odd !== undefined) return `it carries a line this test has no ruling for: ${odd.trim()}`;
+  return plainTrustOf(rows, folder);
+}
+
 /** Everything the tab is rendering right now, as one piece of text. */
 function screenOf(handle) {
   const answer = orca(['terminal', 'read', '--terminal', handle, '--screen']);
@@ -321,11 +355,35 @@ test('a Claude session\'s native message to a session of another bots folder is 
     const entry = tabOf(obkJson(['up', '--bots', bots, '--bot', bot, '--session', session]), session);
     assert.equal(entry.created, true, `up opened ${bot} ${session}'s tab`);
     assert.equal(entry.harnessStarted, true, `no claude came up in ${entry.title}: \`orca terminal read --terminal ${entry.terminal} --screen\``);
+    // Its folder trust, which this test answers itself, once, and only when it
+    // is the plain one for this tab's own folder (the ruling on #451).
+    const asked = await until(
+      `${bot} ${session} to show Claude Code's folder trust, or report its conversation`,
+      READY_MS,
+      async () => {
+        if (typeof sessionIn(home, session).session === 'string') return { rows: null };
+        const rows = rowsOf(entry.terminal);
+        return rows !== undefined && rows.some((row) => row.includes('Yes, I trust this folder')) ? { rows } : undefined;
+      },
+      () => whatIsUp(entry.terminal),
+    );
+    if (asked.rows !== null) {
+      const wrong = trustThisTestMayAnswer(asked.rows, home);
+      assert.equal(
+        wrong,
+        undefined,
+        `${entry.title}'s folder trust is not one this test may answer, so it answered nothing: ${wrong}.`
+        + `\n  what it showed:\n    ${asked.rows.join('\n    ')}`,
+      );
+      const sent = orca(['terminal', 'send', '--terminal', entry.terminal, '--text', '\x1b[B\r']);
+      assert.equal(sent.ok, true, `answering ${entry.title}'s folder trust failed: ${JSON.stringify(sent.error)}`);
+      t.diagnostic(`answered ${entry.title}'s plain folder trust (the ruling on #451)`);
+    }
     await until(
       `${bot} ${session} to report its conversation`,
       READY_MS,
       async () => sessionIn(home, session).session,
-      () => ` Answer Claude Code's folder trust in ${entry.title}.${whatIsUp(entry.terminal)}`,
+      () => ` Its folder trust was answered, or never asked.${whatIsUp(entry.terminal)}`,
     );
     await readyForMail(entry.terminal);
     const address = sessionIn(home, session).address;

@@ -151,7 +151,7 @@ import { parse } from 'yaml';
 import { cliEntry } from '../helpers/cli.js';
 import { trustKeysIn } from '../helpers/codex-trust.js';
 import { rolloutFilesOf, turnSettingsIn } from '../helpers/codex-rollout.js';
-import { waitingOn } from '../helpers/screens.js';
+import { plainTrustOf, waitingOn } from '../helpers/screens.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
 
@@ -346,24 +346,6 @@ function trustAsksOnly(rows, rule, settingsFile) {
     return `${settingsFile} could not be read: ${error.message}`;
   }
   if (!Array.isArray(allow) || allow.length !== 1 || allow[0] !== rule) return `${settingsFile} allows ${JSON.stringify(allow)}, not exactly [${rule}]`;
-  return undefined;
-}
-
-/**
- * Whether Claude Code's folder trust in the tab is the plain one for `folder`,
- * and may be answered (the ruling on #238 after #450): undefined when it may,
- * or what makes it a screen this test leaves alone. No permission is
- * pre-approved, the folder shown is `folder` in either spelling of a macOS
- * temp path, and the pointer is on "No, exit" with "Yes, I trust this folder"
- * below it.
- */
-function plainTrustOf(rows, folder) {
-  if (rows.some((row) => /\bpre-approves\b/.test(row))) return 'it names a pre-approved permission, and this folder should have none yet';
-  const bare = folder.replace(/^\/private(?=\/)/, '');
-  const spellings = new Set([folder, bare, `/private${bare}`]);
-  if (!rows.some((row) => spellings.has(row.trim()))) return `it does not show this test's folder, ${folder}`;
-  if (!rows.some((row) => /^\s*❯\s*No, exit\s*$/.test(row))) return 'its pointer is not on "No, exit", where down-and-return would mean "Yes, I trust this folder"';
-  if (!rows.some((row) => /^\s*Yes, I trust this folder\s*$/.test(row))) return 'it has no "Yes, I trust this folder" choice';
   return undefined;
 }
 
