@@ -288,9 +288,9 @@ otherwise `/Applications/Orca.app/Contents/Resources/bin/orca`. A bare
 | On screen | Send | Which is | Proven on |
 |---|---|---|---|
 | Claude Code's trust list | `\x1b[B\r` | down, return: off **No, exit** | Claude Code 2.1.283 |
-| Codex's `Trust this folder?` | `\r` | return: it starts on yes | Codex 0.158.0 |
-| Codex's `Hooks need review` | `\x1b[B\r` | **Trust all and continue** | Codex 0.158.0 |
-| Codex's `Where should the new conversation run?` | `\r` | **Current checkout** | Codex 0.158.0 |
+| Codex's `Trust this folder?` | `\r` | return: it starts on yes | Codex 0.160.0 |
+| Codex's `Hooks need review` | `\x1b[B\r` | **Trust all and continue** | Codex 0.160.0 |
+| Codex's `Where should the new conversation run?` | `\r` | **Current checkout** | Codex 0.160.0 |
 | Codex's update offer, `1. Update now` | `\r` | **Update now**, where it starts | Codex 0.156.1 |
 | `[oh-my-zsh] Would you like to update?` | `n` | no: the user updates it | oh-my-zsh bf77e35 |
 | Claude Code's `Teach auto mode…` | `\x1b` | Esc: Not now; no return | Not yet proven, below |
@@ -302,7 +302,8 @@ return: on Codex's update offer that took the highlighted **Update now**,
 whatever the digit was. Codex's trust said `1. Yes, continue` on older
 versions. Its hooks review sometimes starts on `2` already: then return alone.
 Its update offer was proven on 0.156.1; 0.157.1 showed it with the selection on
-Update now, not pressed, and 0.158.0 has had no newer release to offer.
+Update now, not pressed, and 0.158.0 offered 0.160.0, taken on 2026-10-02 by
+Bot Father's restarts.
 Claude Code's `Teach auto mode` on 2.1.283 is a form, not a list, ending
 `Enter to continue · Esc to cancel`: never send it a return, since
 Enter is Continue, which scans the project, recent sessions and the machine's
@@ -313,7 +314,7 @@ question matters most. The kit's hook is how the book learns which
 conversation the session is running, and until it is answered the
 conversation has not started. Codex's trust applies to the repository root,
 which is the whole bots folder. Codex's `/new` may ask where the new
-conversation runs (0.156.1, 0.157.1 and 0.158.0 all did); the answer is
+conversation runs (0.156.1, 0.157.1, 0.158.0 and 0.160.0 all did); the answer is
 always the current checkout, the bot home, and never `2. New worktree`:
 the kit never makes a git worktree.
 

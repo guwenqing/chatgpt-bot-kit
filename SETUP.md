@@ -194,10 +194,10 @@ waiting for:
 | On screen | Send | Which is | Proven on |
 |---|---|---|---|
 | Claude Code's folder trust list | `\x1b[B\r` | down, then return: its selection starts on **No, exit** | Claude Code 2.1.283 |
-| Codex's directory trust, `1. Trust and continue` (older: `1. Yes, continue`) | `\r` | return: its selection starts on **Trust and continue** | Codex 0.158.0 |
-| Codex's `Hooks need review` | `\x1b[B\r` | down, then return, to **Trust all and continue**; if the selection already starts there, return alone | Codex 0.158.0 |
-| Codex's `/new`: `Where should the new conversation run?` | `\r` | return: its selection starts on **Current checkout** (bot home) | Codex 0.158.0 |
-| Codex's update offer, `1. Update now` | `\r` | return: its selection starts on **Update now**, which accepts it | Codex 0.156.1; seen on 0.157.1 (offering 0.158.0) with the selection on **Update now**, not pressed; 0.158.0 has had no newer release to offer |
+| Codex's directory trust, `1. Trust and continue` (older: `1. Yes, continue`) | `\r` | return: its selection starts on **Trust and continue** | Codex 0.160.0 |
+| Codex's `Hooks need review` | `\x1b[B\r` | down, then return, to **Trust all and continue**; if the selection already starts there, return alone | Codex 0.160.0 |
+| Codex's `/new`: `Where should the new conversation run?` | `\r` | return: its selection starts on **Current checkout** (bot home) | Codex 0.160.0 |
+| Codex's update offer, `1. Update now` | `\r` | return: its selection starts on **Update now**, which accepts it | Codex 0.156.1; seen on 0.157.1 (offering 0.158.0) with the selection on **Update now**, not pressed; 0.158.0 offered 0.160.0, taken on 2026-10-02 by Bot Father's restarts |
 | `[oh-my-zsh] Would you like to update?` | `n` | they update their own shell | oh-my-zsh bf77e35 |
 | Claude Code's `Teach auto mode about your environment?` | `\x1b` | Esc, which cancels it (**Not now**). On 2.1.283 it is a form, not a list: `How you use Claude here`, `Also scan shell history`, `Also scan your other repos`, `Continue`, and `Enter to continue · Esc to cancel`. **Never send a return**: Enter is **Continue**, which starts a scan of the project, recent Claude sessions and, by default, the machine's shell history | Not yet proven: Esc cancels in Claude Code 2.1.283's code, not yet seen live (#370); the form was seen live twice on 2.1.283, in #261's live test and #239's live run 1 (#416); 2.1.278 showed a numbered list, answered with 2. Not now |
 
@@ -217,7 +217,7 @@ empty book and nothing says why.
 Codex's trust question applies to the **repository root**, which for a bot means
 the whole bots folder rather than the one bot. That is what they are agreeing to.
 
-Codex's `/new` question (seen on 0.156.1, 0.157.1 and 0.158.0) is always answered with the current checkout, which is the bot
+Codex's `/new` question (seen on 0.156.1, 0.157.1, 0.158.0 and 0.160.0) is always answered with the current checkout, which is the bot
 home. The kit never makes a git worktree, so
 `2. New worktree` is never the answer.
 
