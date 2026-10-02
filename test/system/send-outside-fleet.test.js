@@ -34,7 +34,13 @@
 //   3. The control: `daily` called SendMessage to `peer`'s address too, the
 //      call did not fail, and no line of the transcript says that message went
 //      outside the fleet.
-// The Claude Code version the transcript records is printed as a diagnostic.
+// Printed as diagnostics, never failed on: the commit of the checkout the test
+// runs from (`git rev-parse HEAD`); the Claude Code version the transcript
+// records; and, read from B's `receiver` and A's `peer` transcripts within
+// DELIVERY_MS of the answered sends, whether a line holding its message's words
+// arrived there, and which kind of line. A message to another session can wait
+// for the receiver's next turn, and the receivers are told not to act, so a
+// line not there yet says nothing against the send.
 //
 // The machine it runs on is someone's working machine. So this test, like the
 // ones beside it: works in throwaway bots folders under the system temp
@@ -109,6 +115,9 @@ const READY_MS = 180000;
 
 /** How long the hook's warning is given to be written down after the send's result. */
 const WARNING_MS = 60000;
+
+/** How long each receiver's transcript is watched for the message that was sent to it. */
+const DELIVERY_MS = 60000;
 
 /** The hook's warning, in its own words (src/sent.js). */
 const WARNING = 'is not one of the sessions of your bots folder';
@@ -309,6 +318,43 @@ function sendsTo(lines, address) {
   });
 }
 
+/**
+ * Watch the receivers' transcripts, each `{ label, home, session, text }`, for
+ * a line holding its `text`, for at most `within`; then say for each whether
+ * one arrived, and as which kind of line. Diagnostics only: it fails nothing.
+ */
+async function deliveries(t, receivers, within = DELIVERY_MS) {
+  const stop = Date.now() + within;
+  const found = new Map();
+  for (;;) {
+    for (const one of receivers) {
+      if (found.has(one)) continue;
+      let hit;
+      try {
+        hit = linesOf(one.home, one.session).find((line) => JSON.stringify(line).includes(one.text));
+      } catch {
+        hit = undefined;
+      }
+      if (hit !== undefined) found.set(one, hit);
+    }
+    if (found.size === receivers.length || Date.now() >= stop) break;
+    await setTimeout(1000);
+  }
+  for (const one of receivers) {
+    const hit = found.get(one);
+    t.diagnostic(hit === undefined
+      ? `${one.label}: no line holding '${one.text}' in its transcript within ${within}ms (it may be queued for its next turn)`
+      : `${one.label}: '${one.text}' arrived as a ${hit.type}${hit.subtype ? `/${hit.subtype}` : ''} line, at ${hit.timestamp ?? '(no timestamp)'}`);
+  }
+}
+
+/** The commit of the checkout this test runs from, or why it could not be read. */
+function commitRun() {
+  const done = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', cwd: path.dirname(path.dirname(cliEntry)) });
+  if (done.error !== undefined) return `(git did not run: ${done.error.message})`;
+  return done.status === 0 ? done.stdout.trim() : `(git rev-parse HEAD failed: ${done.stderr.trim()})`;
+}
+
 /** The last lines of a stretch of transcript, short, for the message of a wait that ran out. */
 function tailOf(lines, count = 15) {
   if (lines.length === 0) return '    (nothing)';
@@ -316,6 +362,7 @@ function tailOf(lines, count = 15) {
 }
 
 test('a Claude session\'s native message to a session of another bots folder is warned about, and one to its own fleet is not', async (t) => {
+  t.diagnostic(`the commit this run ran: ${commitRun()}`);
   const before = {
     handles: new Set(allTerminals().map((terminal) => terminal.handle)),
     setups: new Set(allSetups().map((setup) => setup.id)),
@@ -426,6 +473,11 @@ test('a Claude session\'s native message to a session of another bots folder is 
   );
   const version = lines().map((line) => line.version).find((one) => typeof one === 'string');
   t.diagnostic(`Claude Code version the sender's transcript records: ${version ?? '(none recorded)'}`);
+  // On the receivers' side: did each message arrive? Printed, never failed on.
+  await deliveries(t, [
+    { label: `B's receiver daily (${outside})`, home: receiver, session: sessionIn(receiver, 'daily').session, text: OUTSIDE_TEXT },
+    { label: `A's sender peer (${inside}), the control`, home: sender, session: sessionIn(sender, 'peer').session, text: INSIDE_TEXT },
+  ]);
   assert.notEqual(toOutside.result.is_error, true, `the message to ${outside} did not fail: ${JSON.stringify(toOutside.result)}`);
   assert.notEqual(toInside.result.is_error, true, `the message to ${inside} did not fail: ${JSON.stringify(toInside.result)}`);
 
