@@ -2658,4 +2658,122 @@ describe('test-system: a run removes exactly the config keys it added (#240, the
       `a line says .claude.json could not be read, got:\n${afterTheRun(result)}`,
     );
   });
+
+  // The review of PR #453 (review-240), and the architect's ruling on #240:
+  // config.toml is parsed, not only read as lines. A line inside a multi-line
+  // string that looks exactly like a run table's header is text, not a table,
+  // and stays; a real run table elsewhere still goes. A config.toml that is not
+  // valid TOML is left as it is, said, and fails the run, since a run key may
+  // be left in it.
+  for (const [label, open] of [['a multi-line basic string', '"""'], ['a multi-line literal string', "'''"]]) {
+    test(`config.toml: a line in ${label} (${open}) shaped like a run table's header stays, and a real run table elsewhere goes`, async (t) => {
+      let expected;
+      const built = await withConfigs(t, ({ dir }) => {
+        const mine = `${dir}/obk-system-codex-screens-Ts${open === '"""' ? '01' : '02'}`;
+        const header = `[projects.${JSON.stringify(`${mine}/bots`)}]`;
+        const head = [
+          'model = "gpt-6-luna"',
+          `developer_instructions = ${open}`,
+          'Keep this example literally:',
+          header,
+          'trust_level = "trusted"',
+          open,
+          '',
+          '[projects."/Users/owner/work/app"]',
+          'trust_level = "trusted"',
+          '',
+        ];
+        expected = head.join('\n');
+        const during = [...head, header, 'trust_level = "trusted"', ''].join('\n');
+        return { before: { codex: 'model = "gpt-6-luna"\n' }, during: { makes: [mine], codex: during } };
+      });
+
+      const result = await built.fixture.confirmed({ env: built.env });
+
+      assert.equal(result.code, 0, `codex-screens is a known writer:\n${everything(result)}`);
+      assert.equal(
+        await readFile(built.files.codex, 'utf8'),
+        expected,
+        'the string is byte for byte as it was, and only the real run table, with the blank line above it, is gone',
+      );
+    });
+  }
+
+  test('config.toml that is not valid TOML after the run is left byte for byte, said, and the run fails', async (t) => {
+    let during;
+    const built = await withConfigs(t, ({ dir }) => {
+      const mine = `${dir}/obk-system-codex-screens-Iv01`;
+      during = [
+        'model = "gpt-6-luna"',
+        'developer_instructions = """',
+        'never closed',
+        '',
+        `[projects.${JSON.stringify(`${mine}/bots`)}]`,
+        'trust_level = "trusted"',
+        '',
+      ].join('\n');
+      return { before: { codex: 'model = "gpt-6-luna"\n' }, during: { makes: [mine], codex: during } };
+    });
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(await readFile(built.files.codex, 'utf8'), during, 'a file that does not parse is not written');
+    const lines = afterTheRun(result).split('\n').filter((line) => line.includes('config.toml'));
+    assert.ok(
+      lines.some((line) => /could ?n[o']t|cannot|can't|unable|unreadable|not (?:be )?(?:read|parsed)|not (?:valid )?TOML|parse/i.test(line)),
+      `a line says config.toml could not be read or parsed, got:\n${afterTheRun(result)}`,
+    );
+    assert.equal(result.code, 1, `a run key may be left in it, so the run fails:\n${everything(result)}`);
+  });
+
+  // The review of PR #453: a key is the run's only when its path, normalised,
+  // lies under one of the run's new folders. `..` can lead out of the folder a
+  // key's first segment names.
+  test('a key that names the run\'s folder and then leaves it with .. is not the run\'s, and stays in both files', async (t) => {
+    let codex;
+    let claude;
+    let key;
+    const built = await withConfigs(t, ({ dir }) => {
+      const mine = `${dir}/obk-system-codex-screens-Op01`;
+      key = `${mine}/../owner-project`;
+      codex = `model = "gpt-6-luna"\n\n[projects.${JSON.stringify(key)}]\ntrust_level = "trusted"\n`;
+      claude = `${JSON.stringify({ projects: { [key]: { hasTrustDialogAccepted: true } } }, null, 2)}\n`;
+      return { before: { codex: 'model = "gpt-6-luna"\n', claude: '{\n  "projects": {}\n}\n' }, during: { makes: [mine], codex, claude } };
+    });
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(result.code, 0, `nothing of the run's is left, and nothing that is not the run's is taken:\n${everything(result)}`);
+    assert.equal(await readFile(built.files.codex, 'utf8'), codex, `${key} lies outside the run's folder: config.toml keeps it`);
+    assert.equal(await readFile(built.files.claude, 'utf8'), claude, 'and so does .claude.json');
+  });
+
+  test('keys spelled with ./ or // that, normalised, lie under the run\'s folder are the run\'s, and go', async (t) => {
+    // The other side of the same rule: a spelling does not hide a run key.
+    const before = 'model = "gpt-6-luna"\n';
+    const built = await withConfigs(t, ({ dir }) => {
+      const mine = `${dir}/obk-system-codex-screens-Op02`;
+      return {
+        before: { codex: before },
+        during: {
+          makes: [mine],
+          codex: [
+            'model = "gpt-6-luna"',
+            '',
+            `[projects.${JSON.stringify(`${dir}/./obk-system-codex-screens-Op02/bots`)}]`,
+            'trust_level = "trusted"',
+            '',
+            `[projects.${JSON.stringify(`${dir}//obk-system-codex-screens-Op02/bots/bots/bot-father`)}]`,
+            'trust_level = "trusted"',
+            '',
+          ].join('\n'),
+        },
+      };
+    });
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(result.code, 0, everything(result));
+    assert.equal(await readFile(built.files.codex, 'utf8'), before, 'both are under the run\'s folder once normalised, so both go');
+  });
 });
