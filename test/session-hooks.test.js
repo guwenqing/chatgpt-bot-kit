@@ -636,9 +636,16 @@ for (const harness of ['claude', 'codex']) {
       [kit],
       `and the kit's own line should be there once, beside theirs, got:\n${await readFile(file, 'utf8')}`,
     );
+    // On Claude the kit also writes its SendMessage hook, under PostToolUse
+    // (#451); Codex has no SendMessage, and gets none.
+    const sends = (held.hooks?.PostToolUse ?? [])
+      .filter((group) => group?.matcher === 'SendMessage')
+      .flatMap((group) => (group.hooks ?? []).map((one) => one.command))
+      .filter((command) => /\bsession sent\b/.test(String(command)));
+    assert.equal(sends.length, harness === 'claude' ? 1 : 0, `the kit's SendMessage hook, on Claude only, got:\n${await readFile(file, 'utf8')}`);
     assert.equal(
       allCommands(held).length,
-      Object.keys(alikes).length + 1,
+      Object.keys(alikes).length + 1 + sends.length,
       `their hooks and the kit's, and nothing else, got:\n${await readFile(file, 'utf8')}`,
     );
   });
