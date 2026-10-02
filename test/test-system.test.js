@@ -37,12 +37,18 @@ const scriptEntry = path.join(repoRoot, 'scripts', 'test-system.js');
  * test shard. There every test that runs the runner would fail on its import,
  * so they skip and say why (the architect's ruling on #240, (b)); wherever the
  * package resolves, they run.
+ *
+ * Only a package that is not there skips: ERR_MODULE_NOT_FOUND. A smol-toml
+ * that is there and broken, its package.json unreadable say, is not skipped
+ * (review of PR #453): the tests run, the runner fails to load, and they fail
+ * with its error, rather than a run that passes quietly.
  */
 const RUNNER_CANNOT_LOAD = (() => {
   try {
     import.meta.resolve('smol-toml');
     return false;
-  } catch {
+  } catch (error) {
+    if (error?.code !== 'ERR_MODULE_NOT_FOUND') return false;
     return 'the runner\'s dev dependency smol-toml is not installed, as in a production-only install (npm ci --omit=dev), so scripts/test-system.js cannot load';
   }
 })();
