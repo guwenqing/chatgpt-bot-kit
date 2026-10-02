@@ -344,6 +344,12 @@ settings ([ADR 0022](docs/adr/0022-kit-hooks-live-in-the-bot-folder.md)). Your o
 settings in those files are kept. Codex asks you to trust a hooks file the first
 time it sees one; answer its question in the tab.
 
+A Claude bot gets one more hook there. Claude Code's own messaging reaches every
+Claude session on the machine, so after a session sends a native message to an
+address that is none of your bots folder's sessions, the hook tells it so, and
+names the address `obk message to` would have given. The message goes either
+way ([ADR 0032](docs/adr/0032-a-native-message-outside-the-fleet-is-warned-about.md)).
+
 So: kill a tab, or reboot, and `obk up` brings the session back with the
 conversation it was having, rather than starting a new one. Clear a session —
 `/clear` on Claude Code, `/new` on Codex — and the kit writes down the new id,

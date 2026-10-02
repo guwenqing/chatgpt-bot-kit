@@ -43,6 +43,18 @@ export const hookCommand = (bots, bot, cli = ownCli()) =>
   `${shellWord(cli)} session record --bots ${shellWord(bots)} --bot ${shellWord(bot)} 2>/dev/null || true`;
 
 /**
+ * Claude Code's second kit hook: after a native `SendMessage`, a warning when
+ * it went outside the bots folder (ADR 0032). Claude Code only, since Codex has
+ * no native messaging.
+ */
+const SENT_EVENT = 'PostToolUse';
+const SENT_MATCHER = 'SendMessage';
+
+/** What the send hook runs, by the kit's own path, as `hookCommand` does. */
+export const sentCommand = (bots, bot, cli = ownCli()) =>
+  `${shellWord(cli)} session sent --bots ${shellWord(bots)} --bot ${shellWord(bot)} 2>/dev/null || true`;
+
+/**
  * Make sure the bot at `home` has the kit's SessionStart hook for `harness`.
  * Returns the file it wrote, relative to the bot home, or undefined when the
  * file already said this.
@@ -63,7 +75,9 @@ export function installHook(home, harness, { bots, bot }) {
   // path is corrected rather than doubled, an entry under an event the kit no
   // longer asks about is taken out, and a hook of the user's beside the kit's
   // stays where they put it.
-  const wanted = { ...settings, hooks: withKitHook(settings.hooks, file, mine) };
+  const started = withKitHook(settings.hooks, file, mine);
+  const sentHook = { type: 'command', command: sentCommand(bots, bot), timeout: TIMEOUT };
+  const wanted = { ...settings, hooks: harness === 'claude' ? withSentHook(started, sentHook) : started };
 
   // Compared as documents, not as text: how the user laid their file out is
   // theirs, and a run that changes nothing writes nothing.
@@ -110,6 +124,18 @@ export function hookTrouble(home, harness, { bots, bot }) {
     }
     const program = running ?? ownCli();
     wanted = { ...settings, hooks: withKitHook(settings.hooks, file, { type: 'command', command: hookCommand(bots, bot, program), timeout: TIMEOUT }) };
+    // The send hook is judged on its own: the session hook may be right while
+    // the warning after a native message is missing (ADR 0032).
+    if (harness === 'claude' && isDeepStrictEqual(settings, wanted)) {
+      const sentProgram = sentProgramIn(settings) ?? program;
+      const withSent = { ...settings, hooks: withSentHook(settings.hooks, { type: 'command', command: sentCommand(bots, bot, sentProgram), timeout: TIMEOUT }) };
+      if (!isDeepStrictEqual(settings, withSent)) {
+        return {
+          where: file,
+          says: `${file} does not hold the kit's PostToolUse hook for SendMessage, which warns a session when its native message went outside this bots folder (ADR 0032). obk up puts it back.`,
+        };
+      }
+    }
   } catch (error) {
     return { where: file, says: `${error.message} ${stale}` };
   }
@@ -181,6 +207,58 @@ function withKitHook(hooks, file, mine) {
 }
 
 /**
+ * The hooks with the kit's send hook in a `PostToolUse` group matched to
+ * `SendMessage`, and everything else as the user left it, as `withKitHook`
+ * keeps the session hook: one entry of the kit's, written in place where it
+ * already sits in such a group, taken out of anywhere else, and added in a
+ * group of its own when there is none. A group the kit empties goes.
+ */
+function withSentHook(hooks, mine) {
+  let placed = false;
+  const events = Object.fromEntries(Object.entries(hooks).flatMap(([event, groups]) => {
+    if (!Array.isArray(groups)) return [[event, groups]];
+    const kept = groups.flatMap((group) => {
+      if (!Array.isArray(group?.hooks)) return [group];
+      const entries = group.hooks.flatMap((hook) => {
+        if (!isSentHook(hook)) return [hook];
+        if (event !== SENT_EVENT || group.matcher !== SENT_MATCHER || placed) return [];
+        placed = true;
+        return [mine];
+      });
+      return entries.length === 0 ? [] : [{ ...group, hooks: entries }];
+    });
+    return kept.length === 0 ? [] : [[event, kept]];
+  }));
+  if (placed) return events;
+  return { ...events, [SENT_EVENT]: [...(events[SENT_EVENT] ?? []), { matcher: SENT_MATCHER, hooks: [mine] }] };
+}
+
+
+/** Whether a hook entry is the kit's send hook, run by a kit, for any bots folder and bot. */
+const isSentHook = (hook) => sentProgramOf(hook?.command) !== undefined;
+
+function sentProgramOf(command) {
+  const found = typeof command === 'string' ? KIT_SENT.exec(command) : null;
+  if (found === null) return undefined;
+  const program = unquoted(found[1]);
+  return isKitCli(program) ? program : undefined;
+}
+
+/** What the kit's send hook in these settings runs, or undefined when there is none. */
+function sentProgramIn(settings) {
+  for (const groups of Object.values(settings.hooks ?? {})) {
+    if (!Array.isArray(groups)) continue;
+    for (const group of groups) {
+      for (const hook of Array.isArray(group?.hooks) ? group.hooks : []) {
+        const program = sentProgramOf(hook?.command);
+        if (program !== undefined) return program;
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
  * The kit's own hook entry, wherever it sits and whatever sits beside it: a
  * command of exactly the shape `hookCommand` writes, for any bots folder and
  * bot, run by a kit — the bare `obk` a bot made before #220 still has, this
@@ -194,6 +272,7 @@ const isKitHook = (hook) => kitProgramOf(hook?.command) !== undefined;
 /** One word as `shellWord` writes it: bare, or single-quoted with `'\''` inside. */
 const WORD = String.raw`(?:[A-Za-z0-9,._+:@%/=-]+|'(?:[^']|'\\'')*')`;
 const KIT_HOOK = new RegExp(String.raw`^(${WORD}) session record --bots ${WORD} --bot ${WORD} 2>/dev/null \|\| true$`);
+const KIT_SENT = new RegExp(String.raw`^(${WORD}) session sent --bots ${WORD} --bot ${WORD} 2>/dev/null \|\| true$`);
 
 /** The program a bot made before the kit named itself by path runs. */
 const BARE = 'obk';
