@@ -212,7 +212,9 @@ function trustKeys() {
     try {
       // From the parsed document, not from lines that look like headers: a
       // multi-line string can hold such a line (#240 review).
-      codex.keys = Object.keys(trustTables(parseToml(readFileSync(codex.file, 'utf8'))));
+      const doc = parseToml(readFileSync(codex.file, 'utf8'));
+      codex.keys = Object.keys(trustTables(doc));
+      codex.notices = noticeCounts(doc);
     } catch (error) {
       codex.why = notQuoted(error);
       // Text that is there and does not parse may still hold a run's keys.
@@ -358,6 +360,16 @@ function reportConfigsLeft(before, foldersBefore) {
       ...claude.map((key) => `  ${key}`),
     );
   }
+  // Codex's new-model notice counter is the harness's own write, not a run key:
+  // named, by model, and left where it is (#456).
+  const counted = before.codex.notices === undefined || after.codex.notices === undefined ? [] : Object.keys(after.codex.notices)
+    .filter((model) => !isDeepStrictEqual(after.codex.notices[model], before.codex.notices[model]));
+  if (counted.length > 0) {
+    lines.push(
+      `Codex counted its new-model notice in ${after.codex.file}'s [tui.model_availability_nux], a harness write it makes at most 4 times per model, left as it is (#456):`,
+      ...counted.map((model) => `  ${model}`),
+    );
+  }
   // Nothing added is only a finding for a file that was compared both times.
   if (codex.length === 0 && claude.length === 0) {
     if (compared('codex') && compared('claude')) lines.push('The harness configs gained no keys under the run\'s own folders.');
@@ -409,6 +421,17 @@ function notQuoted(error) {
 
 /** A cleanup that would not leave exactly the document it should, said in the kit's own words. */
 class TrustTablesError extends Error {}
+
+/**
+ * Codex's count of how often it showed each new-model notice, from a parsed
+ * config.toml's `[tui.model_availability_nux]`: model name to count, `{}` when
+ * there is none. Codex 0.160.0 writes it at startup while tooltips are on, at
+ * most 4 times per model (#456).
+ */
+function noticeCounts(doc) {
+  const table = doc.tui?.model_availability_nux;
+  return table !== null && typeof table === 'object' ? Object.fromEntries(Object.entries(table)) : {};
+}
 
 /** The trust tables of a parsed config.toml, by key: its `projects` and its `hooks.state` ones. */
 function trustTables(doc) {
