@@ -221,7 +221,10 @@ function trustKeys() {
       codex.unparsed = error instanceof TomlError;
     }
   } else {
+    // No file is a known empty one, not an unread one: a counter Codex makes
+    // in a file of its own during the run is still named (#456 review).
     codex.keys = [];
+    codex.notices = {};
   }
 
   const claude = { file: claudeConfigFile() };
