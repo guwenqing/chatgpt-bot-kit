@@ -1894,7 +1894,11 @@ const writesConfigs = (name, { writes = [], removes = [], makes = [], thenFails 
   '',
 ].join('\n');
 
-/** A config.toml holding these trust tables, among a secret and a table the runner does not read. */
+/**
+ * A config.toml holding these trust tables, among a secret and Codex's
+ * new-model notice counter, `[tui.model_availability_nux]`: a model name and a
+ * count, which is no secret (#456), so not the secret here either.
+ */
 const codexConfig = ({ projects = [], hooks = [] }) => [
   'model = "gpt-6-luna"',
   `api_key = "${SECRET}"`,
@@ -1902,7 +1906,7 @@ const codexConfig = ({ projects = [], hooks = [] }) => [
   ...projects.flatMap((key) => [`[projects.${JSON.stringify(key)}]`, 'trust_level = "trusted"', '']),
   ...hooks.flatMap((key) => [`[hooks.state.${JSON.stringify(key)}]`, `trusted_hash = "${SECRET}"`, '']),
   '[tui.model_availability_nux]',
-  `"${SECRET}" = 1`,
+  '"gpt-6-luna" = 3',
   '',
 ].join('\n');
 
@@ -2828,5 +2832,70 @@ describe('test-system: a run removes exactly the config keys it added (#240, the
 
     assert.equal(result.code, 0, everything(result));
     assert.equal(await readFile(built.files.codex, 'utf8'), before, 'both are under the run\'s folder once normalised, so both go');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Codex's new-model notice counter, reported and left (#456)
+// ---------------------------------------------------------------------------
+//
+// With tooltips on, Codex 0.160.0 counts each showing of its new-model notice
+// in config.toml, `[tui.model_availability_nux]`, a model name and a count, at
+// most 4 showings a model (read in its source). Every system test's Codex is
+// launched with tooltips off but one: codex-groom-run's run is made inside the
+// grooming job. So a run that changed that table is told so, by the table and
+// each key added or changed, as a known write of the harness's; the run does
+// not fail for it, and nothing is taken out of it (the architect's ruling (b)
+// on #456). No change, nothing said. The counts are printed nowhere: only the
+// key names.
+
+/** A config.toml with only Codex's notice counter in it, besides a model line, its keys and counts as given. */
+const nuxConfig = (counts) => [
+  'model = "gpt-6-luna"',
+  '',
+  ...(counts === null ? [] : ['[tui.model_availability_nux]', ...Object.entries(counts).map(([model, count]) => `${JSON.stringify(model)} = ${count}`), '']),
+].join('\n');
+
+/** The lines of the report after the run that name the notice counter's table. */
+const nuxLines = (result) => afterTheRun(result).split('\n').filter((line) => line.includes('model_availability_nux'));
+
+describe('test-system: Codex\'s new-model notice counter is reported, not failed and not removed (#456)', { concurrency: true }, () => {
+  for (const [label, before, during, keys] of [
+    ['gains a key', { 'gpt-6-luna': 3 }, { 'gpt-6-luna': 3, 'gpt-6.1-sol': 1 }, ['gpt-6.1-sol']],
+    ['has a key\'s count go up', { 'gpt-6-luna': 2 }, { 'gpt-6-luna': 3 }, ['gpt-6-luna']],
+    ['is not there before and is after', null, { 'gpt-6.1-sol': 1 }, ['gpt-6.1-sol']],
+  ]) {
+    test(`a run during which the notice counter ${label} is told so by the table and the key, does not fail for it, and leaves it`, async (t) => {
+      const after = nuxConfig(during);
+      const built = await withConfigs(t, () => ({ before: { codex: nuxConfig(before) }, during: { codex: after } }));
+
+      const result = await built.fixture.confirmed({ env: built.env });
+
+      assert.equal(result.code, 0, `a change to the notice counter does not fail a run whose tests passed:\n${everything(result)}`);
+      const lines = nuxLines(result);
+      assert.ok(lines.length > 0, `the report names the table [tui.model_availability_nux], got:\n${afterTheRun(result)}`);
+      const said = unwrapped(afterTheRun(result));
+      for (const key of keys) assert.ok(said.includes(key), `and the key added or changed, ${key}, got:\n${afterTheRun(result)}`);
+      assert.match(said, /notice|harness/i, `and says it is Codex's notice counter, a write of the harness's, got:\n${afterTheRun(result)}`);
+      for (const [model, count] of Object.entries(during)) {
+        assert.ok(!said.includes(`${model}" = ${count}`) && !said.includes(`${model} = ${count}`), `only the key names, not the counts, got:\n${afterTheRun(result)}`);
+      }
+      assert.equal(await readFile(built.files.codex, 'utf8'), after, 'and the counter is left as Codex wrote it');
+    });
+  }
+
+  test('a run that leaves the notice counter as it was says nothing about it, though other keys came and went', async (t) => {
+    let after;
+    const built = await withConfigs(t, ({ dir }) => {
+      const mine = `${dir}/obk-system-codex-screens-Nx01`;
+      after = `${nuxConfig({ 'gpt-6-luna': 3 })}\n[projects.${JSON.stringify(`${mine}/bots`)}]\ntrust_level = "trusted"\n`;
+      return { before: { codex: nuxConfig({ 'gpt-6-luna': 3 }) }, during: { makes: [mine], codex: after } };
+    });
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(result.code, 0, everything(result));
+    assert.deepEqual(nuxLines(result), [], `no word of the notice counter, which did not change, got:\n${afterTheRun(result)}`);
+    assert.equal(await readFile(built.files.codex, 'utf8'), nuxConfig({ 'gpt-6-luna': 3 }), 'the run\'s own table taken out as before, the counter as it was');
   });
 });
