@@ -19,7 +19,7 @@
 // here makes a Run appear mid-run without anything real being brought up.
 
 import assert from 'node:assert/strict';
-import { realpathSync } from 'node:fs';
+import { lstatSync, realpathSync } from 'node:fs';
 import { chmod, copyFile, mkdir, readdir, readFile, realpath, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -38,10 +38,13 @@ const scriptEntry = path.join(repoRoot, 'scripts', 'test-system.js');
  * so they skip and say why (the architect's ruling on #240, (b)); wherever the
  * package resolves, they run.
  *
- * Only a package that is not there skips: ERR_MODULE_NOT_FOUND. A smol-toml
- * that is there and broken, its package.json unreadable say, is not skipped
- * (review of PR #453): the tests run, the runner fails to load, and they fail
- * with its error, rather than a run that passes quietly.
+ * Only a package that is not there skips: the resolve finds no module
+ * (ERR_MODULE_NOT_FOUND) and there is no `smol-toml` in the repo's
+ * node_modules at all, a dangling link counting as there. A smol-toml that is
+ * there and broken (its package.json unreadable, or its entry file missing,
+ * which Node reports as ERR_MODULE_NOT_FOUND too) is not skipped (review of
+ * PR #453): the tests run, the runner fails to load, and they fail with its
+ * error, rather than a run that passes quietly.
  */
 const RUNNER_CANNOT_LOAD = (() => {
   try {
@@ -49,6 +52,12 @@ const RUNNER_CANNOT_LOAD = (() => {
     return false;
   } catch (error) {
     if (error?.code !== 'ERR_MODULE_NOT_FOUND') return false;
+  }
+  try {
+    lstatSync(path.join(repoRoot, 'node_modules', 'smol-toml'));
+    return false;
+  } catch (error) {
+    if (error?.code !== 'ENOENT') return false;
     return 'the runner\'s dev dependency smol-toml is not installed, as in a production-only install (npm ci --omit=dev), so scripts/test-system.js cannot load';
   }
 })();
