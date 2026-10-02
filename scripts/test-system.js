@@ -15,10 +15,13 @@
 // tests, and does not answer as though it had.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
+
+import { parse as parseToml, TomlError } from 'smol-toml';
 
 // This file lives in <repo>/scripts/, and the tests are always its own repo's,
 // whatever directory the command was called from.
@@ -207,12 +210,13 @@ function trustKeys() {
   const codex = { file: codexConfigFile() };
   if (existsSync(codex.file)) {
     try {
-      codex.keys = readFileSync(codex.file, 'utf8').split('\n').flatMap((line) => {
-        const header = TRUST_HEADER.exec(line);
-        return header === null ? [] : [tomlKey(header[2])];
-      });
+      // From the parsed document, not from lines that look like headers: a
+      // multi-line string can hold such a line (#240 review).
+      codex.keys = Object.keys(trustTables(parseToml(readFileSync(codex.file, 'utf8'))));
     } catch (error) {
-      codex.why = error.code ?? 'it could not be read';
+      codex.why = notQuoted(error);
+      // Text that is there and does not parse may still hold a run's keys.
+      codex.unparsed = error instanceof TomlError;
     }
   } else {
     codex.keys = [];
@@ -245,7 +249,10 @@ function trustKeys() {
  * undefined: a system test makes its bots folder as `<tmp>/obk-system-<name>-…`,
  * and macOS spells the temp folder both with `/private` in front and without.
  */
-function runFolderOf(key) {
+function runFolderOf(raw) {
+  // `..`, `.` and doubled slashes are resolved first, so a key that names the
+  // run's folder and then leaves it is not the run's (#240 review).
+  const key = path.posix.normalize(raw);
   let real;
   try {
     real = realpathSync(os.tmpdir());
@@ -289,14 +296,15 @@ const KNOWN_WRITERS = [
 const writerOf = (key) => KNOWN_WRITERS.find((one) => runFolderOf(key).startsWith(one.prefix));
 
 /**
- * What the run left in the harness configs under its own throwaway folders
- * (#240). A system test must leave nothing in the owner's Codex config, so an
- * added key there fails the run; the known writers' own (KNOWN_WRITERS) are
- * their known writes, named and not failed on. Claude Code writes a folder into its record
- * whenever a session starts there, and what to do about that is the owner's
- * call, so those are only named. Keys that were there before, and keys outside
- * the run's folders, are not this run's to answer for. Answers whether the run
- * left a key it must not.
+ * What the run left in the harness configs under its own throwaway folders,
+ * taken out again (#240, the owner's (b)): only keys that were not there
+ * before the run and that name a folder the run made, from Codex's config and
+ * Claude Code's record alike, the known writers' (KNOWN_WRITERS) included.
+ * Everything else in both files stays as it was. A Codex key from a test that
+ * is not a known writer still fails the run, removed or not: a system test
+ * gives Codex its trust at launch (#433). Keys that were there before, and keys
+ * outside the run's folders, are not this run's to answer for. Answers whether
+ * the run failed on what it left.
  */
 function reportConfigsLeft(before, foldersBefore) {
   const after = trustKeys();
@@ -318,10 +326,21 @@ function reportConfigsLeft(before, foldersBefore) {
   const left = codex.filter((key) => !known.includes(key));
   const claude = added('claude');
 
+  // What the run added is taken out again, and only that (#240, the owner's
+  // (b)). Each file is read, changed and written straight away, so the window
+  // in which a running harness could write it too is as short as it can be.
+  const removed = {
+    codex: removeKeys(after.codex.file, codex, withoutTables),
+    claude: removeKeys(after.claude.file, claude, withoutProjects),
+  };
+  const gone = (side) => (removed[side].why === undefined
+    ? 'They were removed again:'
+    : `They could not be removed (${removed[side].why}), so they are the owner's to clear:`);
+
   if (left.length > 0) {
     lines.push(
       `The run left ${left.length} trust key${left.length === 1 ? '' : 's'} in ${after.codex.file} under its own folders,`,
-      'which a system test must not do (#240). They are the owner\'s to clear:',
+      `which a system test must not do (#240). ${gone('codex')}`,
       ...left.map((key) => `  ${key}`),
     );
   }
@@ -329,14 +348,13 @@ function reportConfigsLeft(before, foldersBefore) {
     const its = known.filter((key) => writerOf(key) === writer);
     if (its.length === 0) continue;
     lines.push(
-      `${writer.test} ${writer.does}, and left its known writes in ${after.codex.file} (${writer.issue}):`,
+      `${writer.test} ${writer.does}, and wrote its known keys in ${after.codex.file} (${writer.issue}). ${gone('codex')}`,
       ...its.map((key) => `  ${key}`),
     );
   }
   if (claude.length > 0) {
     lines.push(
-      `Claude Code recorded ${claude.length === 1 ? 'one of the run\'s folders' : `${claude.length} of the run's folders`} in ${after.claude.file}.`,
-      'Reported only, until the owner decides what the tests do about it (#240):',
+      `Claude Code recorded ${claude.length === 1 ? 'one of the run\'s folders' : `${claude.length} of the run's folders`} in ${after.claude.file} (#240). ${gone('claude')}`,
       ...claude.map((key) => `  ${key}`),
     );
   }
@@ -348,7 +366,147 @@ function reportConfigsLeft(before, foldersBefore) {
   }
 
   process.stdout.write(`\n${lines.join('\n')}\n`);
-  return left.length > 0;
+  return left.length > 0 || removed.codex.why !== undefined || removed.claude.why !== undefined
+    || after.codex.unparsed === true;
+}
+
+/**
+ * Take `keys` out of `file` with `without`, a change to its text, and write it
+ * back through a temp file beside it and a rename, with the file's own mode.
+ * `{}` when that was done or there was nothing to take out; `{ why }`, which
+ * never quotes the file, when it could not be.
+ */
+function removeKeys(file, keys, without) {
+  if (keys.length === 0) return {};
+  const temp = path.join(path.dirname(file), `.${path.basename(file)}.obk-${process.pid}`);
+  try {
+    const text = without(readFileSync(file, 'utf8'), new Set(keys));
+    writeFileSync(temp, text, { mode: statSync(file).mode & 0o7777 });
+    renameSync(temp, file);
+    return {};
+  } catch (error) {
+    try {
+      if (existsSync(temp)) rmSync(temp);
+    } catch {
+      // Left beside the file; said below with the rest.
+    }
+    return { why: notQuoted(error) };
+  }
+}
+
+/** Any TOML table header: a table's, or an array of tables'. */
+const TABLE_HEADER = /^[ \t]*\[/;
+
+/**
+ * Why a file could not be read or changed, in words that never quote it: a
+ * parser's own message would.
+ */
+function notQuoted(error) {
+  if (error instanceof SyntaxError) return 'it is not JSON';
+  if (error instanceof TomlError) return 'it is not valid TOML';
+  return error?.code ?? (error instanceof TrustTablesError ? error.message : 'it could not be read or changed');
+}
+
+/** A cleanup that would not leave exactly the document it should, said in the kit's own words. */
+class TrustTablesError extends Error {}
+
+/** The trust tables of a parsed config.toml, by key: its `projects` and its `hooks.state` ones. */
+function trustTables(doc) {
+  return { ...(doc.projects ?? {}), ...(doc.hooks?.state ?? {}) };
+}
+
+/**
+ * A parsed TOML value as plain data, so two can be compared whatever their
+ * prototypes: smol-toml makes its tables with none, and a copy has Object's.
+ */
+function plain(value) {
+  if (value instanceof Date) return { date: value.toISOString() };
+  if (Array.isArray(value)) return value.map(plain);
+  if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, one]) => [key, plain(one)]));
+  return value;
+}
+
+/** The parsed document, as plain data, less the trust tables `gone` names, and less a table they leave empty. */
+function lessTables(doc, gone) {
+  const less = plain(doc);
+  for (const key of gone) {
+    if (less.projects !== undefined) delete less.projects[key];
+    if (less.hooks?.state !== undefined) delete less.hooks.state[key];
+  }
+  if (less.projects !== undefined && Object.keys(less.projects).length === 0 && Object.keys(doc.projects).length > 0) delete less.projects;
+  if (less.hooks?.state !== undefined && Object.keys(less.hooks.state).length === 0 && Object.keys(doc.hooks.state).length > 0) delete less.hooks.state;
+  if (less.hooks !== undefined && Object.keys(less.hooks).length === 0 && Object.keys(doc.hooks).length > 0) delete less.hooks;
+  return less;
+}
+
+/**
+ * The lines without the table whose header is at `at`. A table goes from its
+ * header to the next table's, less the comment lines right above that header,
+ * which are the next table's own. A table that ends the file goes to the end,
+ * with the one blank line Codex put above it and no more: a blank line of the
+ * owner's own before it stays (live, #240). The file keeps its final newline.
+ */
+function cutTable(lines, at) {
+  let next = at + 1;
+  while (next < lines.length && !TABLE_HEADER.test(lines[next])) next += 1;
+  if (next < lines.length) {
+    let end = next;
+    while (end > at + 1 && /^[ \t]*#/.test(lines[end - 1])) end -= 1;
+    return [...lines.slice(0, at), ...lines.slice(end)];
+  }
+  let from = at;
+  if (from > 0 && lines[from - 1].trim() === '') from -= 1;
+  const finalNewline = lines[lines.length - 1] === '';
+  return [...lines.slice(0, from), ...(finalNewline ? [''] : [])];
+}
+
+/**
+ * config.toml's text without the trust tables `gone` names, and with every
+ * other line as it was. The file is parsed first, and each table is cut as
+ * lines only when the result parses to exactly the document less that table:
+ * a line that only looks like its header, inside a multi-line string, is left
+ * where it is. Throws, so that nothing is written, when the file does not
+ * parse or any of the tables cannot be taken out that way.
+ */
+function withoutTables(text, gone) {
+  const original = parseToml(text);
+  const present = new Set(Object.keys(trustTables(original)));
+  const wanted = [...gone].filter((key) => present.has(key));
+  let lines = text.split('\n');
+  let doc = original;
+  // Last first, so a cut never moves a line still to be looked at.
+  for (let at = lines.length - 1; at >= 0; at -= 1) {
+    const header = TRUST_HEADER.exec(lines[at]);
+    if (header === null) continue;
+    const key = tomlKey(header[2]);
+    if (!wanted.includes(key) || !(key in trustTables(doc))) continue;
+    const cut = cutTable(lines, at);
+    let after;
+    try {
+      after = parseToml(cut.join('\n'));
+    } catch {
+      continue;
+    }
+    if (!isDeepStrictEqual(plain(after), lessTables(doc, [key]))) continue;
+    lines = cut;
+    doc = after;
+  }
+  const left = wanted.filter((key) => key in trustTables(doc));
+  if (left.length > 0 || !isDeepStrictEqual(plain(doc), lessTables(original, wanted))) {
+    throw new TrustTablesError(`${left.length || 'some'} of its run tables could not be taken out as whole tables`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Claude Code's record without the `projects` keys `gone` names, written in
+ * the file's own layout: its indentation, and a final newline if it had one.
+ */
+function withoutProjects(text, gone) {
+  const record = JSON.parse(text);
+  for (const key of gone) delete record.projects[key];
+  const indent = /^\{\r?\n([ \t]+)"/.exec(text)?.[1] ?? '';
+  return JSON.stringify(record, null, indent) + (text.endsWith('\n') ? '\n' : '');
 }
 
 /**

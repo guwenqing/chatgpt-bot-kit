@@ -19,16 +19,66 @@
 // here makes a Run appear mid-run without anything real being brought up.
 
 import assert from 'node:assert/strict';
-import { realpathSync } from 'node:fs';
-import { chmod, copyFile, mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
+import { lstatSync, realpathSync } from 'node:fs';
+import { chmod, copyFile, mkdir, readdir, readFile, realpath, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, test } from 'node:test';
-import { pathToFileURL } from 'node:url';
+import { describe, test as nodeTest } from 'node:test';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { assertRefused, createSandbox, node, orcaCallsOf, repoRoot } from './helpers/cli.js';
 
 const scriptEntry = path.join(repoRoot, 'scripts', 'test-system.js');
+
+/**
+ * Why the runner cannot be loaded here, or false when it can. It imports
+ * smol-toml (#240), a dev dependency, which a production-only install leaves
+ * out: the publish workflow's floor job runs `npm ci --omit=dev` and then every
+ * test shard. There every test that runs the runner would fail on its import,
+ * so they skip and say why (the architect's ruling on #240, (b)); wherever the
+ * package resolves, they run.
+ *
+ * Only a package that is not there skips: the resolve finds no module
+ * (ERR_MODULE_NOT_FOUND) and there is no `smol-toml` at all in any node_modules
+ * the resolve searched, this file's folder's and every folder's above it, a
+ * dangling link counting as there. A smol-toml that is
+ * there and broken (its package.json unreadable, or its entry file missing,
+ * which Node reports as ERR_MODULE_NOT_FOUND too) is not skipped (review of
+ * PR #453): the tests run, the runner fails to load, and they fail with its
+ * error, rather than a run that passes quietly.
+ */
+const RUNNER_CANNOT_LOAD = (() => {
+  try {
+    import.meta.resolve('smol-toml');
+    return false;
+  } catch (error) {
+    if (error?.code !== 'ERR_MODULE_NOT_FOUND') return false;
+  }
+  // Every folder Node's resolve looked in for it: node_modules/smol-toml beside
+  // this file and in each folder above, up to the root of the file system. A
+  // package found in any of them, broken or a dangling link, is there.
+  for (let dir = path.dirname(fileURLToPath(import.meta.url)); ; dir = path.dirname(dir)) {
+    try {
+      lstatSync(path.join(dir, 'node_modules', 'smol-toml'));
+      return false;
+    } catch (error) {
+      if (error?.code !== 'ENOENT') return false;
+    }
+    if (path.dirname(dir) === dir) break;
+  }
+  return 'the runner\'s dev dependency smol-toml is not installed, as in a production-only install (npm ci --omit=dev), so scripts/test-system.js cannot load';
+})();
+
+/**
+ * This file's `test`: node:test's, skipped with that reason when the runner
+ * cannot load. Every test here runs the runner unless it says it does not with
+ * `{ loadsRunner: false }`, so a new one that does cannot slip past the skip.
+ */
+function test(name, options, fn) {
+  const [given, body] = typeof options === 'function' ? [{}, options] : [options ?? {}, fn];
+  const { loadsRunner = true, ...rest } = given;
+  return nodeTest(name, { ...rest, skip: rest.skip ?? (loadsRunner ? RUNNER_CANNOT_LOAD : false) }, body);
+}
 
 /** The one deliberate step that lets the system tests drive this machine. */
 const CONFIRM = '--yes';
@@ -428,6 +478,9 @@ async function createRepo(t, {
   const repo = path.join(box.root, 'repo');
   await mkdir(path.join(repo, 'scripts'), { recursive: true });
   await copyFile(scriptEntry, path.join(repo, 'scripts', 'test-system.js'));
+  // The script imports packages of the kit's (smol-toml, #240), resolved from
+  // node_modules beside it: the kit's own, linked, as the worktrees link theirs.
+  await symlink(path.join(repoRoot, 'node_modules'), path.join(repo, 'node_modules'));
   await write(repo, 'package.json', '{"name": "fixture", "type": "module"}\n');
   for (const [rel, text] of Object.entries(files)) await write(repo, rel, text);
 
@@ -650,7 +703,7 @@ const REFUSED = [
 
 // Each test owns a throwaway repo, so they can all run at the same time.
 describe('test-system', { concurrency: true }, () => {
-  test('the system tests are wired up as `npm run test:system`', async () => {
+  test('the system tests are wired up as `npm run test:system`', { loadsRunner: false }, async () => {
     const pkg = JSON.parse(await readFile(path.join(repoRoot, 'package.json'), 'utf8'));
 
     assert.match(pkg.scripts['test:system'] ?? '', /scripts\/test-system\.js/);
@@ -1611,7 +1664,7 @@ describe('test-system', { concurrency: true }, () => {
   // in, and a system test loaded any other way must drive nothing (#328).
   describe('a system test drives the machine only when this command started it', { concurrency: true }, () => {
     describe('the helper a system test takes its `test` from', { concurrency: true }, () => {
-      test('loaded by `node --test` without OBK_SYSTEM_TESTS, the test is skipped, its body never runs, and it says how to run it', async (t) => {
+      test('loaded by `node --test` without OBK_SYSTEM_TESTS, the test is skipped, its body never runs, and it says how to run it', { loadsRunner: false }, async (t) => {
         const file = await guardedFile(t);
 
         const result = await file.viaTest();
@@ -1621,7 +1674,7 @@ describe('test-system', { concurrency: true }, () => {
         assert.deepEqual(await file.ran(), [], 'the body should never have run');
       });
 
-      test('loaded by `node --test` with the runner\'s own reporter, the developer is told the command', async (t) => {
+      test('loaded by `node --test` with the runner\'s own reporter, the developer is told the command', { loadsRunner: false }, async (t) => {
         const file = await guardedFile(t);
 
         const result = await file.viaTest({ reporter: false });
@@ -1633,7 +1686,7 @@ describe('test-system', { concurrency: true }, () => {
         assert.deepEqual(await file.ran(), [], 'the body should never have run');
       });
 
-      test('loaded by `node -e "import(...)"` without OBK_SYSTEM_TESTS, the same: skipped, body never run, the command named', async (t) => {
+      test('loaded by `node -e "import(...)"` without OBK_SYSTEM_TESTS, the same: skipped, body never run, the command named', { loadsRunner: false }, async (t) => {
         const file = await guardedFile(t);
 
         const result = await file.viaImport();
@@ -1648,7 +1701,7 @@ describe('test-system', { concurrency: true }, () => {
         assert.deepEqual(await file.ran(), [], 'the body should never have run');
       });
 
-      test('OBK_SYSTEM_TESTS set to anything but exactly 1 is the same as not set', async (t) => {
+      test('OBK_SYSTEM_TESTS set to anything but exactly 1 is the same as not set', { loadsRunner: false }, async (t) => {
         const file = await guardedFile(t);
 
         for (const gate of ['', '0', 'true', 'yes', '01', '1 ', ' 1', '11']) {
@@ -1659,7 +1712,7 @@ describe('test-system', { concurrency: true }, () => {
         assert.deepEqual(await file.ran(), [], 'the body should never have run');
       });
 
-      test('with OBK_SYSTEM_TESTS=1 it is node:test\'s test: the body runs, with its test context, and passes', async (t) => {
+      test('with OBK_SYSTEM_TESTS=1 it is node:test\'s test: the body runs, with its test context, and passes', { loadsRunner: false }, async (t) => {
         const file = await guardedFile(t);
 
         const tested = await file.viaTest({ gate: '1' });
@@ -1678,7 +1731,7 @@ describe('test-system', { concurrency: true }, () => {
         assert.deepEqual(await file.ran(), ['function', 'function']);
       });
 
-      test('with OBK_SYSTEM_TESTS=1 a body that fails fails the test, as node:test\'s own would', async (t) => {
+      test('with OBK_SYSTEM_TESTS=1 a body that fails fails the test, as node:test\'s own would', { loadsRunner: false }, async (t) => {
         const file = await guardedFile(t, { fails: true });
 
         const result = await file.viaTest({ gate: '1' });
@@ -2354,5 +2407,426 @@ describe('test-system: what a run leaves in the harness configs (#240)', { concu
     assert.equal(result.code, 0, everything(result));
     const lines = afterTheRun(result).split('\n').filter((line) => /harness|config/i.test(line) && /\b(?:no|none|nothing)\b/i.test(line));
     assert.ok(lines.length > 0, `one line should say the harness configs gained no keys under the run's folders, got:\n${afterTheRun(result)}`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The run takes back exactly what it added (#240, the owner's choice (b))
+// ---------------------------------------------------------------------------
+//
+// The owner chose (b) on 2026-09-29: each system-test run cleans up after
+// itself. After the tests, the runner removes from both harness configs exactly
+// the keys that were not there before the run and that name a path under one of
+// the run's own new folders (the keys the block above names), the known
+// writers' included, and leaves everything else as it was:
+//
+//   config.toml    every other table, key, value, comment and blank line, byte
+//                  for byte. A removed table runs from its header to just
+//                  before the next table header, except that a comment directly
+//                  above that header is the next table's and stays; at the end
+//                  of the file it runs to the end, and takes the blank lines
+//                  directly above its header with it, the file keeping one
+//                  final newline: Codex appends a table as a blank line, the
+//                  header and its key (seen live, #240's first cleaning run).
+//   .claude.json   every other key and value, in their order, written back in
+//                  the file's own layout: its indentation as found, and a final
+//                  newline only if it had one.
+//
+// Each file is read, changed and written straight away, through a temp file in
+// its own folder and a rename, keeping its mode. The runner says what it
+// removed, per file, by key. A key added during the run outside the run's
+// folders, and one under a folder that was there before the run, stay. A file
+// that cannot be read or parsed is not written, and the report says so. Not
+// ruled, the lead's reading: a Codex key from a test that is not a known writer
+// is removed and still fails the run.
+//
+// Expected files are written out here in full, by hand, never computed from
+// what the runner wrote.
+
+/** The report says it removed `keys` from `file`: the file named, each key whole, and a word for removing. */
+function assertRemovedIn(result, file, keys) {
+  const report = afterTheRun(result);
+  assert.ok(report.includes(file), `the report names ${file}, got:\n${report}`);
+  for (const key of keys) assert.ok(report.includes(key), `and the key it removed, ${key}, whole, got:\n${report}`);
+  assert.match(unwrapped(report), /\bremov/i, `and says it removed them, got:\n${report}`);
+}
+
+describe('test-system: a run removes exactly the config keys it added (#240, the owner\'s (b))', { concurrency: true }, () => {
+  test('config.toml: the run\'s new tables go, whole, and every other byte stays, comments, blank lines and a table at the end included', async (t) => {
+    const owner = '/Users/owner/work/app';
+    const added = '/Users/owner/work/added-while-it-ran';
+    let files;
+    let during;
+    let expected;
+    let runKeys;
+    let old;
+    const built = await withConfigs(t, ({ dir }) => {
+      const mine = `${dir}/obk-system-codex-screens-Rm01`;
+      const theirs = `${dir}/obk-system-old-Aa11`;
+      old = `${theirs}/bots`;
+      const hooks = `${mine}/bots/bots/screens-codex/.codex/hooks.json:session_start:0:0`;
+      const last = `${mine}/bots/bots/other/.codex/hooks.json:session_start:0:0`;
+      runKeys = [`${mine}/bots`, hooks, last];
+      const before = [
+        '# the owner\'s own settings',
+        'model = "gpt-6-luna"',
+        `api_key = "${SECRET}"`,
+        '',
+        `[projects.${JSON.stringify(owner)}]`,
+        'trust_level = "trusted"',
+        '',
+        `[projects.${JSON.stringify(old)}]`,
+        'trust_level = "trusted"',
+        '',
+        '# my notes on the tui',
+        '[tui]',
+        'show_tooltips = false',
+        '',
+      ].join('\n');
+      during = [
+        '# the owner\'s own settings',
+        'model = "gpt-6-luna"',
+        `api_key = "${SECRET}"`,
+        '',
+        `[projects.${JSON.stringify(owner)}]`,
+        'trust_level = "trusted"',
+        '',
+        `[projects.${JSON.stringify(`${mine}/bots`)}]`,
+        'trust_level = "trusted"',
+        '',
+        `[projects.${JSON.stringify(old)}]`,
+        'trust_level = "trusted"',
+        '',
+        '# my notes on the tui',
+        '[tui]',
+        'show_tooltips = false',
+        '',
+        `[hooks.state.${JSON.stringify(hooks)}]`,
+        `trusted_hash = "sha256:${SECRET}"`,
+        '',
+        '  # a note of the owner\'s, directly above the next table',
+        `[projects.${JSON.stringify(added)}]`,
+        'trust_level = "trusted"',
+        '',
+        `[hooks.state.${JSON.stringify(last)}]`,
+        `trusted_hash = "sha256:${SECRET}"`,
+        '',
+      ].join('\n');
+      expected = [
+        '# the owner\'s own settings',
+        'model = "gpt-6-luna"',
+        `api_key = "${SECRET}"`,
+        '',
+        `[projects.${JSON.stringify(owner)}]`,
+        'trust_level = "trusted"',
+        '',
+        `[projects.${JSON.stringify(old)}]`,
+        'trust_level = "trusted"',
+        '',
+        '# my notes on the tui',
+        '[tui]',
+        'show_tooltips = false',
+        '',
+        '  # a note of the owner\'s, directly above the next table',
+        `[projects.${JSON.stringify(added)}]`,
+        'trust_level = "trusted"',
+        '',
+      ].join('\n');
+      return { before: { codex: before, makes: [theirs] }, during: { makes: [mine], codex: during } };
+    });
+    ({ files } = built);
+    await chmod(files.codex, 0o600);
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(result.code, 0, `codex-screens is a known writer, so its keys do not fail the run:\n${everything(result)}`);
+    assert.equal(await readFile(files.codex, 'utf8'), expected, 'exactly the run\'s three tables are gone, and every other byte is as it was');
+    assert.equal((await stat(files.codex)).mode & 0o777, 0o600, 'and the file keeps its mode');
+    assert.deepEqual((await readdir(path.dirname(files.codex))).sort(), ['config.toml'], 'with nothing left beside it');
+    assertRemovedIn(result, files.codex, runKeys.map((key) => key.replace(/:session_start:.*$/, '')));
+    assertNoSecrets(result, [owner, added, old]);
+    assert.ok(during.includes(runKeys[0]), 'the premise: the run wrote its keys');
+  });
+
+  // Seen live on #240's first cleaning run: Codex appends a new trust table
+  // at the end of config.toml as a blank line, the header and its key, so a
+  // cut from the header to the end left one blank line more than the file had.
+  // What the run appended has to go whole: the file ends as it did before.
+  for (const [label, appended] of [
+    ['one projects table', (mine) => [`[projects.${JSON.stringify(`${mine}/bots`)}]`, 'trust_level = "trusted"']],
+    ['two projects tables, one after the other', (mine) => [
+      `[projects.${JSON.stringify(`${mine}/bots`)}]`, 'trust_level = "trusted"', '',
+      `[projects.${JSON.stringify(`${mine}/bots/bots/bot-father`)}]`, 'trust_level = "trusted"',
+    ]],
+    ['a projects table and then a hooks.state table, as a Codex run whose trust and hooks review were answered writes them', (mine) => [
+      `[projects.${JSON.stringify(`${mine}/bots`)}]`, 'trust_level = "trusted"', '',
+      `[hooks.state.${JSON.stringify(`${mine}/bots/bots/bot-father/.codex/hooks.json:session_start:0:0`)}]`, `trusted_hash = "sha256:${SECRET}"`,
+    ]],
+  ]) {
+    test(`config.toml: ${label} appended at the end the way Codex does is taken back to the byte, the file ending as it did`, async (t) => {
+      const before = [
+        'model = "gpt-6-luna"',
+        '',
+        '[projects."/Users/owner/work/app"]',
+        'trust_level = "trusted"',
+        '',
+      ].join('\n');
+      const built = await withConfigs(t, ({ dir }) => {
+        const mine = `${dir}/obk-system-codex-screens-Ap01`;
+        return { before: { codex: before }, during: { makes: [mine], codex: `${before}\n${[...appended(mine), ''].join('\n')}` } };
+      });
+
+      const result = await built.fixture.confirmed({ env: built.env });
+
+      assert.equal(result.code, 0, everything(result));
+      assert.equal(await readFile(built.files.codex, 'utf8'), before, 'byte for byte what it was before the run: no blank line left at the end');
+    });
+  }
+
+  test('config.toml whose owner ended it with a blank line of their own keeps that blank line when a run\'s table appended after it goes', async (t) => {
+    // Not in the lead's rule as stated: "the blank lines directly above its
+    // header go too" would take the owner's own last blank line as well. What
+    // the run appended was one blank line and the table; the file ends as it did.
+    const before = [
+      'model = "gpt-6-luna"',
+      '',
+      '[projects."/Users/owner/work/app"]',
+      'trust_level = "trusted"',
+      '',
+      '',
+    ].join('\n');
+    const built = await withConfigs(t, ({ dir }) => {
+      const mine = `${dir}/obk-system-codex-screens-Ap02`;
+      return { before: { codex: before }, during: { makes: [mine], codex: `${before}\n[projects.${JSON.stringify(`${mine}/bots`)}]\ntrust_level = "trusted"\n` } };
+    });
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(result.code, 0, everything(result));
+    assert.equal(await readFile(built.files.codex, 'utf8'), before, 'byte for byte what it was, the owner\'s own blank line at the end included');
+  });
+
+  test('.claude.json in 2-space JSON: the run\'s new projects go, and the file is byte for byte the same otherwise, key order kept', async (t) => {
+    const owner = '/Users/owner/work/one';
+    const other = '/Users/owner/work/two';
+    const added = '/Users/owner/work/added-while-it-ran';
+    const record = (projects) => ({
+      numStartups: 12,
+      projects: Object.fromEntries(projects.map((key) => [key, { allowedTools: [SECRET], hasTrustDialogAccepted: true }])),
+      oauthAccount: { accessToken: SECRET },
+      tipsHistory: { 'a-tip': 3 },
+    });
+    let runKey;
+    const built = await withConfigs(t, ({ dir }) => {
+      const mine = `${dir}/obk-system-alpha-Cl01`;
+      runKey = `${mine}/bots/bots/bot-father`;
+      return {
+        before: { claude: `${JSON.stringify(record([owner, other]), null, 2)}\n` },
+        during: { makes: [mine], claude: `${JSON.stringify(record([owner, runKey, other, added]), null, 2)}\n` },
+      };
+    });
+    await chmod(built.files.claude, 0o600);
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(result.code, 0, `a Claude key never fails the run:\n${everything(result)}`);
+    assert.equal(
+      await readFile(built.files.claude, 'utf8'),
+      `${JSON.stringify(record([owner, other, added]), null, 2)}\n`,
+      'the run\'s project is gone; the rest, the one added while it ran included, as it was',
+    );
+    assert.equal((await stat(built.files.claude)).mode & 0o777, 0o600, 'and the file keeps its mode');
+    const beside = (await readdir(path.dirname(built.files.claude))).filter((name) => name.startsWith('.claude.json') && name !== '.claude.json');
+    assert.deepEqual(beside, [], 'with nothing left beside it');
+    assertRemovedIn(result, built.files.claude, [runKey]);
+    assertNoSecrets(result, [owner, other, added]);
+  });
+
+  test('.claude.json in 4-space JSON with no final newline is written back the same way', async (t) => {
+    const owner = '/Users/owner/work/one';
+    const record = (projects) => ({ projects: Object.fromEntries(projects.map((key) => [key, { hasTrustDialogAccepted: true }])), numStartups: 3 });
+    let runKey;
+    const built = await withConfigs(t, ({ dir }) => {
+      const mine = `${dir}/obk-system-alpha-Cl02`;
+      runKey = `${mine}/bots/bots/bot-father`;
+      return {
+        before: { claude: JSON.stringify(record([owner]), null, 4) },
+        during: { makes: [mine], claude: JSON.stringify(record([runKey, owner]), null, 4) },
+      };
+    });
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(result.code, 0, everything(result));
+    assert.equal(await readFile(built.files.claude, 'utf8'), JSON.stringify(record([owner]), null, 4), '4 spaces, and no final newline, as it was');
+  });
+
+  test('a run key under a folder that was there before the run stays, in both files, and so does a key the owner added while it ran', async (t) => {
+    const added = '/Users/owner/work/added-while-it-ran';
+    let codex;
+    let claude;
+    const built = await withConfigs(t, ({ dir }) => {
+      const theirs = `${dir}/obk-system-codex-groom-Old9`;
+      codex = codexConfig({ projects: [`${theirs}/bots`, added] });
+      claude = `${JSON.stringify({ projects: { [`${theirs}/bots/bots/bot-father`]: {}, [added]: {} } }, null, 2)}\n`;
+      return { before: { makes: [theirs] }, during: { codex, claude } };
+    });
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(result.code, 0, everything(result));
+    assert.equal(await readFile(built.files.codex, 'utf8'), codex, 'config.toml is not touched: nothing in it is the run\'s');
+    assert.equal(await readFile(built.files.claude, 'utf8'), claude, 'nor is .claude.json');
+  });
+
+  test('a Codex key from a test that is not a known writer is removed, and the run still fails (the lead\'s reading, not ruled)', async (t) => {
+    let key;
+    const built = await withConfigs(t, ({ dir }) => {
+      const mine = `${dir}/obk-system-alpha-Nk01`;
+      key = `${mine}/bots`;
+      return { before: { codex: codexConfig({}) }, during: { makes: [mine], codex: codexConfig({ projects: [key] }) } };
+    });
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(result.code, 1, `a test that is not a known writer wrote a Codex key: a failure, cleaned or not:\n${everything(result)}`);
+    assert.equal(await readFile(built.files.codex, 'utf8'), codexConfig({}), 'and the key is gone all the same');
+    assertRemovedIn(result, built.files.codex, [key]);
+  });
+
+  test('a .claude.json that is not JSON after the run is not written, and the report says it could not be read', async (t) => {
+    let broken;
+    const built = await withConfigs(t, ({ dir }) => {
+      const mine = `${dir}/obk-system-alpha-Bj01`;
+      broken = `{ "projects": { "${mine}/bots/bots/bot-father": { "hasTrustDialogAccepted": tr`;
+      return { before: { claude: `${JSON.stringify({ projects: {} }, null, 2)}\n` }, during: { makes: [mine], claude: broken } };
+    });
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(await readFile(built.files.claude, 'utf8'), broken, 'a file that cannot be parsed is left exactly as it is');
+    const lines = afterTheRun(result).split('\n').filter((line) => line.includes('.claude.json'));
+    assert.ok(
+      lines.some((line) => /could ?n[o']t|cannot|can't|unable|unreadable|not (?:be )?read|not JSON/i.test(line)),
+      `a line says .claude.json could not be read, got:\n${afterTheRun(result)}`,
+    );
+  });
+
+  // The review of PR #453 (review-240), and the architect's ruling on #240:
+  // config.toml is parsed, not only read as lines. A line inside a multi-line
+  // string that looks exactly like a run table's header is text, not a table,
+  // and stays; a real run table elsewhere still goes. A config.toml that is not
+  // valid TOML is left as it is, said, and fails the run, since a run key may
+  // be left in it.
+  for (const [label, open] of [['a multi-line basic string', '"""'], ['a multi-line literal string', "'''"]]) {
+    test(`config.toml: a line in ${label} (${open}) shaped like a run table's header stays, and a real run table elsewhere goes`, async (t) => {
+      let expected;
+      const built = await withConfigs(t, ({ dir }) => {
+        const mine = `${dir}/obk-system-codex-screens-Ts${open === '"""' ? '01' : '02'}`;
+        const header = `[projects.${JSON.stringify(`${mine}/bots`)}]`;
+        const head = [
+          'model = "gpt-6-luna"',
+          `developer_instructions = ${open}`,
+          'Keep this example literally:',
+          header,
+          'trust_level = "trusted"',
+          open,
+          '',
+          '[projects."/Users/owner/work/app"]',
+          'trust_level = "trusted"',
+          '',
+        ];
+        expected = head.join('\n');
+        const during = [...head, header, 'trust_level = "trusted"', ''].join('\n');
+        return { before: { codex: 'model = "gpt-6-luna"\n' }, during: { makes: [mine], codex: during } };
+      });
+
+      const result = await built.fixture.confirmed({ env: built.env });
+
+      assert.equal(result.code, 0, `codex-screens is a known writer:\n${everything(result)}`);
+      assert.equal(
+        await readFile(built.files.codex, 'utf8'),
+        expected,
+        'the string is byte for byte as it was, and only the real run table, with the blank line above it, is gone',
+      );
+    });
+  }
+
+  test('config.toml that is not valid TOML after the run is left byte for byte, said, and the run fails', async (t) => {
+    let during;
+    const built = await withConfigs(t, ({ dir }) => {
+      const mine = `${dir}/obk-system-codex-screens-Iv01`;
+      during = [
+        'model = "gpt-6-luna"',
+        'developer_instructions = """',
+        'never closed',
+        '',
+        `[projects.${JSON.stringify(`${mine}/bots`)}]`,
+        'trust_level = "trusted"',
+        '',
+      ].join('\n');
+      return { before: { codex: 'model = "gpt-6-luna"\n' }, during: { makes: [mine], codex: during } };
+    });
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(await readFile(built.files.codex, 'utf8'), during, 'a file that does not parse is not written');
+    const lines = afterTheRun(result).split('\n').filter((line) => line.includes('config.toml'));
+    assert.ok(
+      lines.some((line) => /could ?n[o']t|cannot|can't|unable|unreadable|not (?:be )?(?:read|parsed)|not (?:valid )?TOML|parse/i.test(line)),
+      `a line says config.toml could not be read or parsed, got:\n${afterTheRun(result)}`,
+    );
+    assert.equal(result.code, 1, `a run key may be left in it, so the run fails:\n${everything(result)}`);
+  });
+
+  // The review of PR #453: a key is the run's only when its path, normalised,
+  // lies under one of the run's new folders. `..` can lead out of the folder a
+  // key's first segment names.
+  test('a key that names the run\'s folder and then leaves it with .. is not the run\'s, and stays in both files', async (t) => {
+    let codex;
+    let claude;
+    let key;
+    const built = await withConfigs(t, ({ dir }) => {
+      const mine = `${dir}/obk-system-codex-screens-Op01`;
+      key = `${mine}/../owner-project`;
+      codex = `model = "gpt-6-luna"\n\n[projects.${JSON.stringify(key)}]\ntrust_level = "trusted"\n`;
+      claude = `${JSON.stringify({ projects: { [key]: { hasTrustDialogAccepted: true } } }, null, 2)}\n`;
+      return { before: { codex: 'model = "gpt-6-luna"\n', claude: '{\n  "projects": {}\n}\n' }, during: { makes: [mine], codex, claude } };
+    });
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(result.code, 0, `nothing of the run's is left, and nothing that is not the run's is taken:\n${everything(result)}`);
+    assert.equal(await readFile(built.files.codex, 'utf8'), codex, `${key} lies outside the run's folder: config.toml keeps it`);
+    assert.equal(await readFile(built.files.claude, 'utf8'), claude, 'and so does .claude.json');
+  });
+
+  test('keys spelled with ./ or // that, normalised, lie under the run\'s folder are the run\'s, and go', async (t) => {
+    // The other side of the same rule: a spelling does not hide a run key.
+    const before = 'model = "gpt-6-luna"\n';
+    const built = await withConfigs(t, ({ dir }) => {
+      const mine = `${dir}/obk-system-codex-screens-Op02`;
+      return {
+        before: { codex: before },
+        during: {
+          makes: [mine],
+          codex: [
+            'model = "gpt-6-luna"',
+            '',
+            `[projects.${JSON.stringify(`${dir}/./obk-system-codex-screens-Op02/bots`)}]`,
+            'trust_level = "trusted"',
+            '',
+            `[projects.${JSON.stringify(`${dir}//obk-system-codex-screens-Op02/bots/bots/bot-father`)}]`,
+            'trust_level = "trusted"',
+            '',
+          ].join('\n'),
+        },
+      };
+    });
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(result.code, 0, everything(result));
+    assert.equal(await readFile(built.files.codex, 'utf8'), before, 'both are under the run\'s folder once normalised, so both go');
   });
 });
