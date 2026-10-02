@@ -386,3 +386,93 @@ test('C5 a subagent whose first running total holds its parent\'s counts only it
   assert.equal(modelOf(row, 'gpt-6-sol').tokens?.output, 8000, 'its own 3,000 and 5,000, not 8,300');
   assert.equal(row.tokens?.input, 83000, 'the parent\'s 3,000 counted once');
 });
+
+// ------------------------------------------------- 6. found by the link, not the folder
+//
+// The review of PR #459. A child is attached by its explicit link to a
+// conversation the book claims, whether or not the parent's own rollout is on
+// disk, and wherever the child ran: its own records are all it needs. A missing
+// parent's own calls cannot be counted, and the session says so, as one
+// unreadable transcript. #376's refusal to count a fork whose origin cannot be
+// read is not changed (usage-forks.test.js). Nothing is attached by folder: a
+// child that ran elsewhere and links to no claimed conversation is not this
+// bot's at all.
+
+/** The daily session's entry. */
+function dailyOf(answer) {
+  const daily = (botOf(answer).sessions ?? []).find((session) => session.name === 'daily');
+  assert.ok(daily, `api-bot should say something about daily, got: ${JSON.stringify(botOf(answer).sessions)}`);
+  return daily;
+}
+
+/** Every conversation id the bot's entry names anywhere: its sessions' rows and its unclaimed. */
+const everyIdOf = (answer) => [
+  ...(botOf(answer).sessions ?? []).flatMap((session) => (session.conversations ?? []).map((one) => one.id)),
+  ...(botOf(answer).unclaimed ?? []).map((one) => one.id),
+].sort();
+
+test('C6 a book conversation whose rollout is not on disk still gathers its subagents, a grandchild and a review in its row, and says its own calls are not counted', async (t) => {
+  const box = await createSandbox(t);
+  const { bots, home } = await fleet(box);
+  await plantChild(box, home, spawnedBy(PARENT));
+  await plantGrandchild(box, home);
+  await plantReview(box, home, CHILD);
+  await bookSays(bots, PARENT);
+
+  const answer = await usage(box);
+  const row = rowOf(answer, PARENT);
+
+  assert.equal(row.calls, 5, 'the child\'s two, the grandchild\'s one and the review\'s two; the parent\'s own are not on disk');
+  assert.equal(row.subagent_calls, 3, 'the child\'s and the grandchild\'s');
+  assert.equal(row.review_calls, 2, 'the review of the child');
+  assert.equal(row.tokens?.input, 81700, 'the child\'s 80,000, the grandchild\'s 700 and the review\'s 1,000');
+  assert.deepEqual(unclaimedIds(answer), [], 'none of them is nobody\'s');
+  assert.deepEqual(
+    leftOutOf(dailyOf(answer), 'not_counted'),
+    { ...NOTHING_LEFT_OUT, unreadable_transcripts: 1 },
+    'the parent\'s own rollout is not there to be read, and the session says so',
+  );
+});
+
+test('C7 a subagent that ran in another folder is found by its link: it, its own subagent and a review of it count in the claimed parent\'s row', async (t) => {
+  const box = await createSandbox(t);
+  const { bots, home } = await fleet(box);
+  await plantParent(box, home);
+  await plantChild(box, path.join(home, 'work', 'worker'), spawnedBy(PARENT));
+  await plantGrandchild(box, home);
+  await plantReview(box, home, CHILD);
+  await bookSays(bots, PARENT);
+
+  const answer = await usage(box);
+  const row = rowOf(answer, PARENT);
+
+  assert.equal(row.calls, 7, 'the parent\'s two, the child\'s two, the grandchild\'s one and the review\'s two');
+  assert.equal(row.subagent_calls, 3);
+  assert.equal(row.review_calls, 2);
+  assert.equal(row.tokens?.input, 84700, 'the parent\'s 3,000, the child\'s 80,000, the grandchild\'s 700 and the review\'s 1,000');
+  assert.equal(modelOf(row, 'gpt-6-sol').tokens?.input, 80000, 'the child that ran elsewhere, on its own model');
+  assert.deepEqual(unclaimedIds(answer), [], 'none of them is nobody\'s');
+  assert.deepEqual(leftOutOf(dailyOf(answer), 'not_counted'), NOTHING_LEFT_OUT);
+});
+
+for (const [label, where, parent] of [
+  ['under the bot\'s own work folder, its parent nowhere on disk', (box, home) => path.join(home, 'work', 'worker'), GONE],
+  ['in a folder of no bot\'s, its parent nowhere on disk', (box) => box.path('elsewhere'), GONE],
+  ['under the bot\'s own work folder, its parent a conversation of the bot\'s folder that no session claims', (box, home) => path.join(home, 'work', 'worker'), STRANGER],
+]) {
+  test(`C7 a subagent that ran ${label} is not this bot's: no row, and not unclaimed`, async (t) => {
+    // Linked to no claimed conversation, and not run in the bot's folder:
+    // nothing ties it to this bot, and no folder is guessed from.
+    const box = await createSandbox(t);
+    const { bots, home } = await fleet(box);
+    await plantParent(box, home);
+    await plantParent(box, home, STRANGER);
+    await plantChild(box, where(box, home), spawnedBy(parent));
+    await bookSays(bots, PARENT);
+
+    const answer = await usage(box);
+
+    assert.ok(!everyIdOf(answer).includes(CHILD), `the subagent appears nowhere, got: ${JSON.stringify(everyIdOf(answer))}`);
+    assert.equal(rowOf(answer, PARENT).calls, 2, 'and nothing of it is in the session\'s row');
+  });
+}
