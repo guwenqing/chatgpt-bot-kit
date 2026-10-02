@@ -23,12 +23,40 @@ import { realpathSync } from 'node:fs';
 import { chmod, copyFile, mkdir, readdir, readFile, realpath, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, test } from 'node:test';
+import { describe, test as nodeTest } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import { assertRefused, createSandbox, node, orcaCallsOf, repoRoot } from './helpers/cli.js';
 
 const scriptEntry = path.join(repoRoot, 'scripts', 'test-system.js');
+
+/**
+ * Why the runner cannot be loaded here, or false when it can. It imports
+ * smol-toml (#240), a dev dependency, which a production-only install leaves
+ * out: the publish workflow's floor job runs `npm ci --omit=dev` and then every
+ * test shard. There every test that runs the runner would fail on its import,
+ * so they skip and say why (the architect's ruling on #240, (b)); wherever the
+ * package resolves, they run.
+ */
+const RUNNER_CANNOT_LOAD = (() => {
+  try {
+    import.meta.resolve('smol-toml');
+    return false;
+  } catch {
+    return 'the runner\'s dev dependency smol-toml is not installed, as in a production-only install (npm ci --omit=dev), so scripts/test-system.js cannot load';
+  }
+})();
+
+/**
+ * This file's `test`: node:test's, skipped with that reason when the runner
+ * cannot load. Every test here runs the runner unless it says it does not with
+ * `{ loadsRunner: false }`, so a new one that does cannot slip past the skip.
+ */
+function test(name, options, fn) {
+  const [given, body] = typeof options === 'function' ? [{}, options] : [options ?? {}, fn];
+  const { loadsRunner = true, ...rest } = given;
+  return nodeTest(name, { ...rest, skip: rest.skip ?? (loadsRunner ? RUNNER_CANNOT_LOAD : false) }, body);
+}
 
 /** The one deliberate step that lets the system tests drive this machine. */
 const CONFIRM = '--yes';
@@ -653,7 +681,7 @@ const REFUSED = [
 
 // Each test owns a throwaway repo, so they can all run at the same time.
 describe('test-system', { concurrency: true }, () => {
-  test('the system tests are wired up as `npm run test:system`', async () => {
+  test('the system tests are wired up as `npm run test:system`', { loadsRunner: false }, async () => {
     const pkg = JSON.parse(await readFile(path.join(repoRoot, 'package.json'), 'utf8'));
 
     assert.match(pkg.scripts['test:system'] ?? '', /scripts\/test-system\.js/);
@@ -1614,7 +1642,7 @@ describe('test-system', { concurrency: true }, () => {
   // in, and a system test loaded any other way must drive nothing (#328).
   describe('a system test drives the machine only when this command started it', { concurrency: true }, () => {
     describe('the helper a system test takes its `test` from', { concurrency: true }, () => {
-      test('loaded by `node --test` without OBK_SYSTEM_TESTS, the test is skipped, its body never runs, and it says how to run it', async (t) => {
+      test('loaded by `node --test` without OBK_SYSTEM_TESTS, the test is skipped, its body never runs, and it says how to run it', { loadsRunner: false }, async (t) => {
         const file = await guardedFile(t);
 
         const result = await file.viaTest();
@@ -1624,7 +1652,7 @@ describe('test-system', { concurrency: true }, () => {
         assert.deepEqual(await file.ran(), [], 'the body should never have run');
       });
 
-      test('loaded by `node --test` with the runner\'s own reporter, the developer is told the command', async (t) => {
+      test('loaded by `node --test` with the runner\'s own reporter, the developer is told the command', { loadsRunner: false }, async (t) => {
         const file = await guardedFile(t);
 
         const result = await file.viaTest({ reporter: false });
@@ -1636,7 +1664,7 @@ describe('test-system', { concurrency: true }, () => {
         assert.deepEqual(await file.ran(), [], 'the body should never have run');
       });
 
-      test('loaded by `node -e "import(...)"` without OBK_SYSTEM_TESTS, the same: skipped, body never run, the command named', async (t) => {
+      test('loaded by `node -e "import(...)"` without OBK_SYSTEM_TESTS, the same: skipped, body never run, the command named', { loadsRunner: false }, async (t) => {
         const file = await guardedFile(t);
 
         const result = await file.viaImport();
@@ -1651,7 +1679,7 @@ describe('test-system', { concurrency: true }, () => {
         assert.deepEqual(await file.ran(), [], 'the body should never have run');
       });
 
-      test('OBK_SYSTEM_TESTS set to anything but exactly 1 is the same as not set', async (t) => {
+      test('OBK_SYSTEM_TESTS set to anything but exactly 1 is the same as not set', { loadsRunner: false }, async (t) => {
         const file = await guardedFile(t);
 
         for (const gate of ['', '0', 'true', 'yes', '01', '1 ', ' 1', '11']) {
@@ -1662,7 +1690,7 @@ describe('test-system', { concurrency: true }, () => {
         assert.deepEqual(await file.ran(), [], 'the body should never have run');
       });
 
-      test('with OBK_SYSTEM_TESTS=1 it is node:test\'s test: the body runs, with its test context, and passes', async (t) => {
+      test('with OBK_SYSTEM_TESTS=1 it is node:test\'s test: the body runs, with its test context, and passes', { loadsRunner: false }, async (t) => {
         const file = await guardedFile(t);
 
         const tested = await file.viaTest({ gate: '1' });
@@ -1681,7 +1709,7 @@ describe('test-system', { concurrency: true }, () => {
         assert.deepEqual(await file.ran(), ['function', 'function']);
       });
 
-      test('with OBK_SYSTEM_TESTS=1 a body that fails fails the test, as node:test\'s own would', async (t) => {
+      test('with OBK_SYSTEM_TESTS=1 a body that fails fails the test, as node:test\'s own would', { loadsRunner: false }, async (t) => {
         const file = await guardedFile(t, { fails: true });
 
         const result = await file.viaTest({ gate: '1' });
