@@ -428,6 +428,9 @@ async function createRepo(t, {
   const repo = path.join(box.root, 'repo');
   await mkdir(path.join(repo, 'scripts'), { recursive: true });
   await copyFile(scriptEntry, path.join(repo, 'scripts', 'test-system.js'));
+  // The script imports packages of the kit's (smol-toml, #240), resolved from
+  // node_modules beside it: the kit's own, linked, as the worktrees link theirs.
+  await symlink(path.join(repoRoot, 'node_modules'), path.join(repo, 'node_modules'));
   await write(repo, 'package.json', '{"name": "fixture", "type": "module"}\n');
   for (const [rel, text] of Object.entries(files)) await write(repo, rel, text);
 
