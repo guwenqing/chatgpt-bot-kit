@@ -476,3 +476,124 @@ for (const [label, where, parent] of [
     assert.equal(rowOf(answer, PARENT).calls, 2, 'and nothing of it is in the session\'s row');
   });
 }
+
+// ------------------------------------------------- 7. one owner across the fleet
+//
+// The review of PR #459, at 278d8e1. Who a child belongs to is settled across
+// the whole fleet before any bot's rows: a child a book claims stays with that
+// claim and is attached nowhere else; a child attached through its links to a
+// claim counts only there, and is in no other bot's unclaimed, whichever bot's
+// folder it ran in. The same when `--bot` names one bot.
+
+/** Bot Father, api-bot and web-bot, both on Codex, each with its daily session; their homes. */
+async function twoBots(box) {
+  const init = await box.run(['init', '--bots', 'bots', '--harness', 'claude']);
+  assert.equal(init.code, 0, init.stderr);
+  for (const bot of ['api-bot', 'web-bot']) {
+    const made = await box.run(['bot', 'create', '--bots', 'bots', '--name', bot, '--harness', 'codex']);
+    assert.equal(made.code, 0, made.stderr);
+    const added = await box.run(['session', 'add', '--bots', 'bots', '--bot', bot, '--name', 'daily']);
+    assert.equal(added.code, 0, added.stderr);
+  }
+  const bots = box.path('bots');
+  return { bots, homeA: botHomeOf(bots, 'api-bot'), homeB: botHomeOf(bots, 'web-bot') };
+}
+
+/** One bot's book: daily in `conversation`, and `before` in its history. */
+const bookOfSays = (bots, bot, conversation, before = []) => writeFile(bookOf(bots, bot), stringify({
+  orca: { project: `proj-${bot}`, setup: `setup-${bot}` },
+  sessions: {
+    daily: {
+      tab: `tab-${bot}`,
+      launched: at(8),
+      session: conversation,
+      ...(before.length === 0 ? {} : { history: before.map((old) => ({ session: old, ended: 'clear', at: at(8, 30) })) }),
+    },
+  },
+}));
+
+/** A conversation of one call, `input` in and a tenth of it out, in `cwd`. */
+const oneCall = (box, cwd, { id, started, meta = { source: 'cli' }, model, input }) => plantRollout(box, cwd, {
+  id,
+  started,
+  meta,
+  model,
+  effort: 'medium',
+  calls: [{ when: started.replace(/:00\.000Z$/, ':30.000Z'), last: { input, output: input / 10 }, total: { input, output: input / 10 } }],
+});
+
+/** The reviewer's fleet: A's P (10 in), B's Q (100 in), and C (20 in), which ran in B's folder and names P as its parent. */
+async function reviewersFleet(box) {
+  const fleetOf = await twoBots(box);
+  const { homeA, homeB } = fleetOf;
+  await oneCall(box, homeA, { id: PARENT, started: at(9), model: 'gpt-6-astra', input: 10 });
+  await oneCall(box, homeB, { id: STRANGER, started: at(9, 10), model: 'gpt-6-luna', input: 100 });
+  await oneCall(box, homeB, { id: CHILD, started: at(10), meta: spawnedBy(PARENT), model: 'gpt-6-sol', input: 20 });
+  return fleetOf;
+}
+
+/** One bot's entry in an answer, or undefined. */
+const bot = (answer, name) => answer.usage.find((entry) => entry.bot === name);
+
+/** One bot's daily row for a conversation, or undefined. */
+const rowIn = (answer, name, id) => (bot(answer, name)?.sessions ?? []).find((session) => session.name === 'daily')?.conversations?.find((one) => one.id === id);
+
+/** Every conversation row of the answer, sessions' and unclaimed, across the bots it holds. */
+const allRows = (answer) => answer.usage.flatMap((entry) => [
+  ...(entry.sessions ?? []).flatMap((session) => session.conversations ?? []),
+  ...(entry.unclaimed ?? []),
+]);
+
+test('C8 a subagent that ran in another bot\'s folder and names a claimed conversation of this bot\'s counts once, there, and is in no bot\'s unclaimed', async (t) => {
+  const box = await createSandbox(t);
+  const { bots } = await reviewersFleet(box);
+  await bookOfSays(bots, 'api-bot', PARENT);
+  await bookOfSays(bots, 'web-bot', STRANGER);
+
+  const answer = await usage(box);
+
+  const p = rowIn(answer, 'api-bot', PARENT);
+  assert.equal(p?.calls, 2, `P's own call and C's: ${JSON.stringify(p)}`);
+  assert.equal(p.subagent_calls, 1);
+  assert.equal(p.tokens?.input, 30, 'P\'s 10 and C\'s 20');
+  assert.equal(rowIn(answer, 'web-bot', STRANGER)?.calls, 1, 'Q, B\'s own, as it was');
+  assert.ok(!(bot(answer, 'web-bot').unclaimed ?? []).some((one) => one.id === CHILD), `C is A's, through P, so not B's unclaimed: ${JSON.stringify(bot(answer, 'web-bot').unclaimed)}`);
+  const rows = allRows(answer);
+  assert.equal(rows.reduce((sum, one) => sum + one.calls, 0), 3, `three calls in all, each once: ${JSON.stringify(rows)}`);
+  assert.equal(rows.reduce((sum, one) => sum + (one.tokens?.input ?? 0), 0), 130, 'and 130 in: 10, 20 and 100');
+});
+
+test('C8 a subagent another bot\'s book claims stays with that claim, as its own conversation, and is not attached to its parent\'s row', async (t) => {
+  const box = await createSandbox(t);
+  const { bots } = await reviewersFleet(box);
+  await bookOfSays(bots, 'api-bot', PARENT);
+  await bookOfSays(bots, 'web-bot', CHILD, [STRANGER]);
+
+  const answer = await usage(box);
+
+  const p = rowIn(answer, 'api-bot', PARENT);
+  assert.equal(p?.calls, 1, `P's own call alone: C is claimed by B's book: ${JSON.stringify(p)}`);
+  assert.strictEqual(p.subagent_calls, 0);
+  assert.equal(p.tokens?.input, 10);
+  const c = rowIn(answer, 'web-bot', CHILD);
+  assert.equal(c?.calls, 1, `C counts under B's claim, as its own conversation: ${JSON.stringify(bot(answer, 'web-bot'))}`);
+  assert.equal(c.tokens?.input, 20);
+  const rows = allRows(answer);
+  assert.equal(rows.reduce((sum, one) => sum + one.calls, 0), 3, `three calls in all, each once: ${JSON.stringify(rows)}`);
+  assert.equal(rows.reduce((sum, one) => sum + (one.tokens?.input ?? 0), 0), 130);
+});
+
+test('C8 with --bot naming the other bot alone, its unclaimed still does not list a subagent that belongs to this bot\'s claim', async (t) => {
+  const box = await createSandbox(t);
+  const { bots } = await reviewersFleet(box);
+  await bookOfSays(bots, 'api-bot', PARENT);
+  await bookOfSays(bots, 'web-bot', STRANGER);
+
+  const result = await box.run(['usage', '--bots', 'bots', '--bot', 'web-bot', '--json']);
+  assert.equal(result.code, 0, result.stderr);
+  const answer = JSON.parse(result.stdout);
+
+  assert.deepEqual(answer.usage.map((entry) => entry.bot), ['web-bot'], 'the one bot asked about');
+  assert.ok(!(bot(answer, 'web-bot').unclaimed ?? []).some((one) => one.id === CHILD), `C is A's, through P, even when only B is asked about: ${JSON.stringify(bot(answer, 'web-bot').unclaimed)}`);
+  assert.equal(rowIn(answer, 'web-bot', STRANGER)?.calls, 1, 'Q, B\'s own');
+});
