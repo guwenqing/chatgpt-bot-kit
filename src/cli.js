@@ -24,6 +24,7 @@ import { pauseSessions, unpauseSessions } from './pause.js';
 import { recordSession, SHELL_ENV, TAB_ENV } from './record.js';
 import { restartSessions } from './restart.js';
 import { retireBot, retireSession } from './retire.js';
+import { sentWarning } from './sent.js';
 import { readRoster } from './roster.js';
 import { buildAgents, buildRules, CODEX_CAP } from './rules.js';
 import { addSkill, buildSkills, linkSkills, removeSkill } from './skills.js';
@@ -230,6 +231,11 @@ Usage:
                             For the kit's own hook, not for typing: it reads
                             what the harness says about a session starting on
                             standard input and writes it into the book.
+  obk session sent --bots <path> --bot <bot>
+                            For the kit's own hook, not for typing: after a
+                            Claude session's native message, it warns the
+                            session when the address was none of this bots
+                            folder's own. It never stops a message.
   obk session mailbox --bots <path> --bot <bot> --session <name>
                             For the kit's own launch line, not for typing: run
                             in the session's own tab, it gives the session its
@@ -269,6 +275,7 @@ const COMMANDS = {
   'message send': ['bots', 'to', 'subject'],
   'message check': ['bots'],
   'session record': ['bots', 'bot'],
+  'session sent': ['bots', 'bot'],
   'session mailbox': ['bots', 'bot', 'session'],
   'temp make': ['bots', 'name'],
   'temp retire': ['bots', 'name'],
@@ -394,6 +401,10 @@ async function run(argv) {
     throw new Error(`--harness is ${HARNESSES.join(' or ')}, and got: ${values.harness}`);
   }
 
+  // The send hook is quiet whatever it is given, a bots folder that is not
+  // there included, so it goes before anything that can complain (ADR 0032).
+  if (command === SENT) return sent(path.resolve(values.bots));
+
   // One fleet, one identity, whatever spelling of its path was given (#164).
   const bots = command === 'init' ? path.resolve(values.bots) : sameFleet(path.resolve(values.bots));
   if (command === RECORD) return record(bots, values.bot);
@@ -457,8 +468,26 @@ const ANSWER_IT = [
   '             Anything you do not recognise gets no keypress: take it to the user.',
 ];
 
-/** The one command a harness runs rather than a person: the kit's hook. */
+/** The commands a harness runs rather than a person: the kit's hooks. */
 const RECORD = 'session record';
+const SENT = 'session sent';
+
+/**
+ * What the kit's send hook says after a native message: a warning the session
+ * reads, as Claude Code's `additionalContext`, or nothing. Never a decision,
+ * and never anything but exit 0 (ADR 0032).
+ */
+function sent(bots) {
+  try {
+    const warning = sentWarning(bots, JSON.parse(readFileSync(0, 'utf8')));
+    if (warning !== undefined) {
+      process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: warning } })}\n`);
+    }
+  } catch {
+    // Nothing: a hook does not disturb the session it runs in.
+  }
+  return 0;
+}
 
 /**
  * What the kit's hook does with what the harness told it, and what it answers.

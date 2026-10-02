@@ -466,3 +466,46 @@ export function waitingOn(orca, handle) {
     ? undefined
     : ` The tab is waiting on a question of its harness's own, and this test answers none:\n    ${question.join('\n    ')}`;
 }
+
+/**
+ * Whether Claude Code's folder trust on a tab's rendered `rows` is the plain one
+ * for `folder`, the one a system test may answer in its own throwaway tab (the
+ * rulings on #238 after #450, and on #451): undefined when it may, or what
+ * makes it a screen the test leaves alone. No permission is pre-approved, the
+ * folder shown is `folder` in either spelling of a macOS temp path, and the
+ * pointer is on "No, exit" with "Yes, I trust this folder" below it. Shared by
+ * codex-groom-run and send-outside-fleet; see test/plain-trust.test.js.
+ */
+export function plainTrustOf(rows, folder) {
+  if (rows.some((row) => /\bpre-approves\b/.test(row))) return 'it names a pre-approved permission, and this folder should have none yet';
+  const bare = folder.replace(/^\/private(?=\/)/, '');
+  const spellings = new Set([folder, bare, `/private${bare}`]);
+  if (!rows.some((row) => spellings.has(row.trim()))) return `it does not show this test's folder, ${folder}`;
+  if (!rows.some((row) => /^\s*❯\s*No, exit\s*$/.test(row))) return 'its pointer is not on "No, exit", where down-and-return would mean "Yes, I trust this folder"';
+  if (!rows.some((row) => /^\s*Yes, I trust this folder\s*$/.test(row))) return 'it has no "Yes, I trust this folder" choice';
+  return undefined;
+}
+
+/**
+ * Whether Claude Code's folder trust on a tab's rendered `rows` is the plain
+ * one for `folder` and nothing else (the ruling on #451, comment 5961132572):
+ * undefined when the test may answer it, or what makes it a screen left alone.
+ * Every non-blank row from "Accessing workspace:" down is a row of the captured
+ * plain screen, CLAUDE_TRUST, with `folder`, in either spelling of a macOS temp
+ * path, where that screen shows its folder; and plainTrustOf holds. A row not
+ * on that list is refused by name. See test/plain-trust.test.js.
+ */
+export function onlyPlainTrustOf(rows, folder) {
+  const from = rows.findIndex((row) => /Accessing workspace:/.test(row));
+  if (from < 0) return 'it has no "Accessing workspace:" row, so it is not the screen captured as the plain folder trust';
+  const captured = CLAUDE_TRUST.slice(CLAUDE_TRUST.findIndex((row) => /Accessing workspace:/.test(row)));
+  const capturedFolder = captured[1].trim();
+  const bare = folder.replace(/^\/private(?=\/)/, '');
+  const allowed = new Set([
+    ...captured.map((row) => row.trim()).filter((row) => row !== '' && row !== capturedFolder),
+    folder, bare, `/private${bare}`,
+  ]);
+  const odd = rows.slice(from).find((row) => row.trim() !== '' && !allowed.has(row.trim()));
+  if (odd !== undefined) return `it carries a row the plain folder trust does not, which this test has no ruling for: ${odd.trim()}`;
+  return plainTrustOf(rows, folder);
+}
