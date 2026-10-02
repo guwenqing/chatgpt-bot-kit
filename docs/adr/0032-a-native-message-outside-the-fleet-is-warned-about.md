@@ -22,7 +22,8 @@ the bot folder, and asks each harness for one event, SessionStart. Claude
 Code also runs a PostToolUse hook after a tool call, matched by the tool's
 name, and the hook can hand the session text it reads on its next request
 (`additionalContext`), without deciding anything about the call (Claude Code
-hooks reference, read 2026-10-02; to be shown live, see Checked by). A hook that
+hooks reference, read 2026-10-02; seen live on Claude Code 2.1.288 the same
+day, see Checked by). A hook that
 returns a permission decision would also approve or refuse the call, past
 Claude Code's own permission check, which is not the kit's to do.
 
@@ -89,8 +90,12 @@ Existing bots get the hook the way they got SessionStart, the next time
   `uds:` address can be tied to a session. Confidence: high for the shape on
   the version it was proven on; low that the result's fields stay as they are.
 - Checked by: `test/` cases for the hook command and its install (no decision
-  field in any output), and a live run in which two throwaway bots folders'
-  sessions exchange a message and the warning reaches the sender.
+  field in any output), and `test/system/send-outside-fleet.test.js`, in which
+  a session of one throwaway bots folder messages its own fleet and then a
+  second throwaway bots folder. Run live on 2026-10-02 (Claude Code 2.1.288):
+  the hook ran after the outside send (`hook_success`, `PostToolUse:SendMessage`)
+  and the session got the warning as a `hook_additional_context` attachment;
+  nothing followed the send inside its own fleet.
 
 ## History
 
