@@ -85,8 +85,18 @@
 //
 // What it leaves behind is Codex's own doing, as every attended run before it
 // did: answering the trust and hooks screens makes Codex write the throwaway
-// folder's trust and the hooks' hashes into ~/.codex/config.toml. The test never
-// writes there itself.
+// folder's trust and the hooks' hashes into ~/.codex/config.toml, which the
+// runner takes out again after the run (#240). The test never writes there
+// itself.
+//
+// Its Codex is launched with `-c tui.show_tooltips=false` and none of the
+// other arguments the other system tests take from codexTrustArgs: not the
+// folder trust or the hooks bypass, since meeting and answering those screens
+// is what it is for, and not the sleep-tool switch. With tooltips on, Codex
+// 0.160.0 counts each showing of its new-model notice in the user's
+// config.toml, `[tui.model_availability_nux]` (read in its source,
+// tui/src/app/startup_prompts.rs); a run of this test added such a key (#456,
+// the architect's ruling (a)).
 //
 // **It is attended, lightly.** The bots folder is `<tmp>/obk-system-codex-screens-*`
 // and the bot's project shows in Orca as `Screens Codex · temp fleet
@@ -400,6 +410,8 @@ test('the Codex rows of the first-run screen table, pressed live with the table\
     'session', 'add', '--bots', bots, '--bot', BOT.name, '--name', 'daily',
     '--prompt=You are a system test\'s bot and you own nothing. Do not run any command, read or write'
     + ' any file, or use any tool. Say nothing now and wait.',
+    // Tooltips off, and nothing else of codexTrustArgs (see the header, #456).
+    '--extra-arg=-c', '--extra-arg=tui.show_tooltips=false',
   ]);
   const worktreesBefore = worktreesOf(bots);
 
