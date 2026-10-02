@@ -522,13 +522,16 @@ const oneCall = (box, cwd, { id, started, meta = { source: 'cli' }, model, input
   calls: [{ when: started.replace(/:00\.000Z$/, ':30.000Z'), last: { input, output: input / 10 }, total: { input, output: input / 10 } }],
 });
 
-/** The reviewer's fleet: A's P (10 in), B's Q (100 in), and C (20 in), which ran in B's folder and names P as its parent. */
-async function reviewersFleet(box) {
+/**
+ * The reviewer's fleet: A's P (10 in), B's Q (100 in), and C (20 in), which
+ * names P as its parent and ran in B's folder, or in A's when `childIn` says so.
+ */
+async function reviewersFleet(box, { childIn = 'B' } = {}) {
   const fleetOf = await twoBots(box);
   const { homeA, homeB } = fleetOf;
   await oneCall(box, homeA, { id: PARENT, started: at(9), model: 'gpt-6-astra', input: 10 });
   await oneCall(box, homeB, { id: STRANGER, started: at(9, 10), model: 'gpt-6-luna', input: 100 });
-  await oneCall(box, homeB, { id: CHILD, started: at(10), meta: spawnedBy(PARENT), model: 'gpt-6-sol', input: 20 });
+  await oneCall(box, childIn === 'A' ? homeA : homeB, { id: CHILD, started: at(10), meta: spawnedBy(PARENT), model: 'gpt-6-sol', input: 20 });
   return fleetOf;
 }
 
@@ -596,4 +599,58 @@ test('C8 with --bot naming the other bot alone, its unclaimed still does not lis
   assert.deepEqual(answer.usage.map((entry) => entry.bot), ['web-bot'], 'the one bot asked about');
   assert.ok(!(bot(answer, 'web-bot').unclaimed ?? []).some((one) => one.id === CHILD), `C is A's, through P, even when only B is asked about: ${JSON.stringify(bot(answer, 'web-bot').unclaimed)}`);
   assert.equal(rowIn(answer, 'web-bot', STRANGER)?.calls, 1, 'Q, B\'s own');
+});
+
+// The reviewer's third look at PR #459: the same claim by B's book, with C run
+// in A's folder. A conversation any bot's book claims is that claim's, so it is
+// in no other bot's unclaimed, whichever folder it ran in, subagent or not.
+
+/** A conversation of A's folder that no book names and that links to nothing: A's unclaimed, as ever. */
+const LONER = '01a0eb59-5abf-7720-abb2-fe574ced006d';
+
+test('C9 a subagent another bot\'s book claims, run in this bot\'s folder, is that claim\'s alone: not this bot\'s unclaimed, and counted once', async (t) => {
+  const box = await createSandbox(t);
+  const { bots } = await reviewersFleet(box, { childIn: 'A' });
+  await bookOfSays(bots, 'api-bot', PARENT);
+  await bookOfSays(bots, 'web-bot', CHILD, [STRANGER]);
+
+  const answer = await usage(box);
+
+  assert.equal(rowIn(answer, 'web-bot', CHILD)?.calls, 1, `C counts under B's claim: ${JSON.stringify(bot(answer, 'web-bot'))}`);
+  assert.equal(rowIn(answer, 'api-bot', PARENT)?.calls, 1, 'P\'s own call alone: C is claimed by B\'s book');
+  assert.ok(!(bot(answer, 'api-bot').unclaimed ?? []).some((one) => one.id === CHILD), `C is B's, so not A's unclaimed, though it ran in A's folder: ${JSON.stringify(bot(answer, 'api-bot').unclaimed)}`);
+  const rows = allRows(answer);
+  assert.equal(rows.reduce((sum, one) => sum + one.calls, 0), 3, `three calls in all, each once: ${JSON.stringify(rows)}`);
+  assert.equal(rows.reduce((sum, one) => sum + (one.tokens?.input ?? 0), 0), 130, 'and 130 in: 10, 20 and 100');
+});
+
+test('C9 with --bot naming this bot alone, a conversation another bot\'s book claims is still not in its unclaimed', async (t) => {
+  const box = await createSandbox(t);
+  const { bots } = await reviewersFleet(box, { childIn: 'A' });
+  await bookOfSays(bots, 'api-bot', PARENT);
+  await bookOfSays(bots, 'web-bot', CHILD, [STRANGER]);
+
+  const result = await box.run(['usage', '--bots', 'bots', '--bot', 'api-bot', '--json']);
+  assert.equal(result.code, 0, result.stderr);
+  const answer = JSON.parse(result.stdout);
+
+  assert.deepEqual(answer.usage.map((entry) => entry.bot), ['api-bot'], 'the one bot asked about');
+  assert.ok(!(bot(answer, 'api-bot').unclaimed ?? []).some((one) => one.id === CHILD), `C is B's, even when only A is asked about: ${JSON.stringify(bot(answer, 'api-bot').unclaimed)}`);
+  const p = rowIn(answer, 'api-bot', PARENT);
+  assert.equal(p?.calls, 1, `P's own call alone: ${JSON.stringify(p)}`);
+  assert.equal(p.tokens?.input, 10);
+});
+
+test('C9 a conversation of this bot\'s folder that no book names and that links to no claim is still this bot\'s unclaimed', async (t) => {
+  const box = await createSandbox(t);
+  const { bots, homeA } = await reviewersFleet(box, { childIn: 'A' });
+  await oneCall(box, homeA, { id: LONER, started: at(11), model: 'gpt-6-astra', input: 7 });
+  await bookOfSays(bots, 'api-bot', PARENT);
+  await bookOfSays(bots, 'web-bot', CHILD, [STRANGER]);
+
+  const answer = await usage(box);
+
+  const loner = (bot(answer, 'api-bot').unclaimed ?? []).find((one) => one.id === LONER);
+  assert.equal(loner?.calls, 1, `nobody claims it and it links to nothing, so it is A's unclaimed: ${JSON.stringify(bot(answer, 'api-bot').unclaimed)}`);
+  assert.equal(loner.tokens?.input, 7);
 });
