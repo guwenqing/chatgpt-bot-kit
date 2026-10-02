@@ -43,7 +43,7 @@ import { realpathSync } from 'node:fs';
 
 import { botDir, botNames, readBot } from './bot.js';
 import { readBook, sessionIdsIn } from './book.js';
-import { claudeSubagentTranscripts, claudeTranscriptAnywhere, codexRollout, transcriptsIn } from './conversations.js';
+import { claudeSubagentTranscripts, claudeTranscriptAnywhere, codexRollout, codexSubagents, transcriptsIn } from './conversations.js';
 import { eachLine } from './lines.js';
 import { HARNESSES, harnessOf } from './launch.js';
 
@@ -140,18 +140,21 @@ function forBot(bots, name, onlySession, window) {
 
   // A Codex subagent names the conversation it was started for, and what it
   // spent is that conversation's, at any depth, as a Claude Code subagent's is
-  // (#449). A parent no session claims leaves its children unclaimed: nothing
-  // is guessed from timing or folder.
+  // (#449). It is found by that link wherever it ran, and joined only through
+  // links that end at a conversation the book names: a parent no session
+  // claims leaves its children where they were, and nothing is guessed from
+  // timing or folder. The book's word is enough without the parent's own file,
+  // whose calls are then said to be unreadable.
   const childrenOf = new Map();
-  for (const one of onRecord.values()) {
-    if (typeof one.parent !== 'string' || claimed.has(one.id)) continue;
+  for (const one of codexSubagents()) {
+    if (claimed.has(one.id)) continue;
     if (!childrenOf.has(one.parent)) childrenOf.set(one.parent, []);
     childrenOf.get(one.parent).push(one);
   }
   const attached = new Set();
   for (const id of claimed) {
     const own = onRecord.get(id);
-    if (own === undefined || own.harness !== 'codex') continue;
+    if (own !== undefined && own.harness !== 'codex') continue;
     const found = [];
     const waiting = [...(childrenOf.get(id) ?? [])];
     while (waiting.length > 0) {
@@ -162,7 +165,7 @@ function forBot(bots, name, onlySession, window) {
       found.push({ file: child.file, kind: child.review ? 'review' : 'subagent' });
       waiting.push(...(childrenOf.get(child.id) ?? []));
     }
-    if (found.length > 0) onRecord.set(id, { ...own, children: found });
+    if (found.length > 0) onRecord.set(id, { id, harness: 'codex', subagent: false, ...own, children: found });
   }
 
   // Two entries can name the same conversation, one resumed after its session
@@ -231,7 +234,10 @@ function counted(one, window) {
   // own, and what they spent is the conversation's.
   const subagents = one.harness === 'claude' ? claudeSubagentTranscripts(one.file) : { files: [], unreadable: 0 };
   tally.gaps.unreadable_transcripts += subagents.unreadable;
-  const sources = [one.file, ...subagents.files]
+  // A Codex conversation the book names, whose own record is gone but whose
+  // subagents' are not: its own calls cannot be counted, and that is said (#449).
+  if (one.file === undefined) tally.gaps.unreadable_transcripts += 1;
+  const sources = [...(one.file === undefined ? [] : [one.file]), ...subagents.files]
     .map((file, index) => {
       const { entries, unreadable, broken } = transcript(file, countable);
       tally.gaps.unreadable_transcripts += unreadable;
@@ -240,8 +246,10 @@ function counted(one, window) {
     });
   if (one.harness === 'claude') fromClaude(sources, window, tally);
   else {
-    const copied = originOf(sources[0].entries, tally);
-    if (copied !== null) fromCodex(sources[0].entries, window, tally, copied);
+    if (one.file !== undefined) {
+      const copied = originOf(sources[0].entries, tally);
+      if (copied !== null) fromCodex(sources[0].entries, window, tally, copied);
+    }
     // Each subagent's rollout keeps its own running total, so each is counted
     // on its own, from its own records (#449).
     for (const child of one.children ?? []) {

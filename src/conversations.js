@@ -221,6 +221,24 @@ function codexConversations(home, from) {
     });
 }
 
+/**
+ * Every Codex subagent on record, wherever it ran, with the conversation it was
+ * started for: `{ id, file, parent, review }` (#449). Found by the link in its
+ * own record, not by folder: a session's worker can run in a folder of its own.
+ * Read once per process, since every bot asks the same question of the same
+ * files.
+ */
+let subagents;
+export function codexSubagents() {
+  subagents ??= rollouts(codexDir()).flatMap((file) => {
+    const meta = sessionMeta(file);
+    if (meta === undefined || typeof meta.id !== 'string') return [];
+    const link = codexParent(meta);
+    return link.parent === undefined ? [] : [{ id: meta.id, file, ...link }];
+  });
+  return subagents;
+}
+
 /** Every rollout file under Codex's sessions folder, however deep it files them. */
 function rollouts(dir, depth = 0) {
   if (depth > 4) return [];
