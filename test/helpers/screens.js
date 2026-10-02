@@ -485,3 +485,27 @@ export function plainTrustOf(rows, folder) {
   if (!rows.some((row) => /^\s*Yes, I trust this folder\s*$/.test(row))) return 'it has no "Yes, I trust this folder" choice';
   return undefined;
 }
+
+/**
+ * Whether Claude Code's folder trust on a tab's rendered `rows` is the plain
+ * one for `folder` and nothing else (the ruling on #451, comment 5961132572):
+ * undefined when the test may answer it, or what makes it a screen left alone.
+ * Every non-blank row from "Accessing workspace:" down is a row of the captured
+ * plain screen, CLAUDE_TRUST, with `folder`, in either spelling of a macOS temp
+ * path, where that screen shows its folder; and plainTrustOf holds. A row not
+ * on that list is refused by name. See test/plain-trust.test.js.
+ */
+export function onlyPlainTrustOf(rows, folder) {
+  const from = rows.findIndex((row) => /Accessing workspace:/.test(row));
+  if (from < 0) return 'it has no "Accessing workspace:" row, so it is not the screen captured as the plain folder trust';
+  const captured = CLAUDE_TRUST.slice(CLAUDE_TRUST.findIndex((row) => /Accessing workspace:/.test(row)));
+  const capturedFolder = captured[1].trim();
+  const bare = folder.replace(/^\/private(?=\/)/, '');
+  const allowed = new Set([
+    ...captured.map((row) => row.trim()).filter((row) => row !== '' && row !== capturedFolder),
+    folder, bare, `/private${bare}`,
+  ]);
+  const odd = rows.slice(from).find((row) => row.trim() !== '' && !allowed.has(row.trim()));
+  if (odd !== undefined) return `it carries a row the plain folder trust does not, which this test has no ruling for: ${odd.trim()}`;
+  return plainTrustOf(rows, folder);
+}

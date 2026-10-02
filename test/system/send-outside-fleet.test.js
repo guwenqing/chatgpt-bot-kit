@@ -34,6 +34,10 @@
 //   3. The control: `daily` called SendMessage to `peer`'s address too, the
 //      call did not fail, and no line of the transcript says that message went
 //      outside the fleet.
+//   4. Where it went: every SendMessage `daily` made, answered or not, has a
+//      `to` that, less a ` [xxxxxx]` ref, is `peer`'s address or B's, and no
+//      other (#450, #220). It is checked after the others, whatever they found,
+//      and before the teardown; the count is printed.
 // Printed as diagnostics, never failed on: the commit of the checkout the test
 // runs from (`git rev-parse HEAD`); the Claude Code version the transcript
 // records; and, read from B's `receiver` and A's `peer` transcripts within
@@ -60,8 +64,9 @@
 // when the screen names that tab's own throwaway folder, the pointer is on "No,
 // exit", "Yes, I trust this folder" is there, and no line pre-approves a
 // permission (helpers/screens.js `plainTrustOf`, the check codex-groom-run
-// runs), and only when the screen carries no other warning, no line with ⚠ and
-// none that names hooks. Then down and return, once for that tab, with no
+// runs), and only when every row from "Accessing workspace:" down is a row of
+// the captured plain screen, its own folder in the folder's place, and nothing
+// else (`onlyPlainTrustOf`). Then down and return, once for that tab, with no
 // `--enter`. Any other screen gets no answer, and the test fails printing
 // every row it saw; a hooks line, if one shows, goes to the architect before
 // any rerun.
@@ -85,7 +90,7 @@ import { setTimeout } from 'node:timers/promises';
 import { parse } from 'yaml';
 
 import { addressPattern, cliEntry } from '../helpers/cli.js';
-import { plainTrustOf, waitingOn } from '../helpers/screens.js';
+import { onlyPlainTrustOf, waitingOn } from '../helpers/screens.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
 
@@ -230,20 +235,6 @@ function rowsOf(handle) {
   const answer = orca(['terminal', 'read', '--terminal', handle, '--screen']);
   const tail = answer.ok === true && answer.result?.terminal?.source === 'screen' ? answer.result.terminal.tail : undefined;
   return Array.isArray(tail) ? tail : undefined;
-}
-
-/**
- * Whether Claude Code's folder trust on a tab's `rows` may be answered by this
- * test (the ruling on #451): the plain one for that tab's own `folder`, as
- * codex-groom-run answers it (helpers/screens.js `plainTrustOf`), and no
- * warning on it: no line with ⚠ and none that names hooks, below "Accessing
- * workspace:". Undefined when it may, or what makes it a screen left alone.
- */
-function trustThisTestMayAnswer(rows, folder) {
-  const from = Math.max(0, rows.findIndex((row) => /Accessing workspace:/.test(row)));
-  const odd = rows.slice(from).find((row) => /⚠|\bhooks?\b/i.test(row));
-  if (odd !== undefined) return `it carries a line this test has no ruling for: ${odd.trim()}`;
-  return plainTrustOf(rows, folder);
 }
 
 /** Everything the tab is rendering right now, as one piece of text. */
@@ -415,7 +406,7 @@ test('a Claude session\'s native message to a session of another bots folder is 
       () => whatIsUp(entry.terminal),
     );
     if (asked.rows !== null) {
-      const wrong = trustThisTestMayAnswer(asked.rows, home);
+      const wrong = onlyPlainTrustOf(asked.rows, home);
       assert.equal(
         wrong,
         undefined,
@@ -456,51 +447,75 @@ test('a Claude session\'s native message to a session of another bots folder is 
 
   // The sender, whose start prompt holds the two messages and nothing else.
   obkJson(['session', 'add', '--bots', botsA, '--bot', 'sender', '--name', 'daily', `--prompt=${senderPrompt({ inside, outside })}`]);
-  const { entry: daily } = await live(botsA, sender, 'sender', 'daily');
   const lines = () => linesOf(sender, sessionIn(sender, 'daily').session);
 
-  // Both messages sent, and both answered.
-  const [toOutside, toInside] = await until(
-    'the sender to send its two messages and have both answered',
-    ANSWER_MS,
-    async () => {
-      const now = lines();
-      const out = sendsTo(now, outside)[0];
-      const ins = sendsTo(now, inside)[0];
-      return out?.result !== undefined && ins?.result !== undefined ? [out, ins] : undefined;
-    },
-    () => `\n  the sender's conversation:\n${tailOf(lines())}${whatIsUp(daily.terminal)}`,
-  );
-  const version = lines().map((line) => line.version).find((one) => typeof one === 'string');
-  t.diagnostic(`Claude Code version the sender's transcript records: ${version ?? '(none recorded)'}`);
-  // On the receivers' side: did each message arrive? Printed, never failed on.
-  await deliveries(t, [
-    { label: `B's receiver daily (${outside})`, home: receiver, session: sessionIn(receiver, 'daily').session, text: OUTSIDE_TEXT },
-    { label: `A's sender peer (${inside}), the control`, home: sender, session: sessionIn(sender, 'peer').session, text: INSIDE_TEXT },
-  ]);
-  assert.notEqual(toOutside.result.is_error, true, `the message to ${outside} did not fail: ${JSON.stringify(toOutside.result)}`);
-  assert.notEqual(toInside.result.is_error, true, `the message to ${inside} did not fail: ${JSON.stringify(toInside.result)}`);
+  // Everything from the sender's start to the warning, kept so the
+  // where-it-went check below runs whatever it found.
+  let failure;
+  try {
+    const { entry: daily } = await live(botsA, sender, 'sender', 'daily');
 
-  // 2. The warning, after the outside send's result: its own words and B's address.
-  const warned = await until(
-    `the hook's warning about ${outside} to reach the sender's conversation`,
-    WARNING_MS,
-    async () => {
-      const now = lines();
-      const at = sendsTo(now, outside)[0]?.at ?? -1;
-      return now.slice(at + 1).find((line) => {
-        const said = JSON.stringify(line);
-        return said.includes(WARNING) && said.includes(outside);
-      });
-    },
-    () => `\n  the sender's conversation after the result of its message to ${outside}:\n${tailOf(lines().slice((sendsTo(lines(), outside)[0]?.at ?? -1) + 1), 30)}`,
-  );
-  t.diagnostic(`the warning reached the sender as a ${warned.type}${warned.subtype ? `/${warned.subtype}` : ''} line`);
+    // Both messages sent, and both answered.
+    const [toOutside, toInside] = await until(
+      'the sender to send its two messages and have both answered',
+      ANSWER_MS,
+      async () => {
+        const now = lines();
+        const out = sendsTo(now, outside)[0];
+        const ins = sendsTo(now, inside)[0];
+        return out?.result !== undefined && ins?.result !== undefined ? [out, ins] : undefined;
+      },
+      () => `\n  the sender's conversation:\n${tailOf(lines())}${whatIsUp(daily.terminal)}`,
+    );
+    const version = lines().map((line) => line.version).find((one) => typeof one === 'string');
+    t.diagnostic(`Claude Code version the sender's transcript records: ${version ?? '(none recorded)'}`);
+    // On the receivers' side: did each message arrive? Printed, never failed on.
+    await deliveries(t, [
+      { label: `B's receiver daily (${outside})`, home: receiver, session: sessionIn(receiver, 'daily').session, text: OUTSIDE_TEXT },
+      { label: `A's sender peer (${inside}), the control`, home: sender, session: sessionIn(sender, 'peer').session, text: INSIDE_TEXT },
+    ]);
+    assert.notEqual(toOutside.result.is_error, true, `the message to ${outside} did not fail: ${JSON.stringify(toOutside.result)}`);
+    assert.notEqual(toInside.result.is_error, true, `the message to ${inside} did not fail: ${JSON.stringify(toInside.result)}`);
 
-  // 3. The control: nothing says the message to the fleet's own peer went outside.
-  const aboutInside = lines().filter((line) => {
-    const said = JSON.stringify(line);
-    return said.includes(WARNING) && said.includes(inside);
-  });
-  assert.deepEqual(aboutInside, [], `no warning about ${inside}, a session of the sender's own fleet:\n${tailOf(aboutInside)}`);
+    // 2. The warning, after the outside send's result: its own words and B's address.
+    const warned = await until(
+      `the hook's warning about ${outside} to reach the sender's conversation`,
+      WARNING_MS,
+      async () => {
+        const now = lines();
+        const at = sendsTo(now, outside)[0]?.at ?? -1;
+        return now.slice(at + 1).find((line) => {
+          const said = JSON.stringify(line);
+          return said.includes(WARNING) && said.includes(outside);
+        });
+      },
+      () => `\n  the sender's conversation after the result of its message to ${outside}:\n${tailOf(lines().slice((sendsTo(lines(), outside)[0]?.at ?? -1) + 1), 30)}`,
+    );
+    t.diagnostic(`the warning reached the sender as a ${warned.type}${warned.subtype ? `/${warned.subtype}` : ''} line`);
+
+    // 3. The control: nothing says the message to the fleet's own peer went outside.
+    const aboutInside = lines().filter((line) => {
+      const said = JSON.stringify(line);
+      return said.includes(WARNING) && said.includes(inside);
+    });
+    assert.deepEqual(aboutInside, [], `no warning about ${inside}, a session of the sender's own fleet:\n${tailOf(aboutInside)}`);
+  } catch (error) {
+    failure = error;
+  }
+
+  // 4. Where it went: every SendMessage the sender made, answered or not, went
+  // to peer's address or B's, and to no other session on this machine (#450,
+  // #220). A name Claude Code lists may carry a ` [xxxxxx]` after it; the name
+  // is what counts.
+  const sends = lines().flatMap(toolUses).filter((use) => use.name === 'SendMessage');
+  const elsewhere = sends.map((use) => String(use.input?.to ?? '')).filter((to) => nameOf(to) !== inside && nameOf(to) !== outside);
+  t.diagnostic(`the sender's messages by Claude Code's own messaging: ${sends.length}, ${elsewhere.length} of them to somewhere other than ${inside} or ${outside}`);
+  if (elsewhere.length > 0 && failure !== undefined) t.diagnostic(`the check before it also failed: ${failure.message}`);
+  assert.deepEqual(
+    elsewhere,
+    [],
+    `the sender sent by Claude Code's own messaging to somewhere other than this test's peer, ${inside}, or B's receiver, ${outside}: `
+    + 'a test reached outside its own fleets (#450, #220)',
+  );
+  if (failure !== undefined) throw failure;
 });
