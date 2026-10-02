@@ -217,15 +217,15 @@ Usage:
   obk usage --bots <path> [--bot <bot>] [--session <name>] [--since <time>] [--until <time>]
                             Say what your sessions have used: the conversations
                             each one had, their calls and tokens (their
-                            subagents' included, and how many were theirs), the
-                            models and efforts they ran at, and how often they
-                            were compacted. --since counts the calls made from
-                            that moment on, and --until the calls made before
-                            that one: a daily run asks from the last run's end
-                            up to its own, and the next starts where it stopped,
-                            so no call is counted twice. It counts tokens and
-                            never money: what a token costs is looked up live by
-                            whoever is asking.
+                            subagents' and Codex's auto-reviews included, and
+                            how many were whose), the models and efforts they
+                            ran at, and how often they were compacted. --since
+                            counts the calls made from that moment on, and
+                            --until the calls made before that one: a daily run
+                            asks from the last run's end up to its own, and the
+                            next starts where it stopped, so no call is counted
+                            twice. It counts tokens and never money: what a
+                            token costs is looked up live by whoever is asking.
   obk session record --bots <path> --bot <bot>
                             For the kit's own hook, not for typing: it reads
                             what the harness says about a session starting on
@@ -1247,6 +1247,7 @@ function conversationLine(one) {
     .join('  ');
   return `             ${one.id}  ${one.calls} call${one.calls === 1 ? '' : 's'}`
     + `${one.subagent_calls > 0 ? `  of which subagents: ${one.subagent_calls} call${one.subagent_calls === 1 ? '' : 's'}` : ''}`
+    + `${one.review_calls > 0 ? `  of which Codex's auto-review: ${one.review_calls} call${one.review_calls === 1 ? '' : 's'}` : ''}`
     + `${ran === '' ? '' : `  ${ran}`}`
     + `${used === '' ? '' : `  ${used}`}`
     + `${one.compactions > 0 ? `  compacted ${one.compactions}` : ''}`;
