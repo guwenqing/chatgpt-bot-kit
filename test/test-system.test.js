@@ -1870,11 +1870,12 @@ function tempSpellings(fixture) {
 }
 
 /**
- * A system test file that writes the harness configs while it runs: `writes`
- * is `[{ file, text }]`, each file written whole (its folder made first),
- * `removes` is files it takes away, and `makes` is folders it makes after that,
- * a run's own throwaway folder or a folder where a config file was. It prints
- * its marker, and fails afterwards when `thenFails` says so.
+ * A system test file that writes the harness configs while it runs: `removes`
+ * is files (or folders where a file should be) it takes away first, `writes` is
+ * `[{ file, text }]`, each file then written whole (its folder made first), and
+ * `makes` is folders it makes after that, a run's own throwaway folder or a
+ * folder where a config file was. It prints its marker, and fails afterwards
+ * when `thenFails` says so.
  */
 const writesConfigs = (name, { writes = [], removes = [], makes = [], thenFails = false } = {}) => [
   "import { mkdirSync, rmSync, writeFileSync } from 'node:fs';",
@@ -1882,11 +1883,11 @@ const writesConfigs = (name, { writes = [], removes = [], makes = [], thenFails 
   "import test from 'node:test';",
   '',
   `test(${JSON.stringify(name)}, () => {`,
+  `  for (const file of ${JSON.stringify(removes)}) rmSync(file, { force: true, recursive: true });`,
   `  for (const { file, text } of ${JSON.stringify(writes)}) {`,
   '    mkdirSync(path.dirname(file), { recursive: true });',
   '    writeFileSync(file, text);',
   '  }',
-  `  for (const file of ${JSON.stringify(removes)}) rmSync(file, { force: true, recursive: true });`,
   `  for (const folder of ${JSON.stringify(makes)}) mkdirSync(folder, { recursive: true });`,
   `  process.stdout.write(${JSON.stringify(`${name}\n`)});`,
   ...(thenFails ? [`  throw new Error(${JSON.stringify(`${name} failed`)});`] : []),
@@ -2897,5 +2898,37 @@ describe('test-system: Codex\'s new-model notice counter is reported, not failed
     assert.equal(result.code, 0, everything(result));
     assert.deepEqual(nuxLines(result), [], `no word of the notice counter, which did not change, got:\n${afterTheRun(result)}`);
     assert.equal(await readFile(built.files.codex, 'utf8'), nuxConfig({ 'gpt-6-luna': 3 }), 'the run\'s own table taken out as before, the counter as it was');
+  });
+
+  // The review of PR #460: a config.toml that is not there before the run is a
+  // known empty start, not one that could not be read, so a counter Codex
+  // creates with the file is named like any other.
+  test('a config.toml that is not there before the run and is made during it with a notice counter: the table and its key are named, and the file is left', async (t) => {
+    const after = '[tui.model_availability_nux]\n"gpt-6.1-sol" = 1\n';
+    const built = await withConfigs(t, () => ({ during: { codex: after } }));
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(result.code, 0, `a new notice counter does not fail a run whose tests passed:\n${everything(result)}`);
+    assert.ok(nuxLines(result).length > 0, `the report names the table [tui.model_availability_nux], got:\n${afterTheRun(result)}`);
+    const said = unwrapped(afterTheRun(result));
+    assert.ok(said.includes('gpt-6.1-sol'), `and its key, got:\n${afterTheRun(result)}`);
+    assert.match(said, /notice|harness/i, `and says it is Codex's notice counter, got:\n${afterTheRun(result)}`);
+    assert.equal(await readFile(built.files.codex, 'utf8'), after, 'the file is left as the run made it');
+  });
+
+  test('a config.toml that cannot be read before the run, and holds a notice counter after: no claim about the counter, and no crash', async (t) => {
+    // A folder where the file should be: there, and not readable as a file.
+    // Nothing is known of the counter before, so no change can be told.
+    const after = '[tui.model_availability_nux]\n"gpt-6.1-sol" = 1\n';
+    const built = await withConfigs(t, () => ({ during: { removes: ['codex'], codex: after } }));
+    await mkdir(built.files.codex, { recursive: true });
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(result.code, 0, `nothing here fails the run:\n${everything(result)}`);
+    assert.ok(!/^\s+at /m.test(everything(result)), `a report, not a crash:\n${everything(result)}`);
+    assert.deepEqual(nuxLines(result), [], `no claim about a counter whose start could not be read, got:\n${afterTheRun(result)}`);
+    assert.equal(await readFile(built.files.codex, 'utf8'), after, 'and the file is left as the run made it');
   });
 });
