@@ -29,9 +29,10 @@
 //
 // The warning is Claude Code's PostToolUse context, on standard output:
 // `{ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext } }`,
-// exit 0. It says the address is outside this bots folder, names the address
+// exit 0. It says the address is outside this bots folder, names the road
 // `obk message to` gives where the `to` starts `<bot>.<session>` and this fleet
-// has that bot and session, and says to check before sending again. It never
+// has that bot and session (see "the road it names"), and says to check before
+// sending again. It never
 // carries a decision (ruling, point 1): no `permissionDecision`, no
 // `decision`, no `continue`. Whatever it cannot read, it says nothing and exits
 // 0: it never fails a turn.
@@ -39,7 +40,8 @@
 // `obk up` writes it into a Claude bot's `.claude/settings.json` beside the
 // SessionStart hook, by the kit's own path, under `PostToolUse` with the matcher
 // `SendMessage`; not into Codex's hooks, since Codex has no SendMessage. `obk
-// health` names a Claude bot whose settings lack it.
+// health` names a Claude bot whose settings lack it, or whose send hook runs a
+// kit that is not there.
 //
 // Every run is in the sandbox: its own HOME, a fake Orca.
 
@@ -53,9 +55,11 @@ import {
   createSandbox,
   hookFileOf,
   hooksIn,
+  kitLaunchMark,
   sessionIn,
   sh,
   spellingsOf,
+  tabsOfBot,
 } from './helpers/cli.js';
 
 // ---------------------------------------------------------------- the fleet
@@ -349,5 +353,127 @@ test('H1 health names a Claude bot whose settings lack the SendMessage hook, and
   const about = answer.found.filter((one) => `${one.where} ${one.says}`.includes(file));
   assert.equal(about.length, 1, `one finding names ${file}, whose SendMessage hook is gone: ${JSON.stringify(answer.found, null, 2)}`);
   assert.match(about[0].says, /SendMessage|PostToolUse/, `and says which hook: ${about[0].says}`);
+  assert.equal(code, 1, 'a finding exits 1');
+});
+
+// ------------------------------------------------------------- the road it names
+
+// The road the warning names is the one `obk message to` gives from the sender's
+// own session (PRD 6.9, #451 review): native to the receiver's address only
+// between Claude sessions of one approval class, and otherwise the receiver's
+// `run:` mailbox, by `obk message send`. The sender is told by its tab, as a
+// command run inside a kit-launched session is. With no tab to tell it by, the
+// warning names the session's address and the `obk message to` question, and
+// claims nothing more.
+
+/**
+ * Bot Father; api-bot, the sender, and peer-bot, both Claude at approval auto
+ * (prompting); and skip-bot, Claude at dangerously-skip (bypassing). Each has a
+ * daily session, brought up, so each has an address, a mailbox and a tab.
+ */
+async function classes(box) {
+  const ok = async (args) => {
+    const result = await box.run(args);
+    assert.equal(result.code, 0, `obk ${args.join(' ')}: ${result.stdout}${result.stderr}`);
+  };
+  await ok(['init', '--bots', 'bots', '--harness', 'claude']);
+  for (const [bot, approval] of [['api-bot', 'auto'], ['peer-bot', 'auto'], ['skip-bot', 'dangerously-skip']]) {
+    await ok(['bot', 'create', '--bots', 'bots', '--name', bot, '--harness', 'claude']);
+    await ok(['session', 'add', '--bots', 'bots', '--bot', bot, '--name', 'daily', '--approval', approval]);
+    await ok(['up', '--bots', 'bots', '--bot', bot]);
+  }
+  const bots = box.path('bots');
+  const entry = async (bot) => {
+    const held = await sessionIn(bots, bot, 'daily');
+    assert.match(String(held?.address), new RegExp(`^${bot}\\.daily\\.[a-z0-9]{8}$`), `the premise: ${bot} daily has its address, got: ${JSON.stringify(held)}`);
+    assert.equal(typeof held?.mailbox, 'string', `the premise: ${bot} daily has its mailbox, got: ${JSON.stringify(held)}`);
+    return held;
+  };
+  return { bots, peer: await entry('peer-bot'), skip: await entry('skip-bot') };
+}
+
+/** The environment of a command run inside api-bot daily's own tab, as the kit launched it. */
+async function senderTab(box, bots) {
+  const wanted = (await sessionIn(bots, 'api-bot', 'daily'))?.tab;
+  const terminal = (await tabsOfBot(box, bots, 'api-bot')).find((one) => one.tabId === wanted);
+  assert.ok(terminal, `the premise: api-bot daily has its tab ${wanted}`);
+  return { ...box.env, ORCA_TERMINAL_HANDLE: terminal.handle, ORCA_TAB_ID: terminal.tabId, ...kitLaunchMark(box, terminal) };
+}
+
+/** What `obk message to` answers for api-bot daily writing to `bot` daily. */
+async function roadFromSender(box, bot) {
+  const asked = await box.run(['message', 'to', '--bots', 'bots', '--from', 'api-bot/daily', '--to', `${bot}/daily`, '--json']);
+  assert.equal(asked.code, 0, asked.stderr);
+  return JSON.parse(asked.stdout);
+}
+
+test('R1 run in the sender\'s tab, a receiver in its own approval class: the warning names the native address', async (t) => {
+  const box = await createSandbox(t);
+  const { bots, peer } = await classes(box);
+  assert.deepEqual(
+    (({ transport, address }) => ({ transport, address }))(await roadFromSender(box, 'peer-bot')),
+    { transport: 'native', address: peer.address },
+    'the premise: obk message to gives the native road between two auto Claude sessions',
+  );
+
+  const ran = await box.run(['session', 'sent', '--bots', 'bots', '--bot', 'api-bot'], { stdin: sent('peer-bot.daily', ANOTHER_SESSION), env: await senderTab(box, bots) });
+  const text = assertWarned(ran, 'the bare name of a session in the sender\'s class');
+
+  assert.ok(text.includes(peer.address), `it names peer-bot daily's address, ${peer.address}, the native road: ${text}`);
+  assert.ok(!text.includes(`run:${peer.mailbox}`), `and not its mailbox, which is not the road between these two: ${text}`);
+});
+
+test('R2 run in the sender\'s tab, a receiver in another approval class: the warning names the run: mailbox and obk message send, and not the native address', async (t) => {
+  const box = await createSandbox(t);
+  const { bots, skip } = await classes(box);
+  assert.deepEqual(
+    (({ transport, address }) => ({ transport, address }))(await roadFromSender(box, 'skip-bot')),
+    { transport: 'orca', address: `run:${skip.mailbox}` },
+    'the premise: obk message to gives the Orca road from an auto sender to a dangerously-skip receiver',
+  );
+
+  const ran = await box.run(['session', 'sent', '--bots', 'bots', '--bot', 'api-bot'], { stdin: sent('skip-bot.daily [ab12cd]', ANOTHER_SESSION), env: await senderTab(box, bots) });
+  const text = assertWarned(ran, 'the bare name of a session in another class');
+
+  assert.ok(text.includes(`run:${skip.mailbox}`), `it names skip-bot daily's mailbox, run:${skip.mailbox}, the road obk message to gives: ${text}`);
+  assert.match(text, /\bmessage send\b/, `and that the road is obk message send: ${text}`);
+  assert.ok(!text.includes(skip.address), `and not skip-bot daily's native address, ${skip.address}, which is not the road from this sender: ${text}`);
+});
+
+test('R3 with no tab to tell the sender by, the warning names the session\'s address and the obk message to command for it', async (t) => {
+  const box = await createSandbox(t);
+  const { skip } = await classes(box);
+
+  const text = assertWarned(await hook(box, sent('skip-bot.daily', ANOTHER_SESSION)), 'no tab');
+
+  assert.ok(text.includes(skip.address), `it names skip-bot daily's address, ${skip.address}: ${text}`);
+  assert.match(text, /\bmessage to --bots \S+ --to skip-bot\/daily\b/, `and the obk message to command that gives the road to it: ${text}`);
+});
+
+test('H2 health names a Claude bot whose send hook runs a kit that is not there, with SessionStart intact, and exits 1', async (t) => {
+  const box = await createSandbox(t);
+  const { bots } = await fleet(box);
+  const file = hookFileOf(bots, 'api-bot', 'claude');
+  const settings = JSON.parse(await readFile(file, 'utf8'));
+  const sessionStart = JSON.stringify(settings.hooks.SessionStart);
+  // Named obk, as an installed kit is, so the line is still the kit's; the folder is not there.
+  const gone = box.path('kit-moved-away/bin/obk');
+  let replaced = 0;
+  for (const group of sendMessageGroups(settings)) {
+    for (const one of group.hooks ?? []) {
+      const spelling = spellingsOf(box.cli).find((cli) => String(one.command).startsWith(`${cli} session sent `));
+      if (spelling === undefined) continue;
+      one.command = `${gone}${one.command.slice(spelling.length)}`;
+      replaced += 1;
+    }
+  }
+  assert.equal(replaced, 1, `the premise: one kit send hook, run by ${box.cli}, to point elsewhere: ${JSON.stringify(settings.hooks)}`);
+  await writeFile(file, `${JSON.stringify(settings, null, 2)}\n`);
+  assert.equal(JSON.stringify(JSON.parse(await readFile(file, 'utf8')).hooks.SessionStart), sessionStart, 'the premise: SessionStart as up wrote it');
+
+  const { code, answer } = await health(box);
+  const about = answer.found.filter((one) => `${one.where} ${one.says}`.includes(file));
+  assert.equal(about.length, 1, `one finding names ${file}, whose send hook runs ${gone}: ${JSON.stringify(answer.found, null, 2)}`);
+  assert.match(about[0].says, /SendMessage|PostToolUse|send hook/, `and says it is the send hook: ${about[0].says}`);
   assert.equal(code, 1, 'a finding exits 1');
 });
