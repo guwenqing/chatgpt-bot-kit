@@ -17,6 +17,8 @@
 import { readBook } from './book.js';
 import { botDir, botNames } from './bot.js';
 import { isAddressOf, ownCli, shellWord } from './launch.js';
+import { lookUp } from './message.js';
+import { TAB_ENV } from './record.js';
 
 /**
  * The warning for a send the hook was told about, or undefined when there is
@@ -37,10 +39,35 @@ export function sentWarning(bots, said) {
   if (fleet === undefined || fleet.all.has(name)) return undefined;
 
   const meant = fleet.byName.get(name.split('.').slice(0, 2).join('.'));
+  const ask = (to) => `\`${shellWord(ownCli())} message to --bots ${shellWord(bots)} --to ${to}\``;
   const road = meant === undefined
-    ? `\`${shellWord(ownCli())} message to --bots ${shellWord(bots)} --to <bot>/<session>\` gives the address of a session of this fleet.`
-    : `If you meant ${meant.bot}/${meant.session}, its address is ${meant.address}, as \`${shellWord(ownCli())} message to --bots ${shellWord(bots)} --to ${meant.bot}/${meant.session}\` gives.`;
+    ? `${ask('<bot>/<session>')} gives the road to a session of this fleet.`
+    : roadTo(bots, meant, ask(`${meant.bot}/${meant.session}`));
   return `That message went to ${name}, which is not one of the sessions of your bots folder, ${bots}: Claude Code's messaging reaches every session on this machine. ${road} Check before you send to it again.`;
+}
+
+/**
+ * The road to the session the sender probably meant, as `obk message to` would
+ * answer it from the sender's own tab: native to its address only between
+ * sessions of one approval class, the kit's mailbox otherwise (PRD 6.9). Where
+ * the sender cannot be told by its tab, the session's address and the question
+ * to ask, without claiming the address is the answer (#451 review).
+ */
+function roadTo(bots, meant, ask) {
+  let found;
+  try {
+    found = lookUp(bots, { to: `${meant.bot}/${meant.session}`, tab: process.env[TAB_ENV] });
+  } catch {
+    found = undefined;
+  }
+  const who = `${meant.bot}/${meant.session}`;
+  if (found?.transport === 'native' && typeof found.address === 'string') {
+    return `If you meant ${who}, ${ask} gives the road from your session: write to ${found.address} with your own messaging.`;
+  }
+  if (found?.transport === 'orca' && typeof found.address === 'string') {
+    return `If you meant ${who}, ${ask} gives the road from your session: its mailbox, ${found.address}, by \`${shellWord(ownCli())} message send\`, not your own messaging.`;
+  }
+  return `If you meant ${who}, its session address is ${meant.address}; ${ask} says which road to take from your session.`;
 }
 
 /** What the send answered, as an object: Claude Code hands it over as one, or as its JSON. */

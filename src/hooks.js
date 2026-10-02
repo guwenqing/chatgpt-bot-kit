@@ -127,7 +127,16 @@ export function hookTrouble(home, harness, { bots, bot }) {
     // The send hook is judged on its own: the session hook may be right while
     // the warning after a native message is missing (ADR 0032).
     if (harness === 'claude' && isDeepStrictEqual(settings, wanted)) {
-      const sentProgram = sentProgramIn(settings) ?? program;
+      const sentRunning = sentProgramIn(settings);
+      // A send hook that runs a kit no longer there is as quiet as a missing
+      // one: `|| true` hides it, and no warning is ever given (#451 review).
+      if (sentRunning !== undefined && sentRunning !== BARE && !existsSync(sentRunning)) {
+        return {
+          where: file,
+          says: `${file} holds the kit's PostToolUse hook for SendMessage, but it runs ${sentRunning}, which is not there any more, so a session is never warned when its native message goes outside this bots folder (ADR 0032). obk up puts back one that runs the kit you have.`,
+        };
+      }
+      const sentProgram = sentRunning ?? program;
       const withSent = { ...settings, hooks: withSentHook(settings.hooks, { type: 'command', command: sentCommand(bots, bot, sentProgram), timeout: TIMEOUT }) };
       if (!isDeepStrictEqual(settings, withSent)) {
         return {
