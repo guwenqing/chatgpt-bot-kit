@@ -19,6 +19,9 @@ import { existsSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
+
+import { parse as parseToml, TomlError } from 'smol-toml';
 
 // This file lives in <repo>/scripts/, and the tests are always its own repo's,
 // whatever directory the command was called from.
@@ -207,12 +210,13 @@ function trustKeys() {
   const codex = { file: codexConfigFile() };
   if (existsSync(codex.file)) {
     try {
-      codex.keys = readFileSync(codex.file, 'utf8').split('\n').flatMap((line) => {
-        const header = TRUST_HEADER.exec(line);
-        return header === null ? [] : [tomlKey(header[2])];
-      });
+      // From the parsed document, not from lines that look like headers: a
+      // multi-line string can hold such a line (#240 review).
+      codex.keys = Object.keys(trustTables(parseToml(readFileSync(codex.file, 'utf8'))));
     } catch (error) {
-      codex.why = error.code ?? 'it could not be read';
+      codex.why = notQuoted(error);
+      // Text that is there and does not parse may still hold a run's keys.
+      codex.unparsed = error instanceof TomlError;
     }
   } else {
     codex.keys = [];
@@ -245,7 +249,10 @@ function trustKeys() {
  * undefined: a system test makes its bots folder as `<tmp>/obk-system-<name>-…`,
  * and macOS spells the temp folder both with `/private` in front and without.
  */
-function runFolderOf(key) {
+function runFolderOf(raw) {
+  // `..`, `.` and doubled slashes are resolved first, so a key that names the
+  // run's folder and then leaves it is not the run's (#240 review).
+  const key = path.posix.normalize(raw);
   let real;
   try {
     real = realpathSync(os.tmpdir());
@@ -359,7 +366,8 @@ function reportConfigsLeft(before, foldersBefore) {
   }
 
   process.stdout.write(`\n${lines.join('\n')}\n`);
-  return left.length > 0 || removed.codex.why !== undefined || removed.claude.why !== undefined;
+  return left.length > 0 || removed.codex.why !== undefined || removed.claude.why !== undefined
+    || after.codex.unparsed === true;
 }
 
 /**
@@ -382,7 +390,7 @@ function removeKeys(file, keys, without) {
     } catch {
       // Left beside the file; said below with the rest.
     }
-    return { why: error instanceof SyntaxError ? 'it is not JSON' : (error.code ?? error.message) };
+    return { why: notQuoted(error) };
   }
 }
 
@@ -390,38 +398,104 @@ function removeKeys(file, keys, without) {
 const TABLE_HEADER = /^[ \t]*\[/;
 
 /**
+ * Why a file could not be read or changed, in words that never quote it: a
+ * parser's own message would.
+ */
+function notQuoted(error) {
+  if (error instanceof SyntaxError) return 'it is not JSON';
+  if (error instanceof TomlError) return 'it is not valid TOML';
+  return error?.code ?? (error instanceof TrustTablesError ? error.message : 'it could not be read or changed');
+}
+
+/** A cleanup that would not leave exactly the document it should, said in the kit's own words. */
+class TrustTablesError extends Error {}
+
+/** The trust tables of a parsed config.toml, by key: its `projects` and its `hooks.state` ones. */
+function trustTables(doc) {
+  return { ...(doc.projects ?? {}), ...(doc.hooks?.state ?? {}) };
+}
+
+/**
+ * A parsed TOML value as plain data, so two can be compared whatever their
+ * prototypes: smol-toml makes its tables with none, and a copy has Object's.
+ */
+function plain(value) {
+  if (value instanceof Date) return { date: value.toISOString() };
+  if (Array.isArray(value)) return value.map(plain);
+  if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, one]) => [key, plain(one)]));
+  return value;
+}
+
+/** The parsed document, as plain data, less the trust tables `gone` names, and less a table they leave empty. */
+function lessTables(doc, gone) {
+  const less = plain(doc);
+  for (const key of gone) {
+    if (less.projects !== undefined) delete less.projects[key];
+    if (less.hooks?.state !== undefined) delete less.hooks.state[key];
+  }
+  if (less.projects !== undefined && Object.keys(less.projects).length === 0 && Object.keys(doc.projects).length > 0) delete less.projects;
+  if (less.hooks?.state !== undefined && Object.keys(less.hooks.state).length === 0 && Object.keys(doc.hooks.state).length > 0) delete less.hooks.state;
+  if (less.hooks !== undefined && Object.keys(less.hooks).length === 0 && Object.keys(doc.hooks).length > 0) delete less.hooks;
+  return less;
+}
+
+/**
+ * The lines without the table whose header is at `at`. A table goes from its
+ * header to the next table's, less the comment lines right above that header,
+ * which are the next table's own. A table that ends the file goes to the end,
+ * with the one blank line Codex put above it and no more: a blank line of the
+ * owner's own before it stays (live, #240). The file keeps its final newline.
+ */
+function cutTable(lines, at) {
+  let next = at + 1;
+  while (next < lines.length && !TABLE_HEADER.test(lines[next])) next += 1;
+  if (next < lines.length) {
+    let end = next;
+    while (end > at + 1 && /^[ \t]*#/.test(lines[end - 1])) end -= 1;
+    return [...lines.slice(0, at), ...lines.slice(end)];
+  }
+  let from = at;
+  if (from > 0 && lines[from - 1].trim() === '') from -= 1;
+  const finalNewline = lines[lines.length - 1] === '';
+  return [...lines.slice(0, from), ...(finalNewline ? [''] : [])];
+}
+
+/**
  * config.toml's text without the trust tables `gone` names, and with every
- * other line as it was. A table goes from its header to the next table's,
- * less the comment lines right above that header, which are the next table's
- * own; a table that ends the file goes to the end, with the one blank line
- * Codex put above it.
+ * other line as it was. The file is parsed first, and each table is cut as
+ * lines only when the result parses to exactly the document less that table:
+ * a line that only looks like its header, inside a multi-line string, is left
+ * where it is. Throws, so that nothing is written, when the file does not
+ * parse or any of the tables cannot be taken out that way.
  */
 function withoutTables(text, gone) {
-  const lines = text.split('\n');
-  const kept = [];
-  for (let at = 0; at < lines.length;) {
+  const original = parseToml(text);
+  const present = new Set(Object.keys(trustTables(original)));
+  const wanted = [...gone].filter((key) => present.has(key));
+  let lines = text.split('\n');
+  let doc = original;
+  // Last first, so a cut never moves a line still to be looked at.
+  for (let at = lines.length - 1; at >= 0; at -= 1) {
     const header = TRUST_HEADER.exec(lines[at]);
-    if (header === null || !gone.has(tomlKey(header[2]))) {
-      kept.push(lines[at]);
-      at += 1;
+    if (header === null) continue;
+    const key = tomlKey(header[2]);
+    if (!wanted.includes(key) || !(key in trustTables(doc))) continue;
+    const cut = cutTable(lines, at);
+    let after;
+    try {
+      after = parseToml(cut.join('\n'));
+    } catch {
       continue;
     }
-    let next = at + 1;
-    while (next < lines.length && !TABLE_HEADER.test(lines[next])) next += 1;
-    let end = next;
-    if (next < lines.length) while (end > at + 1 && /^[ \t]*#/.test(lines[end - 1])) end -= 1;
-    kept.push(...lines.slice(end, next));
-    if (next === lines.length) {
-      // Codex adds a table at the end with one blank line above it, so a table
-      // that ends the file takes that one line back too, and no more: a blank
-      // line of the owner's own before it stays (live, #240). The file keeps
-      // its final newline.
-      if (kept.length > 0 && kept[kept.length - 1].trim() === '') kept.pop();
-      if (text.endsWith('\n')) kept.push('');
-    }
-    at = next;
+    if (!isDeepStrictEqual(plain(after), lessTables(doc, [key]))) continue;
+    lines = cut;
+    doc = after;
   }
-  return kept.join('\n');
+  const left = wanted.filter((key) => key in trustTables(doc));
+  if (left.length > 0 || !isDeepStrictEqual(plain(doc), lessTables(original, wanted))) {
+    throw new TrustTablesError(`${left.length || 'some'} of its run tables could not be taken out as whole tables`);
+  }
+  return lines.join('\n');
 }
 
 /**
