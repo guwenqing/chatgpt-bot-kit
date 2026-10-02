@@ -101,7 +101,8 @@ export function readUsage(bots, { bot: only, session: onlySession, since, until 
  * Every conversation any bot's book names, the Codex subagents that hang off
  * each by their own links, and the ones so attached (#449). A subagent a book
  * names is that book's, and is never attached under another: the book's word
- * comes first (ADR 0012). One attached anywhere is no bot's unclaimed.
+ * comes first (ADR 0012). One claimed or attached anywhere is no bot's
+ * unclaimed.
  */
 function subagentOwners(bots, names) {
   const claimed = new Set();
@@ -120,7 +121,7 @@ function subagentOwners(bots, names) {
     attached.add(child.id);
     waiting.push(...(childrenOf.get(child.id) ?? []));
   }
-  return { childrenOf, attached };
+  return { claimed, childrenOf, attached };
 }
 
 /** One bot: what each of its sessions used, and what nobody claims. */
@@ -209,7 +210,9 @@ function forBot(bots, name, onlySession, window, fleet) {
     .filter(({ name }) => onlySession === undefined || name === onlySession)
     .map(({ name, entry, ...was }) => ({ name, ...('retired' in was ? { retired: was.retired } : {}), ...block(entry) }));
 
-  const unclaimed = all([...onRecord.values()].filter((one) => !claimed.has(one.id) && !fleet.attached.has(one.id)), window);
+  // What any bot's book names, or any claim gathered in, is not unclaimed here,
+  // wherever its record lies (#449 review).
+  const unclaimed = all([...onRecord.values()].filter((one) => !fleet.claimed.has(one.id) && !fleet.attached.has(one.id)), window);
 
   return { bot: name, home, sessions, unclaimed: unclaimed.conversations, unclaimed_not_counted: unclaimed.gaps };
 }
