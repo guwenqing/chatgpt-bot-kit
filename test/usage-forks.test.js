@@ -33,6 +33,13 @@
 //   94,000 in   the copies counted by their rises, the first by its own figure;
 //   50,000 in   the child's first own call dropped with the copies.
 //
+// Where a child is counted changed with #449: one that names a conversation
+// the book claims as its parent (`thread_spawn`, or a top-level
+// `parent_thread_id`) counts in that conversation's row, as subagent calls. The
+// tests here about how a child is counted give the book a third conversation,
+// THIRD, so the parent and its child each keep a row of their own; F3 reads the
+// session's row; F31 holds that a child that is only a fork stays unclaimed.
+//
 // Every rollout is planted in the sandbox's own home. Nothing reads the real
 // `~/.codex` or `~/.claude`. The helpers below are copied from usage.test.js
 // and usage-subagents.test.js, so that importing them does not run their tests
@@ -60,6 +67,14 @@ const PARENT = '019f9600-0000-7000-8000-00000000aaaa';
 const CHILD = '019f9685-bce3-7000-8000-00000000bbbb';
 /** A conversation no rollout on disk is of. */
 const GONE = '019f9600-0000-7000-8000-00000000dead';
+
+/**
+ * The conversation the book gives daily where a test is about how a child is
+ * counted, not where: none on disk. Since #449 a child whose parent the book
+ * claims counts in its parent's row, so with the book on THIRD the parent and
+ * its child both stay unclaimed, each with a row of its own to read.
+ */
+const THIRD = '019f9600-0000-7000-8000-00000000cccc';
 
 // ---------------------------------------------------------------- the fleet
 
@@ -293,6 +308,9 @@ const parentIn = (answer) => conversationOf(conversationsOf(sessionOf(entryOf(an
 /** The child, as api-bot reports it among the conversations no session claims. */
 const childIn = (answer) => conversationOf(entryOf(answer, 'api-bot').unclaimed, CHILD);
 
+/** The parent, as api-bot reports it among the conversations no session claims: when the book claims THIRD. */
+const parentUnclaimed = (answer) => conversationOf(entryOf(answer, 'api-bot').unclaimed, PARENT);
+
 /** Nothing left out, in the answer's words. */
 const NOTHING_LEFT_OUT = {
   unreadable_transcripts: 0,
@@ -340,7 +358,7 @@ test('F1 a child that copied its origin\'s history from part way in counts only 
   const { bots, home } = await fleet(box);
   await plantParent(box, home);
   await plantChild(box, home, { meta: forkedFrom(PARENT), copies: beforeTheChild(1) });
-  await bookSays(bots, 'api-bot', { daily: ran(PARENT) });
+  await bookSays(bots, 'api-bot', { daily: ran(THIRD) });
 
   const answer = await usage(box);
 
@@ -358,7 +376,7 @@ test('F2 a child that copied its origin\'s history from the very first record co
   const { bots, home } = await fleet(box);
   await plantParent(box, home);
   await plantChild(box, home, { meta: forkedFrom(PARENT), copies: beforeTheChild(0) });
-  await bookSays(bots, 'api-bot', { daily: ran(PARENT) });
+  await bookSays(bots, 'api-bot', { daily: ran(THIRD) });
 
   const answer = await usage(box);
 
@@ -368,7 +386,9 @@ test('F2 a child that copied its origin\'s history from the very first record co
 
 test('F3 done-check: the parent\'s session and its child add up to what was spent, the parent\'s calls once and the child\'s own', async (t) => {
   // The parent spent 15,500/1,550 in five calls, and the child 80,000/8,000 of
-  // its own after copying in the parent's first four records.
+  // its own after copying in the parent's first four records. Since #449 the
+  // child, which names the session's conversation as its parent, counts in
+  // that conversation's row as subagent calls, so the session's row is the sum.
   const box = await createSandbox(t);
   const { bots, home } = await fleet(box);
   await plantParent(box, home);
@@ -378,20 +398,17 @@ test('F3 done-check: the parent\'s session and its child add up to what was spen
   const answer = await usage(box);
   const entry = entryOf(answer, 'api-bot');
 
-  const parent = parentIn(answer);
-  assert.equal(parent.calls, 5);
-  assert.equal(tokensOf(parent).input, 15500);
-  assert.equal(tokensOf(parent).output, 1550);
-  assert.deepEqual(idsOf(entry.unclaimed), [CHILD], 'the child is the bot\'s, unclaimed');
-  const child = childIn(answer);
+  const row = parentIn(answer);
+  assert.deepEqual(idsOf(entry.unclaimed), [], 'the child is the session\'s, in its parent\'s row (#449), not unclaimed');
+  assert.equal(row.subagent_calls, 2, 'the child\'s own two calls; more counts the copies as calls, 1 drops its first own call');
+  assert.equal(row.calls, 7, 'five of the parent\'s and two of the child\'s; 10 counts the copies as calls');
   assert.equal(
-    tokensOf(parent).input + tokensOf(child).input,
+    tokensOf(row).input,
     95500,
     'the parent\'s 15,500 once and the child\'s own 80,000: 110,500 counts the parent\'s 15,000 again under the child, '
     + '109,500 counts the copies by their rises',
   );
-  assert.equal(tokensOf(parent).output + tokensOf(child).output, 9550, 'and not 11,050 or 10,950');
-  assert.equal(parent.calls + child.calls, 7, 'five of the parent\'s and two of the child\'s; 10 counts the copies as calls');
+  assert.equal(tokensOf(row).output, 9550, 'and not 11,050 or 10,950');
 });
 
 test('F4 the origin is found by its id in another folder and under another day, and its records there are still not counted under the child', async (t) => {
@@ -424,14 +441,14 @@ test('F5 a window that holds the copies\' time counts none of them, and each own
   const { bots, home } = await fleet(box);
   await plantParent(box, home);
   await plantChild(box, home, { meta: forkedFrom(PARENT), copies: beforeTheChild(1) });
-  await bookSays(bots, 'api-bot', { daily: ran(PARENT) });
+  await bookSays(bots, 'api-bot', { daily: ran(THIRD) });
 
   const copiesOnly = await usage(box, '--since', at(9), '--until', at(10, 5));
-  assert.equal(tokensOf(parentIn(copiesOnly)).input, 15000, 'the parent\'s four calls in the morning, counted under the parent');
+  assert.equal(tokensOf(parentUnclaimed(copiesOnly)).input, 15000, 'the parent\'s four calls in the morning, counted under the parent');
   assert.deepEqual(
     idsOf(entryOf(copiesOnly, 'api-bot').unclaimed),
-    [],
-    'the child made no call of its own by 10:05, so it has no row; a row here counts the copies at 10:00',
+    [PARENT],
+    'the parent, and not the child: it made no call of its own by 10:05, so it has no row; a row here counts the copies at 10:00',
   );
   assert.deepEqual(leftOutOf(entryOf(copiesOnly, 'api-bot'), 'unclaimed_not_counted'), NOTHING_LEFT_OUT);
 
@@ -462,7 +479,7 @@ test('F6 a rebuilt child with one timestamp on every line still counts its own c
     copies: beforeTheChild(1),
     calls: childCalls(at(11), at(11)),
   });
-  await bookSays(bots, 'api-bot', { daily: ran(PARENT) });
+  await bookSays(bots, 'api-bot', { daily: ran(THIRD) });
 
   const child = childIn(await usage(box));
   assertOwnCallsOnly(child);
@@ -490,7 +507,7 @@ test('F7 a child\'s own calls after the copies keep the repeat and new-window ru
       { when: at(10, 30), last: { input: 7000, output: 700 }, total: { input: 13000, output: 1300 } },
     ],
   });
-  await bookSays(bots, 'api-bot', { daily: ran(PARENT) });
+  await bookSays(bots, 'api-bot', { daily: ran(THIRD) });
 
   const child = childIn(await usage(box));
   assert.equal(child.calls, 3, 'the repeat is not a call: 4 counts it, 6 counts the copies as calls');
@@ -528,7 +545,7 @@ test('F8 a child that names its origin and copied nothing counts its first recor
       },
     ],
   });
-  await bookSays(bots, 'api-bot', { daily: ran(PARENT) });
+  await bookSays(bots, 'api-bot', { daily: ran(THIRD) });
 
   const answer = await usage(box);
 
@@ -542,7 +559,7 @@ test('F8 a child that names its origin and copied nothing counts its first recor
   assert.equal(tokensOf(child).cache_read, 60000);
   assert.equal(tokensOf(child).output, 8000, 'and not 9,500 with the parent\'s 1,500');
   assert.equal(tokensOf(child).reasoning, 3000);
-  assert.equal(tokensOf(parentIn(answer)).input, 15500, 'the parent\'s own, counted once, under its session');
+  assert.equal(tokensOf(parentUnclaimed(answer)).input, 15500, 'the parent\'s own, counted once, in its own row');
 });
 
 test('F9 a spawned subagent with no origin named counts its first record by its own figure', async (t) => {
@@ -552,13 +569,13 @@ test('F9 a spawned subagent with no origin named counts its first record by its 
   const { bots, home } = await fleet(box);
   await plantParent(box, home);
   await plantChild(box, home, { meta: spawnedBy(PARENT) });
-  await bookSays(bots, 'api-bot', { daily: ran(PARENT) });
+  await bookSays(bots, 'api-bot', { daily: ran(THIRD) });
 
   const answer = await usage(box);
 
   assertOwnCallsOnly(childIn(answer));
   assert.equal(
-    tokensOf(parentIn(answer)).input + tokensOf(childIn(answer)).input,
+    tokensOf(parentUnclaimed(answer)).input + tokensOf(childIn(answer)).input,
     95500,
     'the parent\'s 15,500 once and the child\'s own 80,000; 110,500 counts the parent\'s 15,000 twice',
   );
@@ -598,7 +615,7 @@ test('F12 a rebuilt child with no origin named and one timestamp on every line c
   const { bots, home } = await fleet(box);
   await plantParent(box, home);
   await plantChild(box, home, { meta: spawnedBy(PARENT), started: at(11), calls: childCalls(at(11), at(11)) });
-  await bookSays(bots, 'api-bot', { daily: ran(PARENT) });
+  await bookSays(bots, 'api-bot', { daily: ran(THIRD) });
 
   assertOwnCallsOnly(childIn(await usage(box)));
 });
@@ -625,7 +642,7 @@ test('F18 a spawned child whose first record\'s own figure is all zeros is not a
   const { bots, home } = await fleet(box);
   await plantParent(box, home);
   await plantChildWithStatus(box, home, spawnedBy(PARENT));
-  await bookSays(bots, 'api-bot', { daily: ran(PARENT) });
+  await bookSays(bots, 'api-bot', { daily: ran(THIRD) });
 
   const answer = await usage(box);
   const child = childIn(answer);
@@ -649,7 +666,7 @@ test('F19 a guardian review whose first record\'s own figure is all zeros is not
   const { bots, home } = await fleet(box);
   await plantParent(box, home);
   await plantChildWithStatus(box, home, reviewOf(PARENT));
-  await bookSays(bots, 'api-bot', { daily: ran(PARENT) });
+  await bookSays(bots, 'api-bot', { daily: ran(THIRD) });
 
   const answer = await usage(box);
   const child = childIn(answer);
@@ -1048,6 +1065,25 @@ test('F30 a child whose origin is neither under sessions nor archived counts not
 });
 
 // ------------------------------------------------- nothing else changes
+
+test('F31 a child that is only a fork, naming its origin and no parent, stays unclaimed when the book claims its origin (#449)', async (t) => {
+  // `forked_from_id` alone, no `thread_spawn` and no top-level
+  // `parent_thread_id`: #376's rule counts it, and #449 does not move it, since
+  // it names no parent. The book claims its origin.
+  const box = await createSandbox(t);
+  const { bots, home } = await fleet(box);
+  await plantParent(box, home);
+  await plantChild(box, home, { meta: { ...OWN_CONVERSATION, forked_from_id: PARENT }, copies: beforeTheChild(1) });
+  await bookSays(bots, 'api-bot', { daily: ran(PARENT) });
+
+  const answer = await usage(box);
+  const entry = entryOf(answer, 'api-bot');
+
+  assert.deepEqual(idsOf(entry.unclaimed), [CHILD], 'the fork is the bot\'s, unclaimed, as before #449');
+  assertOwnCallsOnly(childIn(answer));
+  assert.equal(parentIn(answer).calls, 5, 'and nothing of it is in the origin\'s row');
+  assert.equal(tokensOf(parentIn(answer)).input, 15500);
+});
 
 test('F17 an ordinary rollout counts as it did: its first record, a repeat that is not a call, and a new window by its own figure', async (t) => {
   // No origin, the first running total equal to its own figure. 1,000; 2,000

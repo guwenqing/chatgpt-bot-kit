@@ -43,7 +43,7 @@ import { realpathSync } from 'node:fs';
 
 import { botDir, botNames, readBot } from './bot.js';
 import { readBook, sessionIdsIn } from './book.js';
-import { claudeSubagentTranscripts, claudeTranscriptAnywhere, codexRollout, transcriptsIn } from './conversations.js';
+import { claudeSubagentTranscripts, claudeTranscriptAnywhere, codexRollout, codexSubagents, transcriptsIn } from './conversations.js';
 import { eachLine } from './lines.js';
 import { HARNESSES, harnessOf } from './launch.js';
 
@@ -91,11 +91,41 @@ export function readUsage(bots, { bot: only, session: onlySession, since, until 
     throw new Error(`--until is before --since, so there is no window between them: ${until} comes before ${since}.`);
   }
 
-  return (only === undefined ? names : [only]).map((name) => forBot(bots, name, onlySession, { from, to }));
+  // Who owns a Codex subagent is a question about the whole fleet, asked once:
+  // one can run in another bot's folder, or be claimed by another bot's book.
+  const fleet = subagentOwners(bots, names);
+  return (only === undefined ? names : [only]).map((name) => forBot(bots, name, onlySession, { from, to }, fleet));
+}
+
+/**
+ * Every conversation any bot's book names, the Codex subagents that hang off
+ * each by their own links, and the ones so attached (#449). A subagent a book
+ * names is that book's, and is never attached under another: the book's word
+ * comes first (ADR 0012). One claimed or attached anywhere is no bot's
+ * unclaimed.
+ */
+function subagentOwners(bots, names) {
+  const claimed = new Set();
+  for (const name of names) for (const id of sessionIdsIn(readBook(realHome(botDir(bots, name))))) claimed.add(id);
+  const childrenOf = new Map();
+  for (const one of codexSubagents()) {
+    if (claimed.has(one.id)) continue;
+    if (!childrenOf.has(one.parent)) childrenOf.set(one.parent, []);
+    childrenOf.get(one.parent).push(one);
+  }
+  const attached = new Set();
+  const waiting = [...claimed].flatMap((id) => childrenOf.get(id) ?? []);
+  while (waiting.length > 0) {
+    const child = waiting.shift();
+    if (attached.has(child.id)) continue;
+    attached.add(child.id);
+    waiting.push(...(childrenOf.get(child.id) ?? []));
+  }
+  return { claimed, childrenOf, attached };
 }
 
 /** One bot: what each of its sessions used, and what nobody claims. */
-function forBot(bots, name, onlySession, window) {
+function forBot(bots, name, onlySession, window, fleet) {
   // The folder as the file system knows it, not as the caller spelled it: a
   // bots folder reached through a symlink is the same fleet, and the harnesses
   // file their transcripts under the real path (as `restart` and `message` do).
@@ -138,6 +168,31 @@ function forBot(bots, name, onlySession, window) {
     }
   }
 
+  // A Codex subagent names the conversation it was started for, and what it
+  // spent is that conversation's, at any depth, as a Claude Code subagent's is
+  // (#449). It is found by that link wherever it ran, and joined only through
+  // links that end at a conversation the book names, as the fleet's owners
+  // say: a parent no session claims leaves its children where they were, and
+  // nothing is guessed from timing or folder. The book's word is enough
+  // without the parent's own file, whose calls are then said to be unreadable.
+  const { childrenOf } = fleet;
+  const attached = new Set();
+  for (const id of claimed) {
+    const own = onRecord.get(id);
+    if (own !== undefined && own.harness !== 'codex') continue;
+    const found = [];
+    const waiting = [...(childrenOf.get(id) ?? [])];
+    while (waiting.length > 0) {
+      const child = waiting.shift();
+      if (attached.has(child.id)) continue;
+      attached.add(child.id);
+      // A review of a subagent is still the harness's approval, not the work.
+      found.push({ file: child.file, kind: child.review ? 'review' : 'subagent' });
+      waiting.push(...(childrenOf.get(child.id) ?? []));
+    }
+    if (found.length > 0) onRecord.set(id, { id, harness: 'codex', subagent: false, ...own, children: found });
+  }
+
   // Two entries can name the same conversation, one resumed after its session
   // was retired, and one entry can name it twice, now and in its history: it is
   // counted once, in the first block asked for that names it.
@@ -155,7 +210,9 @@ function forBot(bots, name, onlySession, window) {
     .filter(({ name }) => onlySession === undefined || name === onlySession)
     .map(({ name, entry, ...was }) => ({ name, ...('retired' in was ? { retired: was.retired } : {}), ...block(entry) }));
 
-  const unclaimed = all([...onRecord.values()].filter((one) => !claimed.has(one.id)), window);
+  // What any bot's book names, or any claim gathered in, is not unclaimed here,
+  // wherever its record lies (#449 review).
+  const unclaimed = all([...onRecord.values()].filter((one) => !fleet.claimed.has(one.id) && !fleet.attached.has(one.id)), window);
 
   return { bot: name, home, sessions, unclaimed: unclaimed.conversations, unclaimed_not_counted: unclaimed.gaps };
 }
@@ -187,6 +244,7 @@ function counted(one, window) {
   const tally = {
     calls: 0,
     subagentCalls: 0,
+    reviewCalls: 0,
     compactions: 0,
     tokens: Object.fromEntries(KINDS.map((kind) => [kind, 0])),
     models: new Set(),
@@ -203,7 +261,10 @@ function counted(one, window) {
   // own, and what they spent is the conversation's.
   const subagents = one.harness === 'claude' ? claudeSubagentTranscripts(one.file) : { files: [], unreadable: 0 };
   tally.gaps.unreadable_transcripts += subagents.unreadable;
-  const sources = [one.file, ...subagents.files]
+  // A Codex conversation the book names, whose own record is gone but whose
+  // subagents' are not: its own calls cannot be counted, and that is said (#449).
+  if (one.file === undefined) tally.gaps.unreadable_transcripts += 1;
+  const sources = [...(one.file === undefined ? [] : [one.file]), ...subagents.files]
     .map((file, index) => {
       const { entries, unreadable, broken } = transcript(file, countable);
       tally.gaps.unreadable_transcripts += unreadable;
@@ -212,8 +273,19 @@ function counted(one, window) {
     });
   if (one.harness === 'claude') fromClaude(sources, window, tally);
   else {
-    const copied = originOf(sources[0].entries, tally);
-    if (copied !== null) fromCodex(sources[0].entries, window, tally, copied);
+    if (one.file !== undefined) {
+      const copied = originOf(sources[0].entries, tally);
+      if (copied !== null) fromCodex(sources[0].entries, window, tally, copied);
+    }
+    // Each subagent's rollout keeps its own running total, so each is counted
+    // on its own, from its own records (#449).
+    for (const child of one.children ?? []) {
+      const { entries, unreadable, broken } = transcript(child.file, countable);
+      tally.gaps.unreadable_transcripts += unreadable;
+      tally.gaps.broken_lines += broken;
+      const itsCopied = originOf(entries, tally);
+      if (itsCopied !== null) fromCodex(entries, window, tally, itsCopied, child.kind);
+    }
   }
   if (tally.calls === 0 && KINDS.every((kind) => tally.tokens[kind] === 0)) return { gaps: tally.gaps };
 
@@ -221,6 +293,7 @@ function counted(one, window) {
     id: one.id,
     calls: tally.calls,
     subagent_calls: tally.subagentCalls,
+    review_calls: tally.reviewCalls,
     tokens: tally.tokens,
     by_model: [...tally.byModel].map(([model, its]) => ({ model, calls: its.calls, tokens: its.tokens })),
     models: [...tally.models],
@@ -309,7 +382,7 @@ function fromClaude(sources, window, tally) {
     if (!isNew && KINDS.every((kind) => grew[kind] === 0)) continue;
 
     const subagent = records.every((record) => record.subagent);
-    count(tally, grew, atEnd.entry.message?.model, atEnd.entry.effort, isNew ? made : atEnd.when, isNew ? 1 : 0, subagent);
+    count(tally, grew, atEnd.entry.message?.model, atEnd.entry.effort, isNew ? made : atEnd.when, isNew ? 1 : 0, subagent ? 'subagent' : undefined);
   }
 }
 
@@ -380,7 +453,7 @@ const CODEX_FIELDS = [
  * A leading record with a figure missing may be a copy or the fork's own call;
  * it is not counted, and is said to be.
  */
-function fromCodex(entries, window, tally, copied) {
+function fromCodex(entries, window, tally, copied, kind) {
   let model;
   let effort;
   let running;
@@ -451,7 +524,7 @@ function fromCodex(entries, window, tally, copied) {
       continue;
     }
 
-    count(tally, used, model, effort, when);
+    count(tally, used, model, effort, when, 1, kind);
   }
 }
 
@@ -546,9 +619,10 @@ function kindsOf(raw) {
  * the total that has to be complete, and a row headed by nothing would be worse
  * than no row.
  */
-function count(tally, used, model, effort, when, calls = 1, subagent = false) {
+function count(tally, used, model, effort, when, calls = 1, kind = undefined) {
   tally.calls += calls;
-  if (subagent) tally.subagentCalls += calls;
+  if (kind === 'subagent') tally.subagentCalls += calls;
+  if (kind === 'review') tally.reviewCalls += calls;
   for (const kind of KINDS) tally.tokens[kind] += used[kind];
   add(tally.models, model);
   add(tally.efforts, effort);

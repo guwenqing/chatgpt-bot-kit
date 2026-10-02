@@ -115,7 +115,8 @@ export function claudeSubagentTranscripts(file) {
 /**
  * The same conversations, each with the file the harness keeps it in, for a
  * caller that has to read what is inside one rather than only know it is there,
- * and whether the harness marks it as a subagent's.
+ * whether the harness marks it as a subagent's, and, for a Codex subagent, the
+ * conversation it was started for and whether it is Codex's auto-review.
  */
 export function transcriptsIn(harness, home, since) {
   const from = since === undefined ? 0 : Date.parse(since);
@@ -123,7 +124,13 @@ export function transcriptsIn(harness, home, since) {
   return found
     .filter((one) => Number.isNaN(from) || one.at >= from)
     .sort((left, right) => left.at - right.at)
-    .map((one) => ({ id: one.id, at: new Date(one.at).toISOString(), file: one.file, subagent: one.subagent === true }));
+    .map((one) => ({
+      id: one.id,
+      at: new Date(one.at).toISOString(),
+      file: one.file,
+      subagent: one.subagent === true,
+      ...(one.parent === undefined ? {} : { parent: one.parent, review: one.review }),
+    }));
 }
 
 /**
@@ -209,9 +216,27 @@ function codexConversations(home, from) {
     .flatMap((file) => {
       const meta = sessionMeta(file);
       return meta?.cwd === home && typeof meta.id === 'string'
-        ? [{ id: meta.id, at: Date.parse(meta.timestamp ?? '') || startedAt(file) || 0, file, subagent: isSubagent(meta) }]
+        ? [{ id: meta.id, at: Date.parse(meta.timestamp ?? '') || startedAt(file) || 0, file, subagent: isSubagent(meta), ...codexParent(meta) }]
         : [];
     });
+}
+
+/**
+ * Every Codex subagent on record, wherever it ran, with the conversation it was
+ * started for: `{ id, file, parent, review }` (#449). Found by the link in its
+ * own record, not by folder: a session's worker can run in a folder of its own.
+ * Read once per process, since every bot asks the same question of the same
+ * files.
+ */
+let subagents;
+export function codexSubagents() {
+  subagents ??= rollouts(codexDir()).flatMap((file) => {
+    const meta = sessionMeta(file);
+    if (meta === undefined || typeof meta.id !== 'string') return [];
+    const link = codexParent(meta);
+    return link.parent === undefined ? [] : [{ id: meta.id, file, ...link }];
+  });
+  return subagents;
 }
 
 /** Every rollout file under Codex's sessions folder, however deep it files them. */
@@ -242,6 +267,21 @@ function sessionMeta(file) {
  */
 const isSubagent = (meta) =>
   meta.source !== null && typeof meta.source === 'object' && 'subagent' in meta.source;
+
+/**
+ * The conversation a Codex subagent was started for, as its own record names
+ * it, and whether it is Codex's auto-review: `{ parent, review }`, or nothing
+ * for a session's own (#449). A session's spawned subagent names it under
+ * `source.subagent.thread_spawn.parent_thread_id`; Codex's auto-review, which
+ * is `{ subagent: { other: 'guardian' } }`, names the conversation it reviewed
+ * as a top-level `parent_thread_id` (tech notes, section 3).
+ */
+function codexParent(meta) {
+  if (!isSubagent(meta)) return {};
+  const parent = meta.source.subagent?.thread_spawn?.parent_thread_id ?? meta.parent_thread_id;
+  if (typeof parent !== 'string' || parent === '') return {};
+  return { parent, review: meta.source.subagent?.other === 'guardian' };
+}
 
 /** When a file was last written, for leaving out what is plainly too old. */
 function lastTouched(file) {
