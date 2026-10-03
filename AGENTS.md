@@ -2,7 +2,7 @@
 
 ## What decides
 
-`docs/prd.md` is the design, `docs/adr/` the lasting decisions, `docs/tech-notes.md`
+`docs/prd/prd.md` is the design, `docs/adr/` the lasting decisions, `docs/tech-notes.md`
 what we know about Orca and the two harnesses. Issues state an intent and a boundary
 and point at these; how to build is yours, and finding the right balance by your own
 research and judgement is part of the work. A `[proposed]` item in the PRD is not

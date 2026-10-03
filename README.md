@@ -10,7 +10,7 @@ an `obk` command and a set of skills. You are meant to manage the fleet by
 talking to Bot Father, the first bot, whose skills call the CLI for you — not by
 editing files.
 
-The design is in [`docs/prd.md`](docs/prd.md); the decisions with lasting
+The design is in [`docs/prd/prd.md`](docs/prd/prd.md); the decisions with lasting
 consequences are in [`docs/adr/`](docs/adr/); what we know about Orca and the
 two harnesses is in [`docs/tech-notes.md`](docs/tech-notes.md).
 
@@ -649,7 +649,7 @@ editor's runner, skips and says how to run it.
 JavaScript this branch changed against `main` — committed, still in the working
 tree, or not tracked yet — and reports the mutants the tests do not kill. It is
 an audit, not a step of every pull request
-([PRD 7.3](docs/prd.md#73-decided-rules-inside-the-skills)): the everyday
+([PRD 7.3](docs/prd/prd.md#73-decided-rules-inside-the-skills)): the everyday
 check is the implementer's own hand check, and the tool runs over the whole
 suite at a milestone or when the owner asks, or once, narrowed to the changed
 logic, for a change at the core of the kit. A surviving mutant is a change to

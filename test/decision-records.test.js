@@ -188,7 +188,7 @@ test('the citation check sees every way the repo cites a record, and not other n
   assert.deepEqual(numbers('# ADR NNNN: <the decision>'), [], 'the placeholder in the format');
   assert.deepEqual(numbers('The PRD and the ADRs carry the rest'), []);
   assert.deepEqual(numbers('PRD 6.9, tech notes 4, #232, 2026-09-24'), []);
-  assert.deepEqual(numbers('[the PRD](docs/prd.md)'), []);
+  assert.deepEqual(numbers('[the PRD](docs/prd/prd.md)'), []);
 });
 
 test('the amendment check sees a citation of an amendment, and not an amendment of something else', () => {
@@ -290,6 +290,19 @@ test('every record in force has the header lines and the sections of the obk-arc
       else if (section.body.trim() === '') problems.push(`${record.rel}:${section.from}: the \`## ${name}\` section is empty`);
     }
   }
+  assert.deepEqual(problems, [], problems.join('\n'));
+});
+
+// AssuredLoop reads a record's status only from a line that starts with
+// `Status:` (#474), as obk-arch's format writes it. That holds for every
+// record, superseded ones included.
+test('every record has its `Status:` at the start of a line', async () => {
+  const all = await records();
+  assert.ok(all.length >= OLD_RECORDS.length, `docs/adr/ should hold at least the ${OLD_RECORDS.length} records there were, got ${all.length}`);
+
+  const problems = all
+    .filter((record) => !/^Status: \S/m.test(record.header))
+    .map((record) => `${record.rel}:${lineAt(record.text, record.text.indexOf('Status:'))}: \`Status:\` is not at the start of a line`);
   assert.deepEqual(problems, [], problems.join('\n'));
 });
 

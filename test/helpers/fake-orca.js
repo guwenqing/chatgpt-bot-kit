@@ -2,7 +2,7 @@
 // run at it, so `npm test` never reaches the real Orca — not even by mistake.
 //
 // It answers the commands the kit is allowed to use, in the envelope Orca
-// 1.4.205 really uses (docs/prd.md, the slice interface and the tech notes),
+// 1.4.205 really uses (docs/prd/prd.md, the slice interface and the tech notes),
 // it remembers what it was told to create and what was typed into each tab,
 // and it can be steered into every way Orca can let the kit down. Its whole
 // world is two files in one directory, named by OBK_FAKE_ORCA_DIR:

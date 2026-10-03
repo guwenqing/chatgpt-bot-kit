@@ -1,6 +1,7 @@
 # ADR 0009: Skills are organised by technique and carry the `obk-` prefix
 
-Date: 2026-09-19. Status: superseded by [ADR 0019](0019-skills-by-technique-with-a-prefix.md). Until then, the Decision was the owner's unless a sentence is marked (proposed).
+Date: 2026-09-19.
+Status: superseded by [ADR 0019](0019-skills-by-technique-with-a-prefix.md). Until then, the Decision was the owner's unless a sentence is marked (proposed).
 
 ## Context
 
