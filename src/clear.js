@@ -18,7 +18,7 @@ import { readBook } from './book.js';
 import { botDir, readBot } from './bot.js';
 import { claudeTranscript, codexRollout } from './conversations.js';
 import { harnessOf, ownCli, shellWord } from './launch.js';
-import { eachLine } from './lines.js';
+import { eachLine, firstLine } from './lines.js';
 import { findProject, orca, QUESTION_ON_SCREEN, screenRows, tabs, tabToTypeInto } from './orca.js';
 import { botsNamed, sessionsOf, typeListLine } from './up.js';
 
@@ -41,6 +41,19 @@ const RECORD_LINE = 'obk: this conversation was started by obk session clear, an
 /** What Codex asks after `/new`, and the one answer the kit gives it: the bot home it runs in. */
 const WHERE_TO_RUN = 'Where should the new conversation run?';
 const CURRENT_CHECKOUT = /^ *› +1\. Current checkout\b/;
+
+/** Codex's empty input line: its pointer alone, or with its placeholder. */
+const CODEX_EMPTY = ['›', '› Ask Codex to do anything'];
+
+/**
+ * The Codex whose input line Orca's screen shows bare while its slash menu is
+ * open, whatever was typed (#391, live runs 2 to 4). On it alone, the menu's
+ * selected row stands for what Return will run: with the menu open, Return
+ * runs the selected command, and the menu is narrowed to what was typed
+ * (codex-rs/tui/src/bottom_pane/chat_composer.rs, rust-v0.160.0). The
+ * architect's ruling on #391, after live run 4.
+ */
+const CODEX_BARE_LINE = '0.160.0';
 
 /** How long the session is given to be idle before nothing is typed, and how long each look waits on it. */
 const IDLE_WAIT_MS = 30_000;
@@ -135,7 +148,7 @@ export async function compactSession(bots, { bot, session }) {
 
 /**
  * The session as something to type into, once everything that refuses before
- * Orca is asked to type has been asked: `{ name, home, harness, tabId }`.
+ * Orca is asked to type has been asked: `{ name, home, session, harness, tabId }`.
  */
 function sessionToType(bots, bot, session) {
   botsNamed(bots, bot);
@@ -154,7 +167,7 @@ function sessionToType(bots, bot, session) {
   if (!open) {
     throw new Error(`${name} has no tab open in Orca, so it is not running and nothing was typed. Bring it up with ${shellWord(ownCli())} up --bots ${shellWord(bots)} --bot ${bot} --session ${session}.`);
   }
-  return { name, home, harness: harnessOf(settings, known.harness), tabId, restart: `${shellWord(ownCli())} restart --bots ${shellWord(bots)} --bot ${bot} --session ${session}` };
+  return { name, home, session, harness: harnessOf(settings, known.harness), tabId, restart: `${shellWord(ownCli())} restart --bots ${shellWord(bots)} --bot ${bot} --session ${session}` };
 }
 
 /**
@@ -165,7 +178,16 @@ function sessionToType(bots, bot, session) {
  */
 async function enter(it, verb, before = () => {}) {
   const command = COMMANDS[verb][it.harness];
-  const handle = await idleTab(it);
+  const { handle, rows } = await idleTab(it);
+  // On Codex, what is typed cannot be read back once its menu is open, so
+  // nothing may be in its input line before: no draft for the command to join.
+  if (it.harness === 'codex') {
+    const line = rows.findLast((row) => /^ *›/.test(row))?.trim();
+    if (!CODEX_EMPTY.includes(line)) {
+      throw new Error(`${it.name}: nothing was typed, because its input line is not empty: it reads "${line ?? 'nothing'}".${shownEnd(rows)}`);
+    }
+  }
+  const version = it.harness === 'codex' ? codexVersion(readBook(it.home).sessions[it.session]?.session) : undefined;
 
   before();
   const typedAt = Date.now();
@@ -189,7 +211,7 @@ async function enter(it, verb, before = () => {}) {
     typed += 1;
   }
   await lookAgain();
-  const wrong = await typedWrong(handle, it.harness, command);
+  const wrong = await typedWrong(handle, it.harness, command, version);
   if (wrong !== undefined) {
     // Taken back, one backspace a character, so the input line is as it was.
     send(handle, '\x7f'.repeat(command.length));
@@ -217,7 +239,7 @@ async function idleTab(it) {
     // The wait is a cutoff, not a count of looks: a yes that comes after it
     // is too late (as for LIST_LINE, review of PR #421).
     if (why === undefined && Date.now() >= until) why = 'the look that found it idle came only after the wait was up';
-    if (why === undefined) return look.handle;
+    if (why === undefined) return look;
     if (Date.now() >= until) throw new Error(`${it.name}: nothing was typed, because after ${IDLE_WAIT_MS / 1000} s ${why}. Run this again once it is idle.`);
     await pause(ASK_MS);
   }
@@ -247,7 +269,7 @@ function lookAt(it, { idle = true } = {}) {
   const working = found.rows.find((row) => AT_WORK.some((marker) => marker.test(row)));
   if (working !== undefined) return { why: `it is busy with a turn: its screen shows "${working.trim()}"` };
   if (idle && !found.idle) return { why: 'it is busy with a turn: Orca\'s tui-idle did not answer ok' };
-  return { handle: found.handle };
+  return { handle: found.handle, rows: found.rows };
 }
 
 /**
@@ -258,40 +280,77 @@ function lookAt(it, { idle = true } = {}) {
  * was not. Read again for SCREEN_MS while it is not so: a screen
  * takes a moment to draw what was typed.
  */
-async function typedWrong(handle, harness, command) {
+async function typedWrong(handle, harness, command, version) {
   const until = Date.now() + SCREEN_MS;
   for (;;) {
     const seen = screenRows(handle, READ_MS);
-    const wrong = seen.rows === undefined ? { why: `its screen could not be read (${seen.unreadable})` } : menuWrong(seen.rows, harness, command);
+    const wrong = seen.rows === undefined ? { why: `its screen could not be read (${seen.unreadable})` } : menuWrong(seen.rows, harness, command, version);
     if (wrong === undefined || Date.now() >= until) return wrong && { ...wrong, rows: seen.rows };
     await pause(ASK_MS);
   }
 }
 
-function menuWrong(rows, harness, command) {
+function menuWrong(rows, harness, command, version) {
   const at = rows.findLastIndex((row) => /^ *[›❯]/.test(row));
   if (at < 0) return { why: 'its screen shows no input line' };
-  if (rows[at].trim() !== `${POINTER[harness]} ${command}`) return { why: `its input line reads "${rows[at].trim()}"` };
-  if (harness === 'codex') return codexMenuWrong(rows, at, command);
-  const first = rows.slice(at + 1).map((row) => row.replace(/^ *(?:[›❯] +)?/, '')).find((row) => row.startsWith('/'));
-  if (first === undefined) return { why: 'no menu of commands came up under its input line', menu: true };
-  if (first.split(/\s+/)[0] !== command) return { why: `the first row of its menu is "${first.trim()}"`, menu: true };
+  // Claude Code 2.1.288 puts a non-breaking space after its pointer (live run 4).
+  const line = rows[at].replaceAll('\u00a0', ' ').trim();
+  if (harness === 'codex') return codexMenuWrong(rows, at, line, command, version);
+  if (line !== `${POINTER[harness]} ${command}`) return { why: `its input line reads "${line}"` };
+  return claudeMenuWrong(rows, at, command);
+}
+
+/**
+ * Claude Code 2.1.288 draws its slash menu above its input box's top rule, a
+ * row of ─: a row per command, starting with it, its description wrapped onto
+ * rows set far in (live run 4). No pointer marks a selection, so the first
+ * command row there has to be the command.
+ */
+function claudeMenuWrong(rows, at, command) {
+  const rule = rows.slice(0, at).findLastIndex((row) => /^\s*─{3}/.test(row));
+  const menu = [];
+  for (let up = rule - 1; up >= 0 && (/^ {1,4}\/\S/.test(rows[up]) || /^ {20,}\S/.test(rows[up])); up -= 1) menu.unshift(rows[up]);
+  const first = menu.find((row) => /^ {1,4}\//.test(row));
+  if (rule < 0 || first === undefined) return { why: 'no menu of commands came up above its input box', menu: true };
+  if (first.trim().split(/\s+/)[0] !== command) return { why: `the first row of its menu is "${first.trim()}"`, menu: true };
   return undefined;
 }
 
 /**
- * Codex draws its slash menu above the input line, its selected row starting
- * with its pointer, then a blank row, then the input line (its own snapshot
- * tests, chat_composer slash_popup_*.snap, rust-v0.160.0). So the nearest row
- * above the input line with words in it has to be that selected row, and name
- * the command.
+ * Codex draws its slash menu above the input line: a row per command, the
+ * selected one starting with its pointer, then a blank row, then the input
+ * line (its own snapshot tests, chat_composer slash_popup_*.snap,
+ * rust-v0.160.0; live run 4). The menu has to hold one command row, the
+ * selected one, naming the command. The input line reads the command, or, on
+ * the Codex whose line Orca shows bare, its pointer alone.
  */
-function codexMenuWrong(rows, at, command) {
-  const above = rows.slice(0, at).findLast((row) => row.trim() !== '');
-  if (above === undefined || !/^ *› +\//.test(above)) return { why: 'no menu of commands came up above its input line', menu: true };
-  const selected = above.replace(/^ *› +/, '');
+function codexMenuWrong(rows, at, line, command, version) {
+  const bare = line === '›' && version === CODEX_BARE_LINE;
+  if (line !== `› ${command}` && !bare) {
+    const why = line === '›' ? `its input line reads "›" and this Codex is ${version ?? 'of a version its record does not give'}, not ${CODEX_BARE_LINE}` : `its input line reads "${line}"`;
+    return { why };
+  }
+  const menu = [];
+  for (let up = at - 1; up >= 0 && (rows[up].trim() === '' || /^ *(?:› +)?\/\S/.test(rows[up])); up -= 1) menu.unshift(rows[up]);
+  const commands = menu.filter((row) => row.trim() !== '');
+  if (commands.length === 0) return { why: 'no menu of commands came up above its input line', menu: true };
+  if (commands.length > 1) return { why: `its menu offers more than one command: ${commands.map((row) => `"${row.trim()}"`).join(', ')}`, menu: true };
+  if (!/^ *› +/.test(commands[0])) return { why: `its menu's one row "${commands[0].trim()}" is not selected`, menu: true };
+  const selected = commands[0].replace(/^ *› +/, '');
   if (selected.split(/\s+/)[0] !== command) return { why: `the selected row of its menu is "${selected.trim()}"`, menu: true };
   return undefined;
+}
+
+/** The Codex version that wrote the rollout of `conversation`, from its session_meta line; undefined when that cannot be read. */
+function codexVersion(conversation) {
+  const file = typeof conversation === 'string' ? codexRollout(conversation) : undefined;
+  if (file === undefined) return undefined;
+  try {
+    const version = JSON.parse(firstLine(file) ?? 'null')?.payload?.cli_version;
+    return typeof version === 'string' ? version : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

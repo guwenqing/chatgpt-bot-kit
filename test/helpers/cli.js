@@ -1158,9 +1158,11 @@ export function recordSession(box, { bots, bot, tab, env, stdin, raw = false, ne
  *           filed under the day `at` falls on
  *
  * `cwd` is the folder the conversation ran in: the bot home, for a session.
- * The file's first line is the one each harness starts it with. Returns its path.
+ * The file's first line is the one each harness starts it with. `cliVersion`
+ * puts Codex's `cli_version` in that line's payload, as Codex writes it (the
+ * kit reads it, #391); left out, the line carries none. Returns its path.
  */
-export async function conversationOnRecord(box, { harness, cwd, id, at = new Date() }) {
+export async function conversationOnRecord(box, { harness, cwd, id, at = new Date(), cliVersion }) {
   const real = await realpath(cwd);
   const stamp = at.toISOString();
   const file = harness === 'codex'
@@ -1168,7 +1170,7 @@ export async function conversationOnRecord(box, { harness, cwd, id, at = new Dat
     : path.join(box.home, '.claude', 'projects', real.replaceAll(/[^A-Za-z0-9]/g, '-'), `${id}.jsonl`);
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, harness === 'codex'
-    ? `${JSON.stringify({ timestamp: stamp, type: 'session_meta', payload: { id, cwd: real, timestamp: stamp } })}\n`
+    ? `${JSON.stringify({ timestamp: stamp, type: 'session_meta', payload: { id, cwd: real, timestamp: stamp, ...(cliVersion === undefined ? {} : { cli_version: cliVersion }) } })}\n`
     : `${JSON.stringify({ type: 'system', sessionId: id, cwd: real, timestamp: stamp })}\n`);
   return file;
 }

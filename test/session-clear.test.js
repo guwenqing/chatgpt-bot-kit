@@ -30,17 +30,22 @@
 //     stops and takes back exactly the characters typed so far, that many
 //     backspaces (\x7f) in one send, and refuses (the architect's ruling on
 //     #391, 2026-10-03).
-//   - Then it reads the screen. The lowest row the harness's pointer starts
-//     (`❯` Claude Code, `›` Codex) must read exactly the pointer, a space and
-//     the command. On Claude Code, the first row under it whose first text
-//     (after an optional pointer) starts with `/` must name exactly that
-//     command as its first word: the menu under the input box. On Codex, which
-//     draws its popup above the input line, the nearest row above it that
-//     starts with `›` (blank rows between allowed), the popup's selected row,
-//     must name it. Otherwise it takes the text back with one backspace per
-//     character, as one send, and refuses, saying what the screen showed, its
-//     last rows among it. A bare `›` input line is refused so. A compact the
-//     menu does not offer is "this harness cannot compact".
+//   - Then it reads the screen, by the architect's ruling after live run 4.
+//     Claude Code: the input line (the lowest row its pointer `❯` starts),
+//     read with a non-breaking space after the pointer as a space, reads
+//     exactly `❯ /clear`; above the input box's top rule, the first row whose
+//     first text starts with `/` names exactly that command as its first word
+//     (a wrapped description row is no command row). Codex: before the first
+//     character its input line was empty or its placeholder, with no draft;
+//     after typing, the popup's selected row (the nearest `›` row above the
+//     input line) names exactly the command and is the popup's only command
+//     row, and the input line reads exactly `› /new`, or `›` alone on Codex
+//     0.160.0, whose screen read shows no composer text while the popup is
+//     open (the version as the session's current rollout gives it).
+//     Otherwise it takes the text back with one backspace per character, as
+//     one send, and refuses, saying what the screen showed, its last rows
+//     among it. A compact the menu does not offer is "this harness cannot
+//     compact".
 //   - The return is a send of its own: `\r`, without --enter.
 //   - Codex's clear: when "Where should the new conversation run?" comes up
 //     with the pointer on "1. Current checkout", one more `\r`; with the
@@ -106,6 +111,7 @@ import {
 } from './helpers/cli.js';
 import {
   CLAUDE_CLEAR_AFTER_DRAFT,
+  CLAUDE_CLEAR_MENU_BELOW,
   CLAUDE_CLEAR_NO_MENU,
   CLAUDE_CLEAR_OTHER_FIRST,
   CLAUDE_CLEAR_TYPED,
@@ -116,13 +122,18 @@ import {
   CLAUDE_WORKING,
   CODEX_COMPACT_NOT_OFFERED,
   CODEX_COMPACT_TYPED,
+  CODEX_DRAFT,
   CODEX_IDLE,
+  CODEX_IDLE_EMPTY,
   CODEX_NEW_MENU,
   CODEX_NEW_BARE_INPUT,
   CODEX_NEW_MENU_ON_TWO,
   CODEX_NEW_OTHER_SELECTED,
+  CODEX_NEW_TWO_ROWS,
+  CODEX_NEW_TWO_ROWS_SHOWN,
   CODEX_NEW_NO_MENU,
   CODEX_NEW_TYPED,
+  CODEX_NEW_TYPED_SHOWN,
   CODEX_UPDATE_OFFER,
   CODEX_WORKING,
   atWork,
@@ -184,9 +195,11 @@ async function liveTab(box, bots, name = 'daily') {
  * api-bot up on `harness`, each session with a conversation the book holds and
  * the harness has on record, as a session that has had a turn has them: its
  * id `sess-<name>`. With `reported: false` the hook has not reported one yet,
- * and the book holds none.
+ * and the book holds none. A Codex rollout's first line names the Codex that
+ * wrote it, `cliVersion`, 0.160.0 unless a test says otherwise; `null` leaves
+ * it out, a version that cannot be read (#391).
  */
-async function running(box, { harness = 'claude', sessions = ['daily', 'review'], reported = true } = {}) {
+async function running(box, { harness = 'claude', sessions = ['daily', 'review'], reported = true, cliVersion = '0.160.0' } = {}) {
   const bots = await madeBot(box, { harness, sessions });
   const up = await box.run(['up', '--bots', 'bots', '--bot', BOT]);
   assert.equal(up.code, 0, `the up this test stands on: ${up.stdout}${up.stderr}`);
@@ -195,7 +208,7 @@ async function running(box, { harness = 'claude', sessions = ['daily', 'review']
       const tab = await liveTab(box, bots, name);
       const heard = await recordSession(box, { bots, bot: BOT, tab: tab.tabId, session: `sess-${name}` });
       assert.equal(heard.code, 0, `the hook report this test stands on: ${heard.stderr}`);
-      await conversationOnRecord(box, { harness, cwd: botHomeOf(bots, BOT), id: `sess-${name}` });
+      await conversationOnRecord(box, { harness, cwd: botHomeOf(bots, BOT), id: `sess-${name}`, ...(harness === 'codex' && cliVersion !== null ? { cliVersion } : {}) });
     }
     assert.equal((await sessionIn(bots, BOT, 'daily')).session, 'sess-daily', 'the premise: the book holds daily\'s conversation');
   }
@@ -721,16 +734,105 @@ for (const { harness, command, question } of [
   });
 }
 
-test('Codex\'s input line left a bare "›" after /new, its popup above naming /new: taken back, never entered, and the refusal shows the rows', async (t) => {
-  // The screen of live run 2 (helpers/screens.js, CODEX_NEW_BARE_INPUT).
+// ------------------------------------------------ after live run 4 (ruling 2026-10-03)
+//
+// Live run 4 of #391. Claude Code 2.1.288 puts a non-breaking space after its
+// pointer, and draws its menu above the input box's top rule. Codex 0.160.0's
+// input line reads `›` alone in Orca's screen read whenever its slash popup is
+// open. The architect's ruling: on Claude Code the input line, read with
+// U+00A0 as a space, reads exactly the command, and the first command row
+// above the box's top rule names it; wrapped description rows are no command
+// rows. On Codex, before the first character the input line is empty or
+// Codex's placeholder, no draft; after typing, the popup's selected row (the
+// nearest `›` row above the input line) names exactly the command and is the
+// popup's only command row; the input line may be `›` alone on Codex 0.160.0,
+// as the session's current rollout names its Codex (its first line's
+// `payload.cli_version`), and must read exactly `› /new` on any other or on
+// one that cannot be read.
+
+for (const { cliVersion, what } of [
+  { cliVersion: '0.161.0', what: 'a Codex other than 0.160.0' },
+  { cliVersion: null, what: 'a Codex whose version its rollout does not give' },
+]) {
+  test(`${what}: a bare "›" input line under /new's own popup row is taken back, never entered, and the refusal shows the rows`, async (t) => {
+    // The screen of live run 2 (helpers/screens.js, CODEX_NEW_BARE_INPUT),
+    // which Codex 0.160.0 draws; on another, the line must show the command.
+    const box = await createSandbox(t);
+    const bots = await running(box, { harness: 'codex', cliVersion });
+    await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('codex', '/new', CODEX_NEW_BARE_INPUT, CODEX_IDLE) });
+
+    const said = assertRefused(await sessionCommand(box, 'clear'));
+
+    assert.deepEqual(await sendsInto(box, bots), [...typed('/new'), { text: backspaces('/new'), enter: false }]);
+    assert.ok(said.includes('start a new chat during a conversation'), `it shows the rows it saw, the popup's above the bare line among them, got:\n${said}`);
+  });
+}
+
+test('a Codex other than 0.160.0 whose input line reads exactly "› /new" under its popup row: /new is entered, and the new conversation is the answer', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await running(box, { harness: 'codex', cliVersion: '0.161.0' });
+  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('codex', '/new', CODEX_NEW_TYPED_SHOWN, CODEX_NEW_MENU, CODEX_IDLE) });
+
+  const { result, played } = await runPlaying(box, bots, 'clear', {
+    when: (sends) => sends.some((one) => one.text === RECORD_LINE),
+    then: () => hookReports(box, bots, 'sess-new', 'startup'),
+  });
+
+  const answer = answered(result, 'the clear');
+  assert.ok(played, 'the premise: the line was typed and the hook reported the new conversation');
+  assert.deepEqual(answer.cleared, { bot: BOT, session: 'daily', harness: 'codex', was: 'sess-daily', now: 'sess-new' });
+});
+
+for (const { screen, line } of [
+  { screen: CODEX_NEW_TWO_ROWS, line: '"›" alone' },
+  { screen: CODEX_NEW_TWO_ROWS_SHOWN, line: '"› /new"' },
+]) {
+  test(`Codex's popup with /new selected and a second command row in it, the input line ${line}: /new taken back, never entered, and refused`, async (t) => {
+    const box = await createSandbox(t);
+    const bots = await running(box, { harness: 'codex' });
+    await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('codex', '/new', screen, CODEX_IDLE) });
+
+    assertRefused(await sessionCommand(box, 'clear'));
+
+    assert.deepEqual(await sendsInto(box, bots), [...typed('/new'), { text: backspaces('/new'), enter: false }]);
+  });
+}
+
+test('a draft in Codex\'s input line before the first character: refused, nothing typed, and the refusal shows the draft', async (t) => {
   const box = await createSandbox(t);
   const bots = await running(box, { harness: 'codex' });
-  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('codex', '/new', CODEX_NEW_BARE_INPUT, CODEX_IDLE) });
+  await changeTab(box, (await liveTab(box, bots)).tabId, { screen: CODEX_DRAFT, nextScreens: screensFor('codex', '/new', CODEX_NEW_TYPED, CODEX_NEW_MENU, CODEX_IDLE) });
+  const before = await typedEverywhere(box);
 
   const said = assertRefused(await sessionCommand(box, 'clear'));
 
-  assert.deepEqual(await sendsInto(box, bots), [...typed('/new'), { text: backspaces('/new'), enter: false }]);
-  assert.ok(said.includes('start a new chat during a conversation'), `it shows the rows it saw, the popup's above the bare line among them, got:\n${said}`);
+  await assertNothingTyped(box, before, 'a draft in the input line');
+  assert.ok(said.includes('Reply with the single word OK'), `it shows the draft it found, got:\n${said}`);
+});
+
+test('Codex\'s input line empty, "›" alone with no placeholder, before the first character: /new is typed and entered', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await running(box, { harness: 'codex' });
+  await changeTab(box, (await liveTab(box, bots)).tabId, { screen: CODEX_IDLE_EMPTY, nextScreens: screensFor('codex', '/new', CODEX_NEW_TYPED, CODEX_NEW_MENU, CODEX_IDLE) });
+
+  const { result, played } = await runPlaying(box, bots, 'clear', {
+    when: (sends) => sends.some((one) => one.text === RECORD_LINE),
+    then: () => hookReports(box, bots, 'sess-new', 'startup'),
+  });
+
+  const answer = answered(result, 'the clear');
+  assert.ok(played, 'the premise: the hook reported the new conversation');
+  assert.equal(answer.cleared.now, 'sess-new');
+});
+
+test('Claude Code\'s menu drawn under the input box and none above it, the layout 2.1.288 does not draw: /clear taken back, never entered', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await running(box);
+  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('claude', '/clear', CLAUDE_CLEAR_MENU_BELOW, CLAUDE_IDLE) });
+
+  assertRefused(await sessionCommand(box, 'clear'));
+
+  assert.deepEqual(await sendsInto(box, bots), [...typed('/clear'), { text: backspaces('/clear'), enter: false }]);
 });
 
 test('Codex\'s popup above the input line with another command selected: /new taken back, never entered, and the refusal names that command', async (t) => {
