@@ -566,13 +566,13 @@ function readRole(home, file, name, written) {
       return;
     }
     const called = `${name}:${option.name}`;
-    if (!NAME.test(String(option.name))) say(`has an option ${option.name} whose name is not lower-case letters, digits and single hyphens, so ${called} cannot be asked for.`);
+    if (typeof option.name !== 'string' || !NAME.test(option.name)) say(`has an option ${option.name} whose name is not a word of lower-case letters, digits and single hyphens, so ${called} cannot be asked for. Write the name in quotes if YAML reads it as something else.`);
     if (seen.has(option.name)) say(`has two options called ${option.name}, and ${called} would name either.`);
     seen.add(option.name);
     for (const key of Object.keys(option).filter((one) => !OPTION_FIELDS.includes(one))) {
       say(`has an option ${option.name} with a setting the kit does not know, ${key}, so nothing reads it and a session made in ${called} would not get it. An option can set ${OPTION_FIELDS.join(', ')}.`);
     }
-    if (option.harness !== undefined && !HARNESSES.includes(option.harness)) {
+    if (option.harness !== undefined && option.harness !== null && !HARNESSES.includes(option.harness)) {
       say(`has an option ${option.name} that runs on ${option.harness}, and the harnesses are ${HARNESSES.join(' and ')}.`);
     }
   });

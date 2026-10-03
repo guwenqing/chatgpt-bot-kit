@@ -143,7 +143,8 @@ function settingsFor(bot, maker, option, given) {
   const settings = {};
   const chosen = {};
   const pick = (field, ...sources) => {
-    const found = sources.find(([, value]) => value !== undefined);
+    // YAML reads a setting written with no value as null, which gives nothing.
+    const found = sources.find(([, value]) => value !== undefined && value !== null);
     if (found === undefined) {
       chosen[field] = { from: 'harness default' };
       return;
