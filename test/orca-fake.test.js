@@ -1139,6 +1139,41 @@ test('the fake can move one tab\'s screen on at the next key sent into it, and a
   }
 });
 
+test('the fake can move one tab\'s screen on at each of the next keys sent into it, in order, and then no more (#391)', async (t) => {
+  // A command typed, checked on screen, entered and its menu answered: the
+  // screen moves on at every send, and the kit reads it between them.
+  const box = await createSandbox(t);
+  await twoTabs(box);
+  const before = ['› Ask Codex to do anything'];
+  const typed = ['› /new', '  /new  start a new chat'];
+  const menu = ['  Where should the new conversation run?', '› 1. Current checkout', '  2. New worktree'];
+  const fresh = ['› Ask Codex to do anything', '  a new conversation'];
+  await box.orca.set({
+    terminals: (await box.orca.terminals()).map((terminal) => (terminal.handle === 'term_a' ? { ...terminal, screen: before, nextScreens: [typed, menu, fresh] } : terminal)),
+  });
+  const read = (on) => answer(ask(box, ['terminal', 'read', '--terminal', on, '--screen', '--json'])).result.terminal.tail;
+
+  assert.deepEqual(read('term_a'), before, 'until a key is sent, the screen it has');
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_b', '--text', 'x', '--json']));
+  assert.deepEqual(read('term_a'), before, 'a key sent into another tab moves nothing here');
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_a', '--text', '/new', '--json']));
+  assert.deepEqual(read('term_a'), typed, 'the first key sent into it puts up the first screen');
+  assert.deepEqual(read('term_a'), typed, 'and a second read without a send shows the same');
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_a', '--text', '\r', '--json']));
+  assert.deepEqual(read('term_a'), menu, 'the second key, the second screen');
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_a', '--text', '\r', '--json']));
+  assert.deepEqual(read('term_a'), fresh, 'the third key, the third');
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_a', '--text', 'y', '--json']));
+  assert.deepEqual(read('term_a'), fresh, 'and once the list has run out, it stays there');
+  assert.deepEqual(read('term_b'), CLAUDE_IDLE, 'the other tab kept its own screen throughout');
+
+  const listed = answer(ask(box, ['terminal', 'list', '--json'])).result.terminals.find((one) => one.handle === 'term_a');
+  const showed = answer(ask(box, ['terminal', 'show', '--terminal', 'term_a', '--json'])).result.terminal;
+  for (const [what, entry] of [['list', listed], ['show', showed]]) {
+    assert.equal('nextScreens' in entry, false, `Orca shows a screen only through read, not in ${what}`);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Many callers at once (#438)
 // ---------------------------------------------------------------------------

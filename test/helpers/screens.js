@@ -397,6 +397,124 @@ export const FORM_IN_HISTORY = [
   ...CLAUDE_INPUT_LINE,
 ];
 
+// A harness's own command typed into its input line and not entered yet, and
+// a harness at work (#391). None of these was captured: each is a
+// reconstruction on the captured CLAUDE_ANSWERED or CODEX_ANSWERED, with the
+// input line and what is drawn under it made up here. How the slash menu
+// lays out its rows (one command a row, the command first, its description
+// after it) is how both harnesses were seen to draw it by eye; the words of
+// the descriptions are made up. Neither harness was seen to start a menu row
+// with its pointer, and these do not.
+
+/** Claude Code's screen down to its input box: CLAUDE_ANSWERED's header, its answered turn. */
+const CLAUDE_ABOVE_INPUT = CLAUDE_ANSWERED.slice(0, 7);
+
+/** Claude Code with `input` as its input line, and `below` drawn under the box in place of its foot row. */
+const claudeWith = (input, below) => [...CLAUDE_ABOVE_INPUT, CLAUDE_INPUT_LINE[0], input, CLAUDE_INPUT_LINE[2], ...below];
+
+/** Claude Code's slash menu row for `/clear`, its first word the command. */
+const CLAUDE_CLEAR_ROW = '  /clear (reset, new)              Clear conversation history and free up context';
+
+/** Claude Code's slash menu row for `/compact`. */
+const CLAUDE_COMPACT_ROW = '  /compact                         Clear conversation history but keep a summary in context';
+
+/** `/clear` typed into Claude Code's empty input line, its menu open under it with `/clear` first. A reconstruction. */
+export const CLAUDE_CLEAR_TYPED = claudeWith('❯ /clear', [
+  CLAUDE_CLEAR_ROW,
+  '  /context                         Visualize current context usage',
+]);
+
+/**
+ * `/clear` typed after a draft that was already in the input line, so the line
+ * reads the draft and the command together; the menu under it is drawn as for
+ * the command alone, so only the input line is wrong. A reconstruction.
+ */
+export const CLAUDE_CLEAR_AFTER_DRAFT = claudeWith('❯ fix the flaky test/clear', [CLAUDE_CLEAR_ROW]);
+
+/**
+ * `/clear` typed, and the menu's first row a command whose name only starts
+ * with it, `/clear` itself second. A reconstruction: no such command was seen.
+ */
+export const CLAUDE_CLEAR_OTHER_FIRST = claudeWith('❯ /clear', [
+  '  /clear-history                   Remove the prompt history',
+  CLAUDE_CLEAR_ROW,
+]);
+
+/** `/clear` typed, and no menu at all under the input box: its foot row as when idle. A reconstruction. */
+export const CLAUDE_CLEAR_NO_MENU = claudeWith('❯ /clear', [CLAUDE_INPUT_LINE[3]]);
+
+/** `/compact` typed into Claude Code's empty input line, its menu open with `/compact` first. A reconstruction. */
+export const CLAUDE_COMPACT_TYPED = claudeWith('❯ /compact', [CLAUDE_COMPACT_ROW]);
+
+/**
+ * Claude Code at work on a turn, its empty input line below: the row above the
+ * box says how to interrupt it, here with a capital E, as either harness may
+ * write it. Orca's `tui-idle` can call a harness like this idle (tech notes,
+ * section 1). A reconstruction.
+ */
+export const CLAUDE_WORKING = [
+  ...CLAUDE_ABOVE_INPUT.slice(0, 5),
+  '✻ Thinking… (12s · ↓ 300 tokens · Esc to interrupt)',
+  ...CLAUDE_INPUT_LINE,
+];
+
+/** Codex's screen down to its input line: CODEX_ANSWERED's box, its answered turn and the tip. */
+const CODEX_ABOVE_INPUT = CODEX_ANSWERED.slice(0, 12);
+
+/** Codex's status rows under its input line, as captured in CODEX_ANSWERED. */
+const CODEX_STATUS = CODEX_ANSWERED.slice(13);
+
+/** Codex with `input` as its input line and `below` under it. */
+const codexWith = (input, below) => [...CODEX_ABOVE_INPUT, input, ...below];
+
+/** `/new` typed into Codex's empty input line, its menu open under it with `/new` first. A reconstruction. */
+export const CODEX_NEW_TYPED = codexWith('› /new', [
+  '',
+  '  /new         start a new chat during a conversation',
+]);
+
+/** `/new` typed, and no menu at all: Codex's status rows under the line as when idle. A reconstruction. */
+export const CODEX_NEW_NO_MENU = codexWith('› /new', CODEX_STATUS);
+
+/**
+ * Codex's `/new` menu with its selection moved down to `2. New worktree`:
+ * CODEX_NEW_MENU with the pointer moved, a reconstruction.
+ */
+export const CODEX_NEW_MENU_ON_TWO = CODEX_NEW_MENU.map((row) => {
+  if (row.startsWith('› 1. Current checkout')) return `  ${row.slice(2)}`;
+  if (row.startsWith('  2. New worktree')) return `› ${row.slice(2)}`;
+  return row;
+});
+
+/** `/compact` typed into Codex's empty input line, its menu open with `/compact` first. A reconstruction. */
+export const CODEX_COMPACT_TYPED = codexWith('› /compact', [
+  '',
+  '  /compact     summarize conversation to prevent hitting the context limit',
+]);
+
+/**
+ * `/compact` typed into a Codex that has no such command: its menu finds
+ * nothing to offer. A reconstruction; whether Codex 0.157 has `/compact` is
+ * not known (#391).
+ */
+export const CODEX_COMPACT_NOT_OFFERED = codexWith('› /compact', [
+  '',
+  '  no matches',
+]);
+
+/**
+ * Codex at work on a turn, its empty input line below: the row above it says
+ * how to interrupt it, in lower case. Orca's `tui-idle` called Codex busy like
+ * this idle (tech notes, section 1). A reconstruction.
+ */
+export const CODEX_WORKING = [
+  ...CODEX_ABOVE_INPUT.slice(0, 9),
+  '• Working (12s • esc to interrupt)',
+  '',
+  '› Ask Codex to do anything',
+  ...CODEX_STATUS,
+];
+
 /** A row the pointer starts, whatever follows it: a choice, the input line, or an echoed turn. */
 const POINTER_ROW = /^ *[›❯]/;
 

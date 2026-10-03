@@ -112,6 +112,14 @@
 //               a key answers it. That send puts it in place as the terminal's
 //               own `screen` and clears it, so a send after that changes
 //               nothing. Left out, a send leaves the screen as it was.
+//   nextScreens  on one terminal only: a list of screens, one for each of the
+//               next sends, in order: the first `terminal send` puts the first
+//               in place as the terminal's own `screen`, the second send the
+//               second, and so on, each taken off the list as it is used. A
+//               send after the list has run out changes nothing. A screen that
+//               moves on with every key, as a harness's input line and its
+//               menus do while a command is typed, entered and answered (#391).
+//               When a terminal carries both, `screenAfterSend` is used first.
 //   agentIdentity  what `terminal show` and `terminal list` give as every
 //               tab's `agentIdentity`, when the key is there (null included).
 //               Left out, a tab carries its own: null when it is made, and the
@@ -601,7 +609,7 @@ if (command === 'project setup-delete') {
  * a test gave it, which only `terminal read` shows, and what a send into it is
  * seen to do, which only `terminal send` answers.
  */
-const asReported = ({ typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, submit: _submit, refuseClose: _refuseClose, ...rest }) => (rest.orphaned === true
+const asReported = ({ typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, nextScreens: _nextScreens, submit: _submit, refuseClose: _refuseClose, ...rest }) => (rest.orphaned === true
   ? { ...rest, ...identity(), tabId: `pty:${rest.ptyId}`, leafId: `pty:${rest.ptyId}`, orphaned: true }
   : { ...rest, ...identity(), orphaned: false });
 
@@ -734,7 +742,7 @@ if (command === 'terminal close') {
 if (command === 'terminal show') {
   const terminal = (state.terminals ?? []).find((entry) => entry.handle === flag('--terminal'));
   if (!terminal) fail('terminal_not_found', `no terminal with handle ${flag('--terminal')}`);
-  const { typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, submit: _submit, refuseClose: _refuseClose, ...rest } = terminal;
+  const { typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, nextScreens: _nextScreens, submit: _submit, refuseClose: _refuseClose, ...rest } = terminal;
   ok({ terminal: { ...rest, ...identity(), orphaned: terminal.orphaned === true } });
 }
 
@@ -841,6 +849,8 @@ if (command === 'terminal send') {
   if (terminal.screenAfterSend !== undefined) {
     terminal.screen = terminal.screenAfterSend;
     delete terminal.screenAfterSend;
+  } else if (Array.isArray(terminal.nextScreens) && terminal.nextScreens.length > 0) {
+    terminal.screen = terminal.nextScreens.shift();
   }
   // Orca learns which agent is in a tab once it runs there. The fake gives it
   // at once; a test that wants it late says so with `agentIdentity`.

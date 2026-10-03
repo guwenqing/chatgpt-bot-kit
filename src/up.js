@@ -408,12 +408,13 @@ const LIST_LOOK_MS = 2000;
 const LIST_ASK_MS = 500;
 
 /**
- * Type LIST_LINE into the tab `tabId` once the gate every typed line goes
- * through lets it: `{ typed: true }`, or `{ typed: false, why }` with the
- * gate's last reason once LIST_WAIT_MS is up. Nothing goes into a question, a
- * form or a menu (#329, #416), nor into a tab the kit cannot tell about.
+ * Type `line`, LIST_LINE unless told otherwise, into the tab `tabId` once the
+ * gate every typed line goes through lets it: `{ typed: true }`, or
+ * `{ typed: false, why }` with the gate's last reason once LIST_WAIT_MS is up.
+ * Nothing goes into a question, a form or a menu (#329, #416), nor into a tab
+ * the kit cannot tell about.
  */
-async function typeListLine(home, tabId) {
+export async function typeListLine(home, tabId, line = LIST_LINE) {
   const until = Date.now() + LIST_WAIT_MS;
   for (;;) {
     let found;
@@ -430,7 +431,7 @@ async function typeListLine(home, tabId) {
     }
     if (found.handle !== undefined) {
       try {
-        typeIntoTab(found.handle, LIST_LINE);
+        typeIntoTab(found.handle, line);
         return { typed: true };
       } catch (error) {
         return { typed: false, why: `Orca refused the line: ${error.message}` };
