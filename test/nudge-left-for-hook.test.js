@@ -558,6 +558,23 @@ test('A7 a send whose --from names a Codex session, run outside that session\'s 
   await assertUntyped(box, '--from outside its tab');
 });
 
+test('A7 a send whose --from names one Codex session, run in another Codex session\'s tab, leaves nothing', async (t) => {
+  // The tab is a kit-launched Codex tab in the book, as in A1; only it is
+  // reviewer/review's, and the send says it is from reviewer/daily.
+  const { box, bots } = await leftFleet(t, { sessions: ['daily', 'review'] });
+
+  const answer = await send(box, await inTab(box, bots, 'reviewer', 'review', { codexCommand: true }), { from: 'reviewer/daily' });
+
+  assert.equal(answer.nudged, false, `got: ${JSON.stringify(answer)}`);
+  assert.match(String(answer.nudgeTrouble), COULD_NOT_TELL, `got: ${JSON.stringify(answer)}`);
+  assertNotLeft(answer, '--from another session\'s tab');
+  await psRuns(box);
+  for (const session of ['review', 'daily']) {
+    assertSilent(await hook(box, await inTab(box, bots, 'reviewer', session), afterBash(bots)), `the hook in reviewer/${session}'s tab`);
+  }
+  await assertUntyped(box, '--from another session\'s tab');
+});
+
 test('A7 an idle receiver the runtime names is typed into by the send itself, nothing is left, and a hook run afterwards types nothing more', async (t) => {
   const box = await createSandbox(t);
   const bots = await fleetIn(box);
