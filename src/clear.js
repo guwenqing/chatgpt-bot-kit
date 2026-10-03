@@ -19,7 +19,7 @@ import { botDir, readBot } from './bot.js';
 import { claudeTranscript, codexRollout } from './conversations.js';
 import { harnessOf, ownCli, shellWord } from './launch.js';
 import { eachLine, firstLine } from './lines.js';
-import { findProject, orca, QUESTION_ON_SCREEN, screenRows, tabs, tabToTypeInto } from './orca.js';
+import { findProject, orca, QUESTION_ON_SCREEN, questionIn, screenRows, tabs, tabToTypeInto } from './orca.js';
 import { botsNamed, sessionsOf, typeListLine } from './up.js';
 
 /** The harness's own command for each, as typed into its input line. Codex's clear is `/new` (tech notes, section 3). */
@@ -266,8 +266,8 @@ function lookAt(it, { idle = true } = {}) {
   }
   if (found.agent !== it.harness) return { why: `Orca names ${found.agent} in it, and the session runs on ${it.harness}` };
   // The gate has read the screen already: it saw no question on it.
-  const working = found.rows.find((row) => AT_WORK.some((marker) => marker.test(row)));
-  if (working !== undefined) return { why: `it is busy with a turn: its screen shows "${working.trim()}"` };
+  const signal = signalIn(found.rows);
+  if (signal !== undefined) return { why: signal };
   if (idle && !found.idle) return { why: 'it is busy with a turn: Orca\'s tui-idle did not answer ok' };
   return { handle: found.handle, rows: found.rows };
 }
@@ -284,10 +284,22 @@ async function typedWrong(handle, harness, command, version) {
   const until = Date.now() + SCREEN_MS;
   for (;;) {
     const seen = screenRows(handle, READ_MS);
+    // The screen that lets the return in has to pass the look too: a turn or
+    // a question that shows on it stops it at once (review of c1e5ba4).
+    const signal = seen.rows === undefined ? undefined : signalIn(seen.rows);
+    if (signal !== undefined) return { why: signal, rows: seen.rows };
     const wrong = seen.rows === undefined ? { why: `its screen could not be read (${seen.unreadable})` } : menuWrong(seen.rows, harness, command, version);
     if (wrong === undefined || Date.now() >= until) return wrong && { ...wrong, rows: seen.rows };
     await pause(ASK_MS);
   }
+}
+
+/** Why `rows` say not to type now, as the look says it, or undefined: a turn at work, or a question. */
+function signalIn(rows) {
+  const working = rows.find((row) => AT_WORK.some((marker) => marker.test(row)));
+  if (working !== undefined) return `it is busy with a turn: its screen shows "${working.trim()}"`;
+  if (questionIn(rows)) return 'a question of its harness\'s own is on its screen';
+  return undefined;
 }
 
 function menuWrong(rows, harness, command, version) {

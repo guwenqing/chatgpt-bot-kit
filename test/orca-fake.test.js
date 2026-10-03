@@ -640,6 +640,29 @@ test('the fake can be slow to answer one command, and then answers it as it woul
   assert.equal(slow.result.runtime.reachable, true);
 });
 
+test('a screen the fake puts up at a send can draw late: it answers that many reads, then moves on by itself (#391)', async (t) => {
+  const box = await createSandbox(t);
+  await twoTabs(box);
+  const early = ['❯ /clear'];
+  const late = ['  /clear  Start a new session', '❯ /clear'];
+  const next = ['❯'];
+  await box.orca.set({
+    terminals: (await box.orca.terminals()).map((terminal) => (terminal.handle === 'term_a'
+      ? { ...terminal, nextScreens: [{ screen: early, then: late, reads: 2 }, next] }
+      : terminal)),
+  });
+  const read = (on) => answer(ask(box, ['terminal', 'read', '--terminal', on, '--screen', '--json'])).result.terminal.tail;
+
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_a', '--text', 'r', '--json']));
+  const listed = answer(ask(box, ['terminal', 'list', '--json'])).result.terminals.find((one) => one.handle === 'term_a');
+  assert.equal('thenScreen' in listed || 'readsBeforeThen' in listed, false, 'Orca never lists the screen to come');
+  assert.deepEqual(read('term_b'), CLAUDE_IDLE, 'a read of another tab uses none of its reads');
+  assert.deepEqual([read('term_a'), read('term_a')], [early, early], 'the first two reads find the screen as it was put up');
+  assert.deepEqual([read('term_a'), read('term_a')], [late, late], 'every read after them finds it drawn');
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_a', '--text', '\r', '--json']));
+  assert.deepEqual(read('term_a'), next, 'and a send moves it on as ever');
+});
+
 test('a screen the fake puts up at a send can carry what tui-idle finds in that tab, until a screen that says nothing takes it away (#391)', async (t) => {
   // An open slash popup that stops Orca's tui-idle answering ok, worked out
   // on live run 3 of #391: the screen and the answer move on together.

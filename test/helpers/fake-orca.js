@@ -126,7 +126,13 @@
 //               When a terminal carries both, `screenAfterSend` is used first.
 //               An entry may be `{ screen, tuiIdle }` in place of the rows: it
 //               puts up `screen` and sets the terminal's own `tuiIdle` to what
-//               it says, or takes it away when it says nothing.
+//               it says, or takes it away when it says nothing. With `then`,
+//               and `reads` (1 if left out), the screen moves on by itself:
+//               `screen` answers the next `reads` reads of that tab, and
+//               `then` every read after them, until a send moves it on again.
+//               A screen that draws late, after the key that caused it has
+//               gone in (#391: a menu drawn with an at-work row the read
+//               before did not show).
 //   tuiIdle     on one terminal only: what `terminal wait --for tui-idle`
 //               finds in that tab, one of the `waitIdle` words below, in
 //               place of `waitIdle`, which goes on deciding everything else
@@ -644,7 +650,7 @@ if (command === 'project setup-delete') {
  * a test gave it, which only `terminal read` shows, and what a send into it is
  * seen to do, which only `terminal send` answers.
  */
-const asReported = ({ typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, nextScreens: _nextScreens, tuiIdle: _tuiIdle, submit: _submit, refuseClose: _refuseClose, ...rest }) => (rest.orphaned === true
+const asReported = ({ typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, nextScreens: _nextScreens, tuiIdle: _tuiIdle, thenScreen: _thenScreen, readsBeforeThen: _readsBeforeThen, submit: _submit, refuseClose: _refuseClose, ...rest }) => (rest.orphaned === true
   ? { ...rest, ...identity(), tabId: `pty:${rest.ptyId}`, leafId: `pty:${rest.ptyId}`, orphaned: true }
   : { ...rest, ...identity(), orphaned: false });
 
@@ -777,7 +783,7 @@ if (command === 'terminal close') {
 if (command === 'terminal show') {
   const terminal = (state.terminals ?? []).find((entry) => entry.handle === flag('--terminal'));
   if (!terminal) fail('terminal_not_found', `no terminal with handle ${flag('--terminal')}`);
-  const { typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, nextScreens: _nextScreens, tuiIdle: _tuiIdle, submit: _submit, refuseClose: _refuseClose, ...rest } = terminal;
+  const { typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, nextScreens: _nextScreens, tuiIdle: _tuiIdle, thenScreen: _thenScreen, readsBeforeThen: _readsBeforeThen, submit: _submit, refuseClose: _refuseClose, ...rest } = terminal;
   ok({ terminal: { ...rest, ...identity(), orphaned: terminal.orphaned === true } });
 }
 
@@ -791,6 +797,16 @@ if (command === 'terminal read') {
   if (!terminal) fail('terminal_not_found', `no terminal with handle ${flag('--terminal')}`);
 
   const tail = terminal.screen ?? state.screen ?? (launchedIn(terminal) === 'codex' ? CODEX_IDLE : CLAUDE_IDLE);
+  // A screen that draws late moves on once its reads are used (`then`, under `nextScreens`).
+  if (terminal.thenScreen !== undefined) {
+    terminal.readsBeforeThen -= 1;
+    if (terminal.readsBeforeThen <= 0) {
+      terminal.screen = terminal.thenScreen;
+      delete terminal.thenScreen;
+      delete terminal.readsBeforeThen;
+    }
+    save();
+  }
   const source = args.includes('--screen') ? (terminal.screenSource ?? state.screenSource ?? 'screen') : 'stream';
   ok({
     terminal: {
@@ -888,12 +904,18 @@ if (command === 'terminal send') {
     delete terminal.screenAfterSend;
   } else if (Array.isArray(terminal.nextScreens) && terminal.nextScreens.length > 0) {
     const next = terminal.nextScreens.shift();
+    delete terminal.thenScreen;
+    delete terminal.readsBeforeThen;
     if (Array.isArray(next)) {
       terminal.screen = next;
     } else {
       terminal.screen = next.screen;
       if (next.tuiIdle === undefined) delete terminal.tuiIdle;
       else terminal.tuiIdle = next.tuiIdle;
+      if (next.then !== undefined) {
+        terminal.thenScreen = next.then;
+        terminal.readsBeforeThen = next.reads ?? 1;
+      }
     }
   }
   // Orca learns which agent is in a tab once it runs there. The fake gives it

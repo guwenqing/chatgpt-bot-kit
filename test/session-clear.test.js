@@ -909,6 +909,46 @@ for (const { harness, command, typedScreen, after, source, last } of TYPING) {
   });
 }
 
+// --------------------------------------- the screen read before Return (review of c1e5ba4)
+//
+// The reviewer's round-3 finding at c1e5ba4: after the last character the
+// kit looks once through the gate, then reads the screen again, waiting up to
+// 3 s for the menu to draw, and checks only the input line and the menu on
+// those later reads. An at-work row or a question that shows there did not
+// stop Return. The requirement: the screen the kit accepts before Return, the
+// same read that passes the input-line and menu rule, shows no at-work row
+// and no question, on every read while it waits for the menu; otherwise no
+// Return, the command is taken back, and the refusal names the signal.
+//
+// How it is modelled. After the last character the screen is first drawn
+// without the menu, the command in the input line and nothing above it, for
+// one read; every read after that shows the menu drawn, and with it the
+// signal. So whatever the kit reads first, the first screen that passes the
+// input-line and menu rule carries the signal, and a kit that reads on until
+// the menu is drawn cannot accept a screen without it.
+
+/** A form's foot under Claude Code's input box: a question, as questionIn sees one, below the input line. A reconstruction. */
+const UNDER_A_FORM = [...CLAUDE_CLEAR_TYPED, '  Enter to confirm · Esc to cancel'];
+
+for (const { harness, command, early, late, after, what, signal } of [
+  { harness: 'claude', command: '/clear', early: CLAUDE_CLEAR_NO_MENU, late: atWork('claude', '/clear', '/clear'), after: CLAUDE_IDLE, what: 'its at-work row', signal: (said) => said.includes('Nucleating') },
+  { harness: 'codex', command: '/new', early: CODEX_IDLE_EMPTY, late: atWork('codex', '/new', '/new'), after: CODEX_IDLE, what: 'its at-work row', signal: (said) => said.includes('esc to interrupt') },
+  { harness: 'claude', command: '/clear', early: CLAUDE_CLEAR_NO_MENU, late: UNDER_A_FORM, after: CLAUDE_IDLE, what: 'a question', signal: (said) => /question/i.test(said) },
+]) {
+  test(`${harness}: the menu draws after the last character of ${command} with ${what} on the same screen: no return, the command taken back, and the refusal names it`, async (t) => {
+    const box = await createSandbox(t);
+    const bots = await running(box, { harness });
+    await changeTab(box, (await liveTab(box, bots)).tabId, {
+      nextScreens: [...whileTyping(harness, command), { screen: early, then: late }, after],
+    });
+
+    const said = assertRefused(await sessionCommand(box, 'clear'));
+
+    assert.deepEqual(await sendsInto(box, bots), [...typed(command), { text: backspaces(command), enter: false }], 'the screen that passed the menu rule carried the signal, so no return');
+    assert.ok(signal(said), `it names its signal, ${what}, got:\n${said}`);
+  });
+}
+
 // ---------------------------------------------------------------- compact
 
 for (const harness of ['claude', 'codex']) {
