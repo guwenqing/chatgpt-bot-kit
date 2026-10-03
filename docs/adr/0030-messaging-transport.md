@@ -39,7 +39,7 @@ Both harnesses take a line typed while they are busy as queued, and Orca's
 receipt for it shows no turn start, the same as for a line that was lost
 (#394). Whether a tab
 holds a harness at all is read from its foreground process
-([ADR 0031](0031-orca-is-the-host.md)).
+([ADR 0034](0034-orca-is-the-host.md)).
 
 ## Decision
 
@@ -78,7 +78,7 @@ hand, maybe lost, and the message waits for the receiver's next check (the
 architect, #394). "Not up" means the tab's shell is in front. Where the kit
 cannot tell whether the program in front is the session's harness, it types
 nothing either and says the mail waits (the architect, #232; the owner may
-overrule; how a tab is read is in [ADR 0031](0031-orca-is-the-host.md)).
+overrule; how a tab is read is in [ADR 0034](0034-orca-is-the-host.md)).
 
 A session's address on the Orca road is a Run (`run:<id>`), made once when the
 session is first brought up and kept in the book. A terminal handle is not an

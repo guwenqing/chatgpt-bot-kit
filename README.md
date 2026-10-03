@@ -350,6 +350,14 @@ address that is none of your bots folder's sessions, the hook tells it so, and
 names the address `obk message to` would have given. The message goes either
 way ([ADR 0032](docs/adr/0032-a-native-message-outside-the-fleet-is-warned-about.md)).
 
+A Codex bot gets one more hook too. Inside Codex's sandbox the kit cannot always
+tell whether the receiver of a message has its harness in front, as for a Claude
+session busy running a command, so `obk message send` leaves that nudge, and the
+hook, which Codex runs outside its sandbox right after the command, decides it and
+types it, or says why not ([ADR 0034](docs/adr/0034-orca-is-the-host.md)). Codex
+asks you to trust a hook it has not seen before, so a Codex bot made before this
+hook asks again once.
+
 So: kill a tab, or reboot, and `obk up` brings the session back with the
 conversation it was having, rather than starting a new one. Clear a session —
 `/clear` on Claude Code, `/new` on Codex — and the kit writes down the new id,
