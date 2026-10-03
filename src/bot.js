@@ -159,6 +159,8 @@ export function readBot(home, name = path.basename(home)) {
     // The permission rules the user said yes to, judged where they are written
     // (src/permissions.js), as `rules` is judged by the build.
     allow: bot.allow,
+    // The roles its temporary sessions can be made in, judged by tempRoles.
+    ...(bot.temp_roles === undefined ? {} : { temp_roles: bot.temp_roles }),
     // A paused bot is one `obk up` leaves closed; its sessions keep their book.
     ...(bot.paused === true ? { paused: true } : {}),
     sessions: sessions.map((session) => {
@@ -495,7 +497,7 @@ export const SESSION_FIELDS = [
 ];
 
 /** Everything the top of a bot's own file can hold. */
-const BOT_FIELDS = ['name', 'harness', 'charter', 'rules', 'skills', 'allow', 'sessions', 'paused'];
+const BOT_FIELDS = ['name', 'harness', 'charter', 'rules', 'skills', 'allow', 'sessions', 'paused', 'temp_roles'];
 
 /**
  * The keys in a bot's file that the kit does not know, and so that nothing
@@ -517,6 +519,81 @@ export function unknownKeys(home, name = path.basename(home)) {
       says: `${file}: ${name}'s session ${session.name} has a setting the kit does not know, ${key}, so nothing reads it and the session runs as if it were not there. The settings a session can have are ${sessionKeys.join(', ')}.`,
     }))),
   ];
+}
+
+/** What a role's option can set, and what a role written as a mapping can hold (#465). */
+const OPTION_FIELDS = ['name', 'for', 'harness', 'model', 'effort', 'context'];
+const ROLE_FIELDS = ['options', 'cap', 'prompt_file'];
+
+/**
+ * The roles a bot's temporary sessions can be made in, from `temp_roles` in its
+ * file (#465), each read into one form: `{ name, options, cap, prompt_file,
+ * trouble }`. A role is written as a list of options, the first its default,
+ * or as a mapping that holds that list as `options` beside a `cap` and a
+ * `prompt_file`. `trouble` is each thing wrong with the role, as a sentence;
+ * a role with any is not one to make a session in. A `temp_roles` that is not
+ * a mapping at all is thrown. The file is the user's, so nothing here is put
+ * right: `obk health` says it, and `obk temp make` refuses the role.
+ */
+export function tempRoles(home, bot) {
+  const file = path.join(home, BOT_YAML);
+  const given = bot.temp_roles;
+  if (given === undefined || given === null) return [];
+  if (typeof given !== 'object' || Array.isArray(given)) {
+    throw new Error(`${file} has a temp_roles that is not a mapping of role names to roles, so the bot has no roles to make a temporary session in.`);
+  }
+  return Object.entries(given).map(([name, written]) => readRole(home, file, name, written));
+}
+
+function readRole(home, file, name, written) {
+  const trouble = [];
+  const say = (what) => trouble.push(`${file}: the temporary-session role ${name} ${what}`);
+  const role = Array.isArray(written) ? { options: written } : written;
+  if (!NAME.test(name)) say('cannot be a role\'s name: a name is lower-case letters, digits and single hyphens, and it begins the name of each session made in it.');
+  if (role === null || typeof role !== 'object') {
+    say('is neither a list of options nor a mapping with options in it.');
+    return { name, options: [], trouble };
+  }
+  for (const key of Object.keys(role).filter((one) => !ROLE_FIELDS.includes(one))) {
+    say(`has a key the kit does not know, ${key}, so nothing reads it. A role written as a mapping can have ${ROLE_FIELDS.join(', ')}.`);
+  }
+  const options = Array.isArray(role.options) ? role.options : [];
+  if (options.length === 0) say('has no options. Give it a list of them, the first being its default.');
+  const seen = new Set();
+  options.forEach((option, at) => {
+    if (option === null || typeof option !== 'object' || Array.isArray(option) || option.name === undefined || option.name === null || option.name === '') {
+      say(`has an option with no name, number ${at + 1} of its options.`);
+      return;
+    }
+    const called = `${name}:${option.name}`;
+    if (typeof option.name !== 'string' || !NAME.test(option.name)) say(`has an option ${option.name} whose name is not a word of lower-case letters, digits and single hyphens, so ${called} cannot be asked for. Write the name in quotes if YAML reads it as something else.`);
+    if (seen.has(option.name)) say(`has two options called ${option.name}, and ${called} would name either.`);
+    seen.add(option.name);
+    for (const key of Object.keys(option).filter((one) => !OPTION_FIELDS.includes(one))) {
+      say(`has an option ${option.name} with a setting the kit does not know, ${key}, so nothing reads it and a session made in ${called} would not get it. An option can set ${OPTION_FIELDS.join(', ')}.`);
+    }
+    if (option.harness !== undefined && option.harness !== null && !HARNESSES.includes(option.harness)) {
+      say(`has an option ${option.name} that runs on ${option.harness}, and the harnesses are ${HARNESSES.join(' and ')}.`);
+    }
+  });
+  if (role.cap !== undefined && !(Number.isInteger(role.cap) && role.cap > 0)) {
+    say(`has a cap of ${JSON.stringify(role.cap)}, and a cap is a whole number of open sessions, 1 or more.`);
+  }
+  if (role.prompt_file !== undefined) {
+    const prompt = path.resolve(home, String(role.prompt_file));
+    try {
+      readFileSync(prompt, 'utf8');
+    } catch (error) {
+      say(`has its prompt in ${role.prompt_file}, and that file cannot be read (${error.code}): ${prompt}. Write it, or point the role at the file you meant.`);
+    }
+  }
+  return {
+    name,
+    options,
+    ...(role.cap === undefined ? {} : { cap: role.cap }),
+    ...(role.prompt_file === undefined ? {} : { prompt_file: role.prompt_file }),
+    trouble,
+  };
 }
 
 /** A session's settings, in that order, without the ones left out. */

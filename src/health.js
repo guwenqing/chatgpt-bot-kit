@@ -22,7 +22,7 @@ import { existsSync, readdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import { bookFile, readBook, sessionIdsIn, tabIdsIn } from './book.js';
-import { botDir, botNames, botsDir, readBot, unknownKeys } from './bot.js';
+import { botDir, botNames, botsDir, readBot, tempRoles, unknownKeys } from './bot.js';
 import { transcriptsIn } from './conversations.js';
 import { hookTrouble } from './hooks.js';
 import { bypassFlags, harnessOf, HARNESSES, isAddressOf, ownCli, sessionTrouble, SHELL_ENV, shellWord } from './launch.js';
@@ -190,6 +190,7 @@ function aboutBot(bots, name, setups, sessions) {
   return [
     ...unknownKeys(home, name).map(said('config')),
     ...sessionSettings(home, bot).map(said('config')),
+    ...rolesTrouble(home, bot).map(said('config')),
     ...agentsTrouble(bots, home, bot).map(said('config')),
     ...hooksOf(bots, home, bot).map(said('config')),
     ...permissionsTrouble(home, bot).map(said('config')),
@@ -207,6 +208,16 @@ function sessionSettings(home, bot) {
       ? []
       : [{ where: file, says: `${file}: ${trouble} obk up will not start ${bot.name} until that is settled.` }];
   });
+}
+
+/** What is wrong with the roles the bot's temporary sessions are made in (#465). */
+function rolesTrouble(home, bot) {
+  const where = path.join(home, 'bot.yaml');
+  try {
+    return tempRoles(home, bot).flatMap((role) => role.trouble.map((says) => ({ where, says })));
+  } catch (error) {
+    return [{ where, says: error.message }];
+  }
 }
 
 /** The kit's own hook, in the file of every harness this bot's sessions run on. */
