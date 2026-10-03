@@ -188,7 +188,7 @@ test('the citation check sees every way the repo cites a record, and not other n
   assert.deepEqual(numbers('# ADR NNNN: <the decision>'), [], 'the placeholder in the format');
   assert.deepEqual(numbers('The PRD and the ADRs carry the rest'), []);
   assert.deepEqual(numbers('PRD 6.9, tech notes 4, #232, 2026-09-24'), []);
-  assert.deepEqual(numbers('[the PRD](docs/prd.md)'), []);
+  assert.deepEqual(numbers('[the PRD](docs/prd/prd.md)'), []);
 });
 
 test('the amendment check sees a citation of an amendment, and not an amendment of something else', () => {
