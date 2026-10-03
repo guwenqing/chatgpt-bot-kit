@@ -117,35 +117,38 @@
 // It is slow: two warm-up tabs, five receivers, a loop of a minute and a half
 // and three real reads. Ten minutes or more, attended.
 //
-// **It is attended.** A bot folder nobody has opened before asks questions
-// before the harness is running in it, and this test answers none of them —
-// answering them is the caller's job and not the kit's (PRD 6.5). What to
-// expect, in order:
+// **Nobody answers anything by hand.** A bot folder nobody has opened before
+// asks questions before the harness is running in it (PRD 6.5). This test
+// answers one of them itself, Claude Code's folder trust, in its own throwaway
+// Claude tabs alone, under the architect's rulings on #451
+// (https://github.com/guwenqing/orca-bot-kit/issues/451#issuecomment-5961132572)
+// and #391, as send-outside-fleet does: only when the screen is the plain trust
+// for the Claude bot's own throwaway folder, every row from "Accessing
+// workspace:" down a row of the captured plain screen with that folder in the
+// folder's place, the pointer on "No, exit", "Yes, I trust this folder" there,
+// and no line pre-approving a permission (helpers/screens.js
+// `onlyPlainTrustOf`). Then down and return, at most once for that tab, with no
+// `--enter`. `Nudge Claude idle` comes up first and should be the only one to
+// show it: `quit`, `pager`, `background` and `busy` share its folder. Any
+// other screen gets no answer, and the test fails printing its rows; a hooks
+// line on the trust screen goes to the architect before any rerun. What else
+// may show:
 //
-//   1. `Bot Father daily`: Claude Code's folder trust. Nothing here waits on
-//      Bot Father or writes to it. Leave it.
-//   2. `Nudge Codex warmup` should ask nothing: both Codex sessions are given
-//      their folder's trust at launch (#240, test/helpers/codex-trust.js), so
-//      Codex asks neither its folder trust nor its hooks review, and writes
-//      nothing about this folder into the user's own ~/.codex/config.toml. The
-//      tab still comes up first, as it did when it carried those questions for
-//      the sender; it does nothing else.
-//   3. `Nudge Claude idle`: Claude Code's folder trust, once for the folder.
-//      Its selection starts on `No, exit`, so it takes a down-arrow and then
-//      return. `quit`, `pager`, `background` and `busy` come up in the same
-//      folder after it, and should ask nothing.
-//   4. Any Claude tab: if Claude Code asks before it runs a command (the loop
-//      in `busy`, the background `sleep` in `background`, or the command the
-//      nudge names in `idle`, `busy` and `background`), allow it.
-//   5. Any tab, if its harness offers an update: accept it (PRD 6.5). In
-//      `Nudge Codex sender` or `Nudge Claude busy` that costs time the loop
-//      may not have; a run that misses it says so.
-//   6. `Nudge Codex sender` should ask nothing, for the same reason as 2: the
-//      trust it is given at launch also bypasses Codex's hooks review, so the
-//      kit's hooks in its folder, the nudge hook among them, run without one.
+//   - `Bot Father daily` shows the same folder trust for its own folder.
+//     Nothing here waits on Bot Father or writes to it, and it is left.
+//   - Both Codex sessions, `Nudge Codex warmup` and `Nudge Codex sender`, should
+//     ask nothing: they are given their folder's trust at launch (#240,
+//     test/helpers/codex-trust.js), which also bypasses Codex's hooks review, so
+//     the kit's hooks in its folder, the nudge hook among them, run without
+//     one, and nothing about this folder is written into the user's own
+//     ~/.codex/config.toml.
+//   - A Claude Code that asks before it runs a command (the loop in `busy`, the
+//     background `sleep` in `background`, or the command the nudge names), or
+//     any harness offering an update, is a screen this test does not answer:
+//     the wait it stops fails, printing what the tab shows.
 //
 // Every wait says what the tab is showing when it runs out of patience, so a
-// run that was left alone names the screen that stopped it.
+// run that stopped names the screen that stopped it.
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -159,7 +162,7 @@ import { parse } from 'yaml';
 
 import { cliEntry } from '../helpers/cli.js';
 import { codexTrustArgs } from '../helpers/codex-trust.js';
-import { waitingOn } from '../helpers/screens.js';
+import { onlyPlainTrustOf, questionOn, waitingOn } from '../helpers/screens.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 
 /**
@@ -289,6 +292,13 @@ async function until(what, within, look, note = () => '') {
     assert.ok(Date.now() < stop, `gave up waiting for ${what} after ${within}ms.${note()}`);
     await setTimeout(1000);
   }
+}
+
+/** The rows the tab renders right now, or undefined when Orca gives no rendered screen. */
+function rowsOf(handle) {
+  const answer = orca(['terminal', 'read', '--terminal', handle, '--screen']);
+  const tail = answer.ok === true && answer.result?.terminal?.source === 'screen' ? answer.result.terminal.tail : undefined;
+  return Array.isArray(tail) ? tail : undefined;
 }
 
 /** Everything the tab is rendering right now, as one piece of text to look through. */
@@ -634,6 +644,52 @@ test('mail from a Codex session in its sandbox tells an idle Claude receiver, a 
     return entry;
   };
 
+  /**
+   * Get one of this test's own Claude tabs past its first-run screens: Claude
+   * Code's folder trust, answered here at most once for the tab and only when
+   * it is the plain one for the Claude bot's own folder (see the header). Any
+   * other question fails the test with its rows. Done when the session has
+   * reported its conversation.
+   */
+  const pastTrust = async (session, entry) => {
+    const asked = await until(
+      `${CLAUDE.name}/${session} to show Claude Code's folder trust, or report its conversation`,
+      READY_MS,
+      async () => {
+        if (typeof (await sessionIn(claudeHome, session)).session === 'string') return { rows: null };
+        const rows = rowsOf(entry.terminal);
+        if (rows === undefined) return undefined;
+        if (rows.some((row) => row.includes('Yes, I trust this folder'))) return { rows };
+        const question = questionOn(rows);
+        assert.equal(
+          question,
+          undefined,
+          `${entry.title} asks something this test does not answer, so it answered nothing.\n  what it showed:\n    ${rows.join('\n    ')}`,
+        );
+        return undefined;
+      },
+      () => whatIsUp(entry.terminal),
+    );
+    if (asked.rows !== null) {
+      const wrong = onlyPlainTrustOf(asked.rows, claudeHome);
+      assert.equal(
+        wrong,
+        undefined,
+        `${entry.title}'s folder trust is not one this test may answer, so it answered nothing: ${wrong}.`
+        + `\n  what it showed:\n    ${asked.rows.join('\n    ')}`,
+      );
+      const sent = orca(['terminal', 'send', '--terminal', entry.terminal, '--text', '\x1b[B\r']);
+      assert.equal(sent.ok, true, `answering ${entry.title}'s folder trust failed: ${JSON.stringify(sent.error)}`);
+      t.diagnostic(`answered ${entry.title}'s plain folder trust (the rulings on #451 and #391)`);
+    }
+    await until(
+      `${CLAUDE.name}/${session} to report its session id`,
+      READY_MS,
+      async () => (await sessionIn(claudeHome, session)).session,
+      () => ` Its folder trust was answered, or never asked.${whatIsUp(entry.terminal)}`,
+    );
+  };
+
   // A Codex tab that does nothing else, up before the sender. It used to carry
   // the folder's first-run screens, answered by hand; with the trust given at
   // launch (#240) it should ask nothing, and is waited for all the same.
@@ -642,15 +698,18 @@ test('mail from a Codex session in its sandbox tells an idle Claude receiver, a 
 
   // 1. The idle receiver. Its folder trust is the one the other four share.
   const idle = bringUp(CLAUDE.name, 'idle');
+  await pastTrust('idle', idle);
   await readyForMail(idle.terminal);
 
   // 4. The shell in front: Claude Code ended in its own tab.
   const quit = bringUp(CLAUDE.name, 'quit');
+  await pastTrust('quit', quit);
   await quitIn(claudeHome, 'quit', quit.terminal);
 
   // 5. `less` in front: Claude Code ended, and the pager started in its shell
   //    on this test's own file. The tab is told only the file's path.
   const pager = bringUp(CLAUDE.name, 'pager');
+  await pastTrust('pager', pager);
   await quitIn(claudeHome, 'pager', pager.terminal);
   await writeFile(pagerFile, `${Array.from({ length: 200 }, (_, n) => `${PAGER_WORD} line ${n + 1}`).join('\n')}\n`);
   sendLine(pager.terminal, `less ${pagerFile}`);
@@ -660,6 +719,7 @@ test('mail from a Codex session in its sandbox tells an idle Claude receiver, a 
   //    starts, and the test waits for that process to be there and for the
   //    tab to be idle.
   const background = bringUp(CLAUDE.name, 'background');
+  await pastTrust('background', background);
   const backgroundPid = await until(
     `${CLAUDE.name}/background's sleep to write its pid to ${backgroundPidFile(claudeHome)}`,
     ANSWER_MS,
@@ -677,12 +737,7 @@ test('mail from a Codex session in its sandbox tells an idle Claude receiver, a 
   //    Once its hook has reported, a TUI wait that times out with no total on
   //    the screen is Claude Code at work (#232).
   const busy = bringUp(CLAUDE.name, 'busy');
-  await until(
-    `${CLAUDE.name}/busy to report its session id`,
-    HOOK_MS,
-    async () => (await sessionIn(claudeHome, 'busy')).session,
-    () => ` The kit's hook has not run.${whatIsUp(busy.terminal)}`,
-  );
+  await pastTrust('busy', busy);
   await until(
     `${busy.terminal} to be at work on its loop`,
     ANSWER_MS,
