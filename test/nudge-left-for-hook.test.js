@@ -45,7 +45,7 @@
 // ADR 0034 records.
 
 import assert from 'node:assert/strict';
-import { readFile, writeFile } from 'node:fs/promises';
+import { chmod, readFile, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
@@ -57,6 +57,9 @@ import {
   kitHooksIn,
   kitLaunchMark,
   orcaApp,
+  orcaCommand,
+  orcaFlag,
+  plainCli,
   sentInto,
   sessionIn,
   sh,
@@ -427,6 +430,135 @@ test('A4 a nudge the hook decided not to type is not typed by a later run, once 
 
   assertSilent(again, 'the second run, harness in front');
   await assertUntyped(box, 'decided once');
+});
+
+/** How many `terminal send` calls the fake Orca has been asked for so far. */
+const sendCallsSoFar = async (box) => (await box.orca.calls()).filter((call) => orcaCommand(call) === 'terminal send').length;
+
+/**
+ * Every left nudge, one per subject, was decided exactly once: its line typed
+ * once into the developer's tab, as the send would have typed it, nothing
+ * typed into any other tab since `sendsBefore`, and the mail named once in
+ * exactly one of `contexts`.
+ *
+ * What was typed is read from the fake's call log, which every call appends
+ * to, and not from the tabs in its world: each call reads that world as it
+ * starts and saves it whole as it ends, so two `terminal send`s at once keep
+ * only one of their lines there, which Orca itself does not do.
+ */
+async function assertDecidedOnce(box, bots, developer, subjects, contexts, sendsBefore) {
+  const sends = (await box.orca.calls()).filter((call) => orcaCommand(call) === 'terminal send').slice(sendsBefore);
+  const into = (handle) => sends.filter((call) => orcaFlag(call, '--terminal') === handle).map((call) => plainCli(orcaFlag(call, '--text')));
+  for (const terminal of await box.orca.terminals()) {
+    if (terminal.tabId !== developer.tabId) assert.deepEqual(into(terminal.handle), [], `nothing may be typed into ${terminal.tabId}: it is not the receiver's`);
+  }
+  const lines = into(developer.handle);
+  const count = (text, word) => text.split(word).length - 1;
+  const wrong = subjects.filter((subject) => (
+    lines.filter((line) => line.includes(subject)).length !== 1
+    || contexts.filter((text) => text.includes(subject)).length !== 1
+    || contexts.reduce((sum, text) => sum + count(text, subject), 0) !== 1
+  ));
+  assert.deepEqual(
+    wrong,
+    [],
+    'each left nudge typed once and named in exactly one run\'s context, once;'
+    + ` typed ${lines.length} lines for ${subjects.length} sends:\n${lines.join('\n')}\n--- contexts ---\n${contexts.join('\n---\n')}`,
+  );
+  assert.equal(lines.length, subjects.length, `one line per send, and no more: ${lines.join('\n')}`);
+  for (const subject of subjects) {
+    const [line] = lines.filter((one) => one.includes(subject));
+    assert.ok(
+      spellingsOf(box.cli).some((cli) => line === `Fleet mail from reviewer/daily: ${subject}. Read it with  ${cli} message check --bots ${shellWord(bots)} --bot developer --session daily`),
+      `the line the send would have typed for ${subject}, got: ${line}`,
+    );
+  }
+}
+
+/** What each hook run said, in order: its context, or '' for a run that said nothing. Each exits 0 either way. */
+const contextsOf = (runs) => runs.map((ran, n) => (ran.stdout === '' ? (assertSilent(ran, `run ${n + 1}`), '') : assertSaid(ran, `run ${n + 1}`)));
+
+/** Subjects of their own for `count` mails, none a part of another, so a typed line and a context can each be told apart. */
+const subjectsFor = (count) => Array.from({ length: count }, (_, n) => `the review of change K${String(n + 1).padStart(2, '0')}Q`);
+
+test('A4 hook runs that overlap in one tab decide every left nudge exactly once: each typed once, each named in one run\'s context, none lost', async (t) => {
+  // Codex can run hooks at once, as after parallel tool calls. Many nudges are
+  // left; then three runs of the hook start together in the sending tab.
+  // However they interleave, each nudge is typed once and said once, by
+  // whichever run took it.
+  // A guard, not a proven catch: the claim race the review found (two runs
+  // taking one nudge, the loser removing the winner's copy before it is read)
+  // has a window of microseconds, and this test never went red on the code
+  // that has it, nor did about 12 rounds of 2 to 6 overlapping runs in a
+  // scratch harness. The review's own barrier probe is the red receipt.
+  const { box, bots, developer } = await leftFleet(t);
+  const env = await inTab(box, bots, 'reviewer', 'daily', { codexCommand: true });
+  const subjects = subjectsFor(18);
+  for (const subject of subjects) {
+    const result = await box.run(['message', 'send', '--bots', 'bots', '--to', 'developer', '--subject', subject, '--text', 'Approved.', '--json'], { env });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).nudgeLeft, true, `the premise: the nudge for ${subject} is left, got: ${result.stdout}`);
+  }
+  await psRuns(box);
+  const hookEnv = await inTab(box, bots, 'reviewer');
+  const sendsBefore = await sendCallsSoFar(box);
+
+  const runs = await Promise.all([1, 2, 3].map(() => hook(box, hookEnv, afterBash(bots))));
+
+  await assertDecidedOnce(box, bots, developer, subjects, contextsOf(runs), sendsBefore);
+});
+
+test('A4 sends and hook runs at once in one tab: every nudge a send answered as left is typed once and named once, none lost', async (t) => {
+  // Parallel shell commands in one Codex session: sends leave nudges while
+  // hook runs in the same tab, after other commands, look at what is left.
+  // Every send that answered nudgeLeft is decided once by some run; a last
+  // run after all of them takes whatever is still left.
+  // A guard, not a proven catch: the write race the review found (a hook
+  // taking a nudge the send has made but not yet written, and dropping it) has
+  // a window of microseconds, the review forced it only by pausing the send,
+  // and this test never went red on the code that has it. The review's own
+  // barrier probe is the red receipt.
+  const { box, bots, developer } = await leftFleet(t);
+  await psRuns(box);
+  // The sends alone run where ps cannot start, as inside Codex's sandbox; the
+  // hooks, run outside it, have the fake ps that reads the tabs.
+  const noPs = box.path('ps-not-permitted');
+  await writeFile(noPs, '#!/bin/sh\necho "ps: Operation not permitted" >&2\nexit 126\n');
+  await chmod(noPs, 0o755);
+  const sendEnv = { ...await inTab(box, bots, 'reviewer', 'daily', { codexCommand: true }), OBK_PS: noPs };
+  const hookEnv = await inTab(box, bots, 'reviewer');
+  const subjects = subjectsFor(16);
+  const sendsBefore = await sendCallsSoFar(box);
+
+  let sending = true;
+  const answers = [];
+  const runs = [];
+  const sendAll = (async () => {
+    for (const subject of subjects) {
+      const result = await box.run(['message', 'send', '--bots', 'bots', '--to', 'developer', '--subject', subject, '--text', 'Approved.', '--json'], { env: sendEnv });
+      assert.equal(result.code, 0, result.stderr);
+      answers.push([subject, JSON.parse(result.stdout)]);
+    }
+    sending = false;
+  })();
+  const hookAll = async () => {
+    while (sending) runs.push(await hook(box, hookEnv, afterBash(bots)));
+  };
+  await Promise.all([sendAll, hookAll(), hookAll()]);
+  runs.push(await hook(box, hookEnv, afterBash(bots)));
+
+  const left = answers.filter(([, answer]) => answer.nudgeLeft === true).map(([subject]) => subject);
+  assert.deepEqual(
+    answers.filter(([, answer]) => answer.nudgeLeft !== true).map(([subject, answer]) => `${subject}: ${JSON.stringify(answer)}`),
+    [],
+    'the premise: every send left its nudge',
+  );
+  const contexts = contextsOf(runs);
+  assert.ok(
+    contexts.slice(0, -1).some((text) => text !== ''),
+    `the premise: hook runs decided nudges while the sends went on, not only the last run; ${runs.length} runs`,
+  );
+  await assertDecidedOnce(box, bots, developer, left, contexts, sendsBefore);
 });
 
 // ---------------------------------------------------------------------------
