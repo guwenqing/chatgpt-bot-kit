@@ -403,3 +403,108 @@ test('C6 a session retired along whose prompt file cannot be removed is still re
   assert.equal(typeof entry.promptsLeft[0].reason, 'string');
   await assertRetiredInFull(box, bots, { name: 'reviewer', tab: tabs.reviewer, temporary: temporary.reviewer, prompt: false });
 });
+
+// ------------------------------------------------------------ a retire that fails partway
+
+// From the review of PR #467 (P2): a retire whose own close Orca refuses has
+// already retired, in full, what went along with it. The run fails, but says
+// so: it names each session already retired along with it, and any of their
+// prompt files it could not remove, as the run that worked would have. Nothing
+// is put back: that session stays retired, the maker stays, and the same
+// retire run again, once the close works, finishes.
+
+/**
+ * Bot Father, and temp-bot with long-lived lead brought up; lead made
+ * dev-two, and dev-two made review-single, which has a conversation and a
+ * start-prompt file.
+ */
+async function chain(box) {
+  const ok = async (args) => {
+    const result = await box.run(args);
+    assert.equal(result.code, 0, `obk ${args.join(' ')}: ${result.stdout}${result.stderr}`);
+  };
+  await ok(['init', '--bots', 'bots', '--harness', 'claude']);
+  await ok(['bot', 'create', '--bots', 'bots', '--name', BOT, '--harness', 'claude']);
+  await ok(['session', 'add', '--bots', 'bots', '--bot', BOT, '--name', 'lead']);
+  await ok(['up', '--bots', 'bots', '--bot', BOT]);
+  const bots = box.path('bots');
+  const tabs = { lead: await liveTab(box, bots, BOT, 'lead') };
+  await made(box, tabs.lead, 'dev-two');
+  tabs['dev-two'] = await liveTab(box, bots, BOT, 'dev-two');
+  await made(box, tabs['dev-two'], 'review-single');
+  tabs['review-single'] = await liveTab(box, bots, BOT, 'review-single');
+  const reported = await recordSession(box, { bots, bot: BOT, tab: tabs['review-single'].tabId, session: 'sess-review-single' });
+  assert.equal(reported.code, 0, reported.stderr);
+  assert.ok(await exists(promptFileOf(bots, BOT, 'review-single')), 'review-single should have a start-prompt file, or its going proves nothing');
+  return { bots, tabs, temporary: (await sessionIn(bots, BOT, 'review-single')).temporary };
+}
+
+/** Have the fake Orca refuse every close of one tab, with `--tab` or without, or close it again when `refuse` is false. */
+async function refuseClosing(box, tab, refuse = true) {
+  const refusal = { code: 'runtime_error', message: 'the tab would not close' };
+  await box.orca.set({
+    terminals: (await box.orca.terminals()).map((one) => {
+      if (one.handle !== tab.handle) return one;
+      const { refuseClose: _refuseClose, ...rest } = one;
+      return refuse ? { ...rest, refuseClose: { tab: refusal, pane: refusal } } : rest;
+    }),
+  });
+}
+
+/** The lines of a run's output, either stream, that name `name` as retired. */
+const retiringLines = (result, name) => `${result.stdout}${result.stderr}`.split('\n')
+  .filter((line) => new RegExp(`\\b${name}\\b`).test(line) && /retir/i.test(line));
+
+for (const [road, retireDevTwo] of [
+  ['temp retire', (box, tabs) => retireTemp(box, tabs.lead, ['--name', 'dev-two'])],
+  ['obk retire --session', (box) => retire(box, '--session', 'dev-two')],
+]) {
+  test(`C6 ${road} of dev-two that fails on dev-two's own close still names review-single, retired along with it; nothing is put back, and run again it finishes`, async (t) => {
+    const box = await createSandbox(t);
+    const { bots, tabs, temporary } = await chain(box);
+    await refuseClosing(box, tabs['dev-two']);
+
+    const failed = await retireDevTwo(box, tabs);
+
+    const said = `${failed.stdout}${failed.stderr}`;
+    assert.notEqual(failed.code, 0, `dev-two's tab would not close, so the run fails, got:\n${said}`);
+    assert.ok(!/^\s+at /m.test(said), `a message, not a crash:\n${said}`);
+    await assertRetiredInFull(box, bots, { name: 'review-single', tab: tabs['review-single'], temporary });
+    await assertStillThere(box, bots, { name: 'dev-two', tab: tabs['dev-two'] });
+    assert.ok(
+      retiringLines(failed, 'review-single').length > 0,
+      `the failed run names review-single as retired along with dev-two, got:\n${said}`,
+    );
+
+    await refuseClosing(box, tabs['dev-two'], false);
+    const again = await retireDevTwo(box, tabs);
+
+    assert.equal(again.code, 0, `run again with the close working, it finishes:\n${again.stdout}${again.stderr}`);
+    assert.ok(!(await namesIn(bots, BOT)).includes('dev-two'), 'dev-two is off bot.yaml');
+    assert.equal((await sessionIn(bots, BOT, 'dev-two')), undefined, 'and off the book\'s live list');
+    await assertRetiredInFull(box, bots, { name: 'review-single', tab: tabs['review-single'], temporary });
+    await assertStillThere(box, bots, { name: 'lead', tab: tabs.lead });
+  });
+}
+
+test('C6 a temp retire that fails on the maker\'s own close names the prompt file of the session retired along with it that could not be removed', { skip: NEEDS_A_USER }, async (t) => {
+  const box = await createSandbox(t);
+  const { bots, tabs } = await chain(box);
+  await refuseClosing(box, tabs['dev-two']);
+  const folder = promptsOf(bots);
+  const mode = (await stat(folder)).mode & 0o7777;
+
+  await chmod(folder, 0o555);
+  let failed;
+  try {
+    failed = await retireTemp(box, tabs.lead, ['--name', 'dev-two']);
+  } finally {
+    await chmod(folder, mode);
+  }
+
+  const said = `${failed.stdout}${failed.stderr}`;
+  assert.notEqual(failed.code, 0, `dev-two's tab would not close, so the run fails, got:\n${said}`);
+  assert.ok(!(await namesIn(bots, BOT)).includes('review-single'), 'review-single was retired along with it, or this is not the case at hand');
+  assert.ok(retiringLines(failed, 'review-single').length > 0, `the failed run names review-single as retired, got:\n${said}`);
+  assert.ok(said.includes(promptFileOf(bots, BOT, 'review-single')), `and names its prompt file, which could not be removed, got:\n${said}`);
+});

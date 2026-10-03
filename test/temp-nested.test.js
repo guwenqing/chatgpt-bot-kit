@@ -39,8 +39,10 @@
 // harness, or anything outside the sandbox.
 
 import assert from 'node:assert/strict';
-import { readFile, stat } from 'node:fs/promises';
+import { mkdir, readFile, stat } from 'node:fs/promises';
+import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import test from 'node:test';
 import { parse } from 'yaml';
 
@@ -415,6 +417,93 @@ test('N4 temp trust-hooks run in a temporary maker\'s tab answers its Codex sess
   assert.deepEqual(Object.keys(sent), [reviewer.tabId], `keys go into reviewer's tab and no other: ${JSON.stringify(sent)}`);
   assert.equal(sent[reviewer.tabId].map((one) => one.text).join(''), DOWN_RETURN, 'one down, then return');
   assert.match(result.stdout, /Trust all and continue/, `it says what it chose: ${result.stdout}`);
+});
+
+// From the review of PR #467: two makes started at once from one temporary
+// session both went through, once the book's lock was let go. The race is
+// forced the way the reviewer forced it: another writer holds the bot's book
+// lock while both makes start, and lets it go a few seconds later, inside the
+// ten seconds a writer waits for it (src/book.js), so that both are past their
+// start and waiting on the book when it does.
+
+/**
+ * How long the lock is held while both makes start: long enough for both to
+ * reach it on a loaded machine, short of a writer's 10 s wait. A make cannot
+ * finish while the lock is held, so both must still be running when it is let
+ * go; one that has already exited means the race was not tried, and the test
+ * says so rather than pass.
+ */
+const HOLD_MS = 8000;
+
+/**
+ * Hold a bot's book lock, the way another writer of the book does, until
+ * `release` is called: the file SQLite locks, beside the bots folder in
+ * `<bots>.locks/<bot home's name>.lock`, taken with `BEGIN IMMEDIATE`.
+ */
+async function holdBookLock(bots, bot) {
+  const file = path.join(`${bots}.locks`, `${encodeURIComponent(bot)}.lock`);
+  await mkdir(path.dirname(file), { recursive: true });
+  const db = new DatabaseSync(file);
+  db.exec('BEGIN IMMEDIATE');
+  return {
+    release() {
+      try {
+        db.exec('COMMIT');
+      } finally {
+        db.close();
+      }
+    },
+  };
+}
+
+test('N3 two makes started at once from one temporary session: one is made, the other is refused one at a time and leaves nothing', async (t) => {
+  const box = await createSandbox(t);
+  const { bots, planner } = await fleet(box);
+  await made(box, planner, ['--name', 'dev', '--prompt', TASK]);
+  const dev = await liveTab(box, bots, BOT, 'dev');
+  const tabsBefore = (await box.orca.terminals()).map((one) => one.tabId);
+  const from = await callCount(box);
+
+  const lock = await holdBookLock(bots, BOT);
+  let results;
+  try {
+    const exited = [];
+    const both = ['checker-a', 'checker-b'].map((name) => make(box, dev, ['--name', name, '--prompt', LONG_TASK])
+      .finally(() => exited.push(name)));
+    await sleep(HOLD_MS);
+    const early = [...exited];
+    lock.release();
+    results = await Promise.all(both);
+    assert.deepEqual(
+      early,
+      [],
+      `the race was not tried: these makes exited while the book's lock was still held, so they did not wait on it:\n${results.map((result) => `${result.stdout}${result.stderr}`).join('\n----\n')}`,
+    );
+  } finally {
+    try {
+      lock.release();
+    } catch {
+      // Let go already.
+    }
+  }
+
+  const said = results.map((result) => `${result.stdout}${result.stderr}`);
+  const codes = results.map((result) => result.code);
+  assert.deepEqual([...codes].sort(), [0, 1], `one make works and the other is refused, got exit codes ${codes}:\n${said.join('\n----\n')}`);
+  const [winner, loser] = codes[0] === 0 ? ['checker-a', 'checker-b'] : ['checker-b', 'checker-a'];
+  const refused = results[codes.indexOf(1)];
+  assertRefused(refused, winner);
+
+  assert.ok(await entryIn(bots, BOT, winner), `${winner} is in bot.yaml`);
+  assert.equal((await sessionIn(bots, BOT, winner))?.temporary?.maker, 'dev', `and in the book as dev's`);
+  assert.equal(await entryIn(bots, BOT, loser), undefined, `${loser} is not left in bot.yaml`);
+  const book = await bookIn(bots, BOT);
+  assert.equal(book.sessions?.[loser], undefined, `nor on the book's live list, got: ${JSON.stringify(book.sessions?.[loser])}`);
+  assert.deepEqual((book.retired ?? []).filter((one) => one?.name === loser), [], 'nor on its retired list');
+  assert.equal(await exists(promptFileOf(bots, BOT, loser)), false, `nor is its start-prompt file, ${promptFileOf(bots, BOT, loser)}`);
+  const opened = (await box.orca.terminals()).filter((one) => !tabsBefore.includes(one.tabId));
+  assert.deepEqual(opened.map((one) => one.tabId), [(await sessionIn(bots, BOT, winner)).tab], `one new tab in Orca, ${winner}'s`);
+  assert.equal(orcaCallsOf(await since(box, from), 'terminal create').length, 1, `and only ${winner}'s tab was ever opened`);
 });
 
 // ------------------------------------------------------------ N7 who may retire
