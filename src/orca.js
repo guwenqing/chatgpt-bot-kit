@@ -377,14 +377,14 @@ export const QUESTION_ON_SCREEN = 'question-on-screen';
 
 /**
  * What the tab `handle` renders: `{ question }`, true when it shows a question
- * of its harness's own, or `{ screenUnreadable: <why> }`. Orca refusing is an
+ * of its harness's own, with the `rows` it read, or `{ screenUnreadable: <why> }`. Orca refusing is an
  * answer that cannot be read, not an error, and so is anything that is not the
  * rendered screen: accumulated output comes back in fragments (tech notes,
  * section 1).
  */
 function screenOf(handle, readMs) {
   const read = screenRows(handle, readMs);
-  return read.rows === undefined ? { screenUnreadable: read.unreadable } : { question: questionIn(read.rows) };
+  return read.rows === undefined ? { screenUnreadable: read.unreadable } : { question: questionIn(read.rows), rows: read.rows };
 }
 
 /**
@@ -446,7 +446,8 @@ export function questionIn(rows) {
  * session in the Orca project at `home`, and the handle to type into when it
  * may: `{ handle, agent }`, with the agent Orca names there. Otherwise nothing
  * is typed, and the answer says why. `idle` says whether Orca's `tui-idle` wait
- * answered ok, for a caller that must not type into a busy harness (#391):
+ * answered ok, and `rows` is the screen the gate read, for a caller that must
+ * not type into a busy harness (#391):
  * `{}` for a tab with no harness in it (none in the book, none Orca lists, or
  * the shell in front), `{ blocked }` for one with something on screen waiting
  * to be answered, and `{ unsure }`, a sentence, for one the kit cannot tell
@@ -509,7 +510,7 @@ export function tabToTypeInto(home, tabId, timeoutMs) {
   if (seen.question === undefined) {
     return { unsure: `the kit could not tell whether a question is waiting on its screen (${seen.screenUnreadable}), so nothing was typed` };
   }
-  return { handle: live.handle, agent: seen.agent, idle: seen.answered };
+  return { handle: live.handle, agent: seen.agent, idle: seen.answered, rows: seen.rows };
 }
 
 /**

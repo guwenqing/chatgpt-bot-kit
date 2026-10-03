@@ -439,6 +439,21 @@ export async function createSandbox(t) {
        * here; `caller` is the terminal the calling process ran in, and is not
        * there for a process outside Orca.
        */
+      /**
+       * When each call reached Orca: { args, at } per call, in the order of
+       * `calls`, `at` in ms since the epoch.
+       */
+      async clock() {
+        try {
+          return (await readFile(path.join(fakeDir, 'clock.log'), 'utf8'))
+            .split('\n')
+            .filter((line) => line !== '')
+            .map((line) => JSON.parse(line));
+        } catch (error) {
+          if (error.code === 'ENOENT') return [];
+          throw error;
+        }
+      },
       async calls() {
         try {
           return (await readFile(path.join(fakeDir, 'calls.log'), 'utf8'))

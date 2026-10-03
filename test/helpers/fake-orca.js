@@ -12,6 +12,10 @@
 //                the ORCA_TERMINAL_HANDLE of the process that made the call,
 //                the terminal Orca attests it as, and is left out for a call
 //                from a plain shell outside Orca, which has none.
+//   clock.log    one JSON line per call, in the same order: { args, at }, `at`
+//                the time the call reached the fake, in ms since the epoch
+//                (#391: how far apart the kit's keys were sent). Apart from
+//                calls.log so that nothing reading that one sees a new key.
 //
 // state.json, all optional except the lists:
 //   setups      [{ id, projectId, hostId, repoId, path, displayName, kind, ... }]
@@ -373,6 +377,7 @@ appendFileSync(
   path.join(dir, 'calls.log'),
   `${JSON.stringify({ args, cwd: process.cwd(), caller: process.env.ORCA_TERMINAL_HANDLE })}\n`,
 );
+appendFileSync(path.join(dir, 'clock.log'), `${JSON.stringify({ args, at: Date.now() })}\n`);
 
 let state = JSON.parse(readFileSync(stateFile, 'utf8'));
 // Saved whole or not at all: written beside the file under a name of this

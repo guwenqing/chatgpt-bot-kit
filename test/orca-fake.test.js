@@ -715,6 +715,21 @@ test('the fake records every call, in order, with what it was asked', async (t) 
   ]);
 });
 
+test('the fake writes down when each call reached it, in the same order, apart from the calls themselves (#391)', async (t) => {
+  const box = await createSandbox(t);
+
+  const before = Date.now();
+  ask(box, ['status', '--json']);
+  await new Promise((resolve) => { setTimeout(resolve, 300); });
+  ask(box, ['project', 'setups', '--json']);
+  const after = Date.now();
+
+  const clock = await box.orca.clock();
+  assert.deepEqual(clock.map((one) => one.args), (await box.orca.calls()).map((one) => one.args), 'one entry per call, in the order of the calls');
+  assert.ok(clock[0].at >= before && clock[1].at <= after, `each time is when the call was made: ${JSON.stringify(clock)}`);
+  assert.ok(clock[1].at - clock[0].at >= 300, `and the two are as far apart as the calls were: ${JSON.stringify(clock)}`);
+});
+
 // The mailbox's binding rules, as Orca 1.4.209 was seen to keep them (issue
 // #228), and as 1.4.210 narrowed them (#317): a caller in a tab may act as that
 // tab and no other. A fake that bound Runs loosely would pass a kit that sends

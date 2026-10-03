@@ -55,6 +55,15 @@ const READ_MS = 5000;
 /** The pause between looks, and between looks at a record that may be large. */
 const ASK_MS = 500;
 const RECORD_ASK_MS = 2000;
+/**
+ * The gap between two characters of a command. Codex takes characters that come
+ * less than 8 ms apart as a paste, and flushes a paste after 60 ms without one
+ * (PASTE_BURST_CHAR_INTERVAL and PASTE_BURST_ACTIVE_IDLE_TIMEOUT in
+ * codex-rs/tui/src/bottom_pane/paste_burst.rs, rust-v0.160.0). A command it
+ * takes for a paste was seen to leave its input line bare (#391, live run 2),
+ * so the kit types well past both.
+ */
+const CHAR_GAP_MS = 100;
 
 /** A row that says the harness is at work on a turn: both draw it while one runs. */
 const WORKING = /esc to interrupt/i;
@@ -154,7 +163,22 @@ async function enter(it, verb, before = () => {}) {
 
   before();
   const typedAt = Date.now();
-  send(handle, command);
+  // One character a send, each after a look through the gate, so nothing goes
+  // in as one burst and nothing goes in once something asks a question
+  // (the architect's ruling on #391, after live run 2).
+  let typed = 0;
+  for (const char of command) {
+    if (typed > 0) {
+      await pause(CHAR_GAP_MS);
+      const look = lookAt(it);
+      if (look.why !== undefined) {
+        send(handle, '\x7f'.repeat(typed));
+        throw new Error(`${it.name}: ${command} was being typed, and after ${command.slice(0, typed)} ${look.why}, so what was typed was taken back and nothing was entered.`);
+      }
+    }
+    send(handle, char);
+    typed += 1;
+  }
   const wrong = await typedWrong(handle, it.harness, command);
   if (wrong !== undefined) {
     // Taken back, one backspace a character, so the input line is as it was.
@@ -178,38 +202,47 @@ async function enter(it, verb, before = () => {}) {
 async function idleTab(it) {
   const until = Date.now() + IDLE_WAIT_MS;
   for (;;) {
-    const found = tabToTypeInto(it.home, it.tabId, LOOK_MS);
-    let why;
-    if (found.blocked !== undefined) {
-      why = found.blocked === QUESTION_ON_SCREEN
-        ? 'a question of its harness\'s own is on its screen'
-        : `a question is waiting on its screen: Orca says ${found.blocked}`;
-    } else if (found.unsure !== undefined) {
-      why = found.unsure;
-    } else if (found.handle === undefined) {
-      throw new Error(`${it.name} is not running: its tab is open with no harness in front of it, so its harness quit or crashed, and nothing was typed. ${it.restart} brings it back.`);
-    } else if (found.agent !== it.harness) {
-      why = `Orca names ${found.agent} in it, and the session runs on ${it.harness}`;
-    } else {
-      const seen = screenRows(found.handle, READ_MS);
-      if (!found.idle || seen.rows?.some((row) => WORKING.test(row))) why = 'it is busy with a turn';
-      else if (seen.rows === undefined) why = `its screen could not be read (${seen.unreadable})`;
-      // The wait is a cutoff, not a count of looks: a yes that comes after it
-      // is too late (as for LIST_LINE, review of PR #421).
-      else if (Date.now() >= until) why = 'the look that found it idle came only after the wait was up';
-      else return found.handle;
-    }
+    const look = lookAt(it);
+    let why = look.why;
+    // The wait is a cutoff, not a count of looks: a yes that comes after it
+    // is too late (as for LIST_LINE, review of PR #421).
+    if (why === undefined && Date.now() >= until) why = 'the look that found it idle came only after the wait was up';
+    if (why === undefined) return look.handle;
     if (Date.now() >= until) throw new Error(`${it.name}: nothing was typed, because after ${IDLE_WAIT_MS / 1000} s ${why}. Run this again once it is idle.`);
     await pause(ASK_MS);
   }
 }
 
 /**
+ * One look through the typing gate at the session's tab: `{ handle }` when it
+ * is idle with nothing on its screen to answer, or `{ why }`. Throws when the
+ * tab holds no harness.
+ */
+function lookAt(it) {
+  const found = tabToTypeInto(it.home, it.tabId, LOOK_MS);
+  if (found.blocked !== undefined) {
+    return {
+      why: found.blocked === QUESTION_ON_SCREEN
+        ? 'a question of its harness\'s own is on its screen'
+        : `a question is waiting on its screen: Orca says ${found.blocked}`,
+    };
+  }
+  if (found.unsure !== undefined) return { why: found.unsure };
+  if (found.handle === undefined) {
+    throw new Error(`${it.name} is not running: its tab is open with no harness in front of it, so its harness quit or crashed, and nothing was typed. ${it.restart} brings it back.`);
+  }
+  if (found.agent !== it.harness) return { why: `Orca names ${found.agent} in it, and the session runs on ${it.harness}` };
+  // The gate has read the screen already: it saw no question on it.
+  if (!found.idle || found.rows.some((row) => WORKING.test(row))) return { why: 'it is busy with a turn' };
+  return { handle: found.handle };
+}
+
+/**
  * Why the screen does not show `command` typed and ready, or undefined when it
  * does: the input line, the lowest row the harness's pointer starts, reads the
- * pointer and the command and nothing else, and the first row of the slash
- * menu under it names the command. `menu` is set when the input line was right
- * and the menu was not. Read again for SCREEN_MS while it is not so: a screen
+ * pointer and the command and nothing else, and the slash menu's selected row
+ * names the command. `menu` is set when the input line was right and the menu
+ * was not. Read again for SCREEN_MS while it is not so: a screen
  * takes a moment to draw what was typed.
  */
 async function typedWrong(handle, harness, command) {
@@ -226,9 +259,25 @@ function menuWrong(rows, harness, command) {
   const at = rows.findLastIndex((row) => /^ *[›❯]/.test(row));
   if (at < 0) return { why: 'its screen shows no input line' };
   if (rows[at].trim() !== `${POINTER[harness]} ${command}`) return { why: `its input line reads "${rows[at].trim()}"` };
+  if (harness === 'codex') return codexMenuWrong(rows, at, command);
   const first = rows.slice(at + 1).map((row) => row.replace(/^ *(?:[›❯] +)?/, '')).find((row) => row.startsWith('/'));
   if (first === undefined) return { why: 'no menu of commands came up under its input line', menu: true };
   if (first.split(/\s+/)[0] !== command) return { why: `the first row of its menu is "${first.trim()}"`, menu: true };
+  return undefined;
+}
+
+/**
+ * Codex draws its slash menu above the input line, its selected row starting
+ * with its pointer, then a blank row, then the input line (its own snapshot
+ * tests, chat_composer slash_popup_*.snap, rust-v0.160.0). So the nearest row
+ * above the input line with words in it has to be that selected row, and name
+ * the command.
+ */
+function codexMenuWrong(rows, at, command) {
+  const above = rows.slice(0, at).findLast((row) => row.trim() !== '');
+  if (above === undefined || !/^ *› +\//.test(above)) return { why: 'no menu of commands came up above its input line', menu: true };
+  const selected = above.replace(/^ *› +/, '');
+  if (selected.split(/\s+/)[0] !== command) return { why: `the selected row of its menu is "${selected.trim()}"`, menu: true };
   return undefined;
 }
 

@@ -20,15 +20,27 @@
 //     Still not idle at 30 s: refused, nothing typed, and it says why. One that
 //     goes idle within the 30 s goes on.
 //   - It types the harness's own command as text, with no return: `/clear` on
-//     Claude Code, `/new` on Codex, `/compact` on both. Then it reads the
-//     screen: the lowest row the harness's pointer starts (`❯` Claude Code,
-//     `›` Codex) must read exactly the pointer, a space and the command, and
-//     the first row under it whose first text (after an optional pointer)
-//     starts with `/` must name exactly that command as its first word: the
-//     harness's slash menu, the command first. Otherwise it takes the text
-//     back with one backspace (\x7f) per character, as one send, and refuses,
-//     saying what the screen showed. A compact the menu does not offer is
-//     "this harness cannot compact".
+//     Claude Code, `/new` on Codex, `/compact` on both. It types it one
+//     character a send, never the whole command in one, with a gap between
+//     sends past Codex's paste-burst window (Codex 0.160.0: 8 ms between
+//     characters, a 60 ms idle flush; the kit uses 100 ms or more), and each
+//     character goes through the typing gate first: a look with Orca's
+//     `terminal wait --for tui-idle`. The slash menu is not a question to the
+//     gate. If the gate refuses partway (busy, a question, cannot tell), it
+//     stops and takes back exactly the characters typed so far, that many
+//     backspaces (\x7f) in one send, and refuses (the architect's ruling on
+//     #391, 2026-10-03).
+//   - Then it reads the screen. The lowest row the harness's pointer starts
+//     (`❯` Claude Code, `›` Codex) must read exactly the pointer, a space and
+//     the command. On Claude Code, the first row under it whose first text
+//     (after an optional pointer) starts with `/` must name exactly that
+//     command as its first word: the menu under the input box. On Codex, which
+//     draws its popup above the input line, the nearest row above it that
+//     starts with `›` (blank rows between allowed), the popup's selected row,
+//     must name it. Otherwise it takes the text back with one backspace per
+//     character, as one send, and refuses, saying what the screen showed, its
+//     last rows among it. A bare `›` input line is refused so. A compact the
+//     menu does not offer is "this harness cannot compact".
 //   - The return is a send of its own: `\r`, without --enter.
 //   - Codex's clear: when "Where should the new conversation run?" comes up
 //     with the pointer on "1. Current checkout", one more `\r`; with the
@@ -99,16 +111,20 @@ import {
   CLAUDE_CLEAR_TYPED,
   CLAUDE_COMPACT_TYPED,
   CLAUDE_IDLE,
+  CLAUDE_TEACH_AUTO,
   CLAUDE_WORKING,
   CODEX_COMPACT_NOT_OFFERED,
   CODEX_COMPACT_TYPED,
   CODEX_IDLE,
   CODEX_NEW_MENU,
+  CODEX_NEW_BARE_INPUT,
   CODEX_NEW_MENU_ON_TWO,
+  CODEX_NEW_OTHER_SELECTED,
   CODEX_NEW_NO_MENU,
   CODEX_NEW_TYPED,
   CODEX_UPDATE_OFFER,
   CODEX_WORKING,
+  whileTyping,
 } from './helpers/screens.js';
 
 /** The line the kit types into Codex after its `/new`, word for word, as the architect approved it on #391. */
@@ -121,6 +137,20 @@ const VERBS = ['clear', 'compact'];
 /** The command each harness clears with, and the one it compacts with. */
 const CLEAR = { claude: '/clear', codex: '/new' };
 const COMPACT = '/compact';
+
+/**
+ * The command as the kit types it: one character a send, none with a return
+ * (the architect's ruling on #391, 2026-10-03), so Codex never takes it for a
+ * paste.
+ */
+const typed = (command) => [...command].map((text) => ({ text, enter: false }));
+
+/**
+ * The screens a tab shows, one per send, as `command` is typed into it on
+ * `harness` a character at a time (helpers/screens.js `whileTyping`), then
+ * `after`: the screen once the last character is in, and whatever follows.
+ */
+const screensFor = (harness, command, ...after) => [...whileTyping(harness, command), ...after];
 
 /** One backspace per character of `command`, as the one send that takes it back. */
 const backspaces = (command) => '\x7f'.repeat(command.length);
@@ -411,11 +441,11 @@ for (const verb of VERBS) {
 
 // ---------------------------------------------------------------- clear, Claude Code
 
-test('clear on Claude Code: /clear typed alone, read on screen, a return of its own, and the new conversation the book holds is the answer', async (t) => {
+test('clear on Claude Code: /clear typed a character a send, read on screen, a return of its own, and the new conversation the book holds is the answer', async (t) => {
   const box = await createSandbox(t);
   const bots = await running(box);
   const tab = await liveTab(box, bots);
-  await changeTab(box, tab.tabId, { nextScreens: [CLAUDE_CLEAR_TYPED, CLAUDE_IDLE] });
+  await changeTab(box, tab.tabId, { nextScreens: screensFor('claude', '/clear', CLAUDE_CLEAR_TYPED, CLAUDE_IDLE) });
   const others = Object.fromEntries(Object.entries(await typedEverywhere(box)).filter(([handle]) => handle !== tab.handle));
   const from = (await box.orca.calls()).length;
 
@@ -429,7 +459,7 @@ test('clear on Claude Code: /clear typed alone, read on screen, a return of its 
   assert.ok(played, 'the premise: the return was sent and the hook reported the new conversation');
   assert.deepEqual(
     await sendsInto(box, bots),
-    [{ text: '/clear', enter: false }, { text: '\r', enter: false }],
+    [...typed('/clear'), { text: '\r', enter: false }],
     'the command as text with no return, then the return as a send of its own, and nothing else: no line after it on Claude Code',
   );
   assert.equal(answer.bots, bots, 'bots is the folder, resolved');
@@ -444,7 +474,7 @@ test('clear of a session whose book held no conversation yet answers was: null',
   const box = await createSandbox(t);
   const bots = await running(box, { reported: false });
   assert.equal((await sessionIn(bots, BOT, 'daily')).session, undefined, 'the premise: no conversation in the book');
-  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [CLAUDE_CLEAR_TYPED, CLAUDE_IDLE] });
+  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('claude', '/clear', CLAUDE_CLEAR_TYPED, CLAUDE_IDLE) });
 
   const { result, played } = await runPlaying(box, bots, 'clear', {
     when: (sends) => sends.some((one) => one.text === '\r'),
@@ -460,7 +490,7 @@ test('clear without --json says, on its way out, the bot, the session and the ne
   const box = await createSandbox(t);
   const bots = await running(box);
   const { tabId } = await liveTab(box, bots);
-  await changeTab(box, tabId, { nextScreens: [CLAUDE_CLEAR_TYPED, CLAUDE_IDLE] });
+  await changeTab(box, tabId, { nextScreens: screensFor('claude', '/clear', CLAUDE_CLEAR_TYPED, CLAUDE_IDLE) });
 
   const run = sessionCommand(box, 'clear');
   let finished = false;
@@ -480,7 +510,7 @@ test('clear waits out a busy session and types once it is idle, within the 30 s'
   // Orca's tui-idle says busy on the first two looks and idle after.
   const box = await createSandbox(t);
   const bots = await running(box);
-  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [CLAUDE_CLEAR_TYPED, CLAUDE_IDLE] });
+  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('claude', '/clear', CLAUDE_CLEAR_TYPED, CLAUDE_IDLE) });
   await box.orca.set({ waitIdle: ['busy', 'busy', true] });
   const from = (await box.orca.calls()).length;
 
@@ -492,7 +522,7 @@ test('clear waits out a busy session and types once it is idle, within the 30 s'
   const answer = answered(result, 'the clear');
   assert.ok(played, 'the premise: the hook reported the new conversation');
   assert.deepEqual(answer.cleared.now, 'sess-cleared');
-  assert.deepEqual(await sendsInto(box, bots), [{ text: '/clear', enter: false }, { text: '\r', enter: false }]);
+  assert.deepEqual(await sendsInto(box, bots), [...typed('/clear'), { text: '\r', enter: false }]);
   const calls = (await box.orca.calls()).slice(from);
   const firstSend = calls.findIndex((call) => orcaCommand(call) === 'terminal send');
   const looksBefore = calls.slice(0, firstSend).filter((call) => orcaCommand(call) === 'terminal wait').length;
@@ -502,12 +532,12 @@ test('clear waits out a busy session and types once it is idle, within the 30 s'
 test('a draft already in Claude Code\'s input line: the /clear is taken back with six backspaces in one send, nothing entered, and the refusal shows the line', async (t) => {
   const box = await createSandbox(t);
   const bots = await running(box);
-  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [CLAUDE_CLEAR_AFTER_DRAFT, CLAUDE_IDLE] });
+  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('claude', '/clear', CLAUDE_CLEAR_AFTER_DRAFT, CLAUDE_IDLE) });
   const book = await sessionIn(bots, BOT, 'daily');
 
   const said = assertRefused(await sessionCommand(box, 'clear'));
 
-  assert.deepEqual(await sendsInto(box, bots), [{ text: '/clear', enter: false }, { text: backspaces('/clear'), enter: false }]);
+  assert.deepEqual(await sendsInto(box, bots), [...typed('/clear'), { text: backspaces('/clear'), enter: false }]);
   assert.ok(said.includes('fix the flaky test/clear'), `it says what the input line showed, got:\n${said}`);
   assert.deepEqual(await sessionIn(bots, BOT, 'daily'), book, 'the book is as it was');
 });
@@ -515,22 +545,22 @@ test('a draft already in Claude Code\'s input line: the /clear is taken back wit
 test('Claude Code\'s menu with another command first, one whose name only starts with /clear: taken back, nothing entered, and the refusal names that row', async (t) => {
   const box = await createSandbox(t);
   const bots = await running(box);
-  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [CLAUDE_CLEAR_OTHER_FIRST, CLAUDE_IDLE] });
+  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('claude', '/clear', CLAUDE_CLEAR_OTHER_FIRST, CLAUDE_IDLE) });
 
   const said = assertRefused(await sessionCommand(box, 'clear'));
 
-  assert.deepEqual(await sendsInto(box, bots), [{ text: '/clear', enter: false }, { text: backspaces('/clear'), enter: false }]);
+  assert.deepEqual(await sendsInto(box, bots), [...typed('/clear'), { text: backspaces('/clear'), enter: false }]);
   assert.ok(said.includes('/clear-history'), `it says what the menu showed first, got:\n${said}`);
 });
 
 test('no slash menu under Claude Code\'s input line: /clear taken back, nothing entered, and the refusal shows how the screen ended', async (t) => {
   const box = await createSandbox(t);
   const bots = await running(box);
-  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [CLAUDE_CLEAR_NO_MENU, CLAUDE_IDLE] });
+  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('claude', '/clear', CLAUDE_CLEAR_NO_MENU, CLAUDE_IDLE) });
 
   const said = assertRefused(await sessionCommand(box, 'clear'));
 
-  assert.deepEqual(await sendsInto(box, bots), [{ text: '/clear', enter: false }, { text: backspaces('/clear'), enter: false }]);
+  assert.deepEqual(await sendsInto(box, bots), [...typed('/clear'), { text: backspaces('/clear'), enter: false }]);
   // The screen's last rows, those below the input line among them, so a
   // layout the check did not expect can be seen from the refusal alone (the
   // first live run, #391).
@@ -539,11 +569,11 @@ test('no slash menu under Claude Code\'s input line: /clear taken back, nothing 
 
 // ---------------------------------------------------------------- clear, Codex
 
-test('clear on Codex: /new, a return, "Current checkout" taken with a return, then the ruled line with a return, and the new conversation is the answer', async (t) => {
+test('clear on Codex: /new a character a send, a return, "Current checkout" taken with a return, then the ruled line with a return, and the new conversation is the answer', async (t) => {
   const box = await createSandbox(t);
   const bots = await running(box, { harness: 'codex' });
   const tab = await liveTab(box, bots);
-  await changeTab(box, tab.tabId, { nextScreens: [CODEX_NEW_TYPED, CODEX_NEW_MENU, CODEX_IDLE] });
+  await changeTab(box, tab.tabId, { nextScreens: screensFor('codex', '/new', CODEX_NEW_TYPED, CODEX_NEW_MENU, CODEX_IDLE) });
   const others = Object.fromEntries(Object.entries(await typedEverywhere(box)).filter(([handle]) => handle !== tab.handle));
   const from = (await box.orca.calls()).length;
 
@@ -556,7 +586,7 @@ test('clear on Codex: /new, a return, "Current checkout" taken with a return, th
   const answer = answered(result, 'the clear');
   assert.ok(played, 'the premise: the line was typed and the hook reported the new conversation');
   assert.deepEqual(await sendsInto(box, bots), [
-    { text: '/new', enter: false },
+    ...typed('/new'),
     { text: '\r', enter: false },
     { text: '\r', enter: false },
     { text: RECORD_LINE, enter: true },
@@ -572,7 +602,7 @@ test('clear on Codex: /new, a return, "Current checkout" taken with a return, th
 test('clear on Codex when no "Where should the new conversation run?" comes up: /new, its return, and the ruled line', async (t) => {
   const box = await createSandbox(t);
   const bots = await running(box, { harness: 'codex' });
-  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [CODEX_NEW_TYPED, CODEX_IDLE] });
+  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('codex', '/new', CODEX_NEW_TYPED, CODEX_IDLE) });
 
   const { result, played } = await runPlaying(box, bots, 'clear', {
     when: (sends) => sends.some((one) => one.text === RECORD_LINE),
@@ -582,7 +612,7 @@ test('clear on Codex when no "Where should the new conversation run?" comes up: 
   const answer = answered(result, 'the clear');
   assert.ok(played, 'the premise: the hook reported the new conversation');
   assert.deepEqual(await sendsInto(box, bots), [
-    { text: '/new', enter: false },
+    ...typed('/new'),
     { text: '\r', enter: false },
     { text: RECORD_LINE, enter: true },
   ]);
@@ -592,12 +622,12 @@ test('clear on Codex when no "Where should the new conversation run?" comes up: 
 test('Codex\'s "Where should the new conversation run?" with its pointer on "2. New worktree": Esc, a refusal, and never a 2, a return or the line', async (t) => {
   const box = await createSandbox(t);
   const bots = await running(box, { harness: 'codex' });
-  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [CODEX_NEW_TYPED, CODEX_NEW_MENU_ON_TWO, CODEX_IDLE] });
+  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('codex', '/new', CODEX_NEW_TYPED, CODEX_NEW_MENU_ON_TWO, CODEX_IDLE) });
 
   assertRefused(await sessionCommand(box, 'clear'));
 
   assert.deepEqual(await sendsInto(box, bots), [
-    { text: '/new', enter: false },
+    ...typed('/new'),
     { text: '\r', enter: false },
     { text: '\x1b', enter: false },
   ], 'the menu is backed out of with Esc, and nothing picks a worktree');
@@ -606,22 +636,120 @@ test('Codex\'s "Where should the new conversation run?" with its pointer on "2. 
 test('no slash menu under Codex\'s input line: /new taken back with four backspaces in one send, nothing entered, and the refusal shows how the screen ended', async (t) => {
   const box = await createSandbox(t);
   const bots = await running(box, { harness: 'codex' });
-  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [CODEX_NEW_NO_MENU, CODEX_IDLE] });
+  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('codex', '/new', CODEX_NEW_NO_MENU, CODEX_IDLE) });
 
   const said = assertRefused(await sessionCommand(box, 'clear'));
 
-  assert.deepEqual(await sendsInto(box, bots), [{ text: '/new', enter: false }, { text: backspaces('/new'), enter: false }]);
+  assert.deepEqual(await sendsInto(box, bots), [...typed('/new'), { text: backspaces('/new'), enter: false }]);
   assert.ok(said.includes('? for shortcuts'), `it shows the screen's last rows, Codex's status rows below the input line among them, got:\n${said}`);
+});
+
+// ------------------------------------- one character a send (ruling 2026-10-03)
+//
+// Live run 2 of #391: Codex 0.160.0, given `/new` in one send, left its input
+// line a bare `›` for 3 s, and its slash popup is drawn above the input line,
+// not below. The architect's ruling: the kit types a slash command one
+// character a send, each through the typing gate, with a gap past Codex's
+// paste-burst window; and the Return rule stays as it was, read on Codex
+// against the popup's selected row above the input line.
+
+/** The happy path on each harness: the command, the screens it shows, what follows the last character, and the hook's word. */
+const TYPING = [
+  { harness: 'claude', command: '/clear', typedScreen: CLAUDE_CLEAR_TYPED, after: [CLAUDE_IDLE], source: 'clear', last: '\r' },
+  { harness: 'codex', command: '/new', typedScreen: CODEX_NEW_TYPED, after: [CODEX_NEW_MENU, CODEX_IDLE], source: 'startup', last: RECORD_LINE },
+];
+
+for (const { harness, command, typedScreen, after, source, last } of TYPING) {
+  test(`clear on ${harness}: each character of ${command} is its own send, each after a look through the typing gate, at least 60 ms apart`, async (t) => {
+    const box = await createSandbox(t);
+    const bots = await running(box, { harness });
+    const tab = await liveTab(box, bots);
+    await changeTab(box, tab.tabId, { nextScreens: screensFor(harness, command, typedScreen, ...after) });
+    const from = (await box.orca.calls()).length;
+
+    const { result, played } = await runPlaying(box, bots, 'clear', {
+      when: (sends) => sends.some((one) => one.text === last),
+      then: () => hookReports(box, bots, 'sess-new', source),
+    });
+
+    answered(result, 'the clear');
+    assert.ok(played, 'the premise: the hook reported the new conversation');
+    const calls = (await box.orca.calls()).slice(from);
+    const clock = (await box.orca.clock()).slice(from);
+    const sends = calls
+      .map((call, at) => ({ call, at }))
+      .filter(({ call }) => orcaCommand(call) === 'terminal send' && orcaFlag(call, '--terminal') === tab.handle);
+    const keys = sends.slice(0, command.length);
+    assert.deepEqual(
+      keys.map(({ call }) => ({ text: orcaFlag(call, '--text'), enter: call.args.includes('--enter') })),
+      typed(command),
+      `the first ${command.length} sends are ${command}, one character each, none with --enter`,
+    );
+    let since = -1;
+    for (const [n, { at }] of keys.entries()) {
+      const looks = calls.slice(since + 1, at).filter((call) => orcaCommand(call) === 'terminal wait'
+        && orcaFlag(call, '--terminal') === tab.handle && orcaFlag(call, '--for') === 'tui-idle');
+      assert.ok(looks.length > 0, `a look through the gate (terminal wait --for tui-idle on the tab) before character ${n + 1}, ${JSON.stringify(command[n])}`);
+      since = at;
+    }
+    for (let n = 1; n < keys.length; n += 1) {
+      const gap = clock[keys[n].at].at - clock[keys[n - 1].at].at;
+      assert.ok(gap >= 60, `character ${n + 1} came ${gap} ms after the one before it, inside Codex's 60 ms paste-burst flush`);
+    }
+  });
+}
+
+for (const { harness, command, question } of [
+  { harness: 'claude', command: '/clear', question: CLAUDE_TEACH_AUTO },
+  { harness: 'codex', command: '/new', question: CODEX_UPDATE_OFFER },
+]) {
+  test(`a question that comes up on ${harness} after two characters of ${command}: the gate stops the typing, the two are taken back in one send, and it refuses`, async (t) => {
+    const box = await createSandbox(t);
+    const bots = await running(box, { harness });
+    await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [whileTyping(harness, command)[0], question] });
+
+    const said = assertRefused(await sessionCommand(box, 'clear'));
+
+    assert.deepEqual(
+      await sendsInto(box, bots),
+      [...typed(command.slice(0, 2)), { text: backspaces(command.slice(0, 2)), enter: false }],
+      'the two characters typed, and then exactly those two taken back, and nothing more',
+    );
+    assert.match(said, /question/i, `it says a question came up, got:\n${said}`);
+  });
+}
+
+test('Codex\'s input line left a bare "›" after /new, its popup above naming /new: taken back, never entered, and the refusal shows the rows', async (t) => {
+  // The screen of live run 2 (helpers/screens.js, CODEX_NEW_BARE_INPUT).
+  const box = await createSandbox(t);
+  const bots = await running(box, { harness: 'codex' });
+  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('codex', '/new', CODEX_NEW_BARE_INPUT, CODEX_IDLE) });
+
+  const said = assertRefused(await sessionCommand(box, 'clear'));
+
+  assert.deepEqual(await sendsInto(box, bots), [...typed('/new'), { text: backspaces('/new'), enter: false }]);
+  assert.ok(said.includes('start a new chat during a conversation'), `it shows the rows it saw, the popup's above the bare line among them, got:\n${said}`);
+});
+
+test('Codex\'s popup above the input line with another command selected: /new taken back, never entered, and the refusal names that command', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await running(box, { harness: 'codex' });
+  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('codex', '/new', CODEX_NEW_OTHER_SELECTED, CODEX_IDLE) });
+
+  const said = assertRefused(await sessionCommand(box, 'clear'));
+
+  assert.deepEqual(await sendsInto(box, bots), [...typed('/new'), { text: backspaces('/new'), enter: false }]);
+  assert.ok(said.includes('/model'), `it says what the popup had selected, got:\n${said}`);
 });
 
 // ---------------------------------------------------------------- compact
 
 for (const harness of ['claude', 'codex']) {
-  test(`compact on ${harness}: /compact typed alone, read on screen, a return of its own, and a compaction on the harness's record is confirmed`, async (t) => {
+  test(`compact on ${harness}: /compact typed a character a send, read on screen, a return of its own, and a compaction on the harness's record is confirmed`, async (t) => {
     const box = await createSandbox(t);
     const bots = await running(box, { harness });
     const tab = await liveTab(box, bots);
-    await changeTab(box, tab.tabId, { nextScreens: [harness === 'codex' ? CODEX_COMPACT_TYPED : CLAUDE_COMPACT_TYPED, harness === 'codex' ? CODEX_IDLE : CLAUDE_IDLE] });
+    await changeTab(box, tab.tabId, { nextScreens: screensFor(harness, COMPACT, harness === 'codex' ? CODEX_COMPACT_TYPED : CLAUDE_COMPACT_TYPED, harness === 'codex' ? CODEX_IDLE : CLAUDE_IDLE) });
     const record = await recordFileOf(box, 'sess-daily');
     const book = await sessionIn(bots, BOT, 'daily');
     const from = (await box.orca.calls()).length;
@@ -635,7 +763,7 @@ for (const harness of ['claude', 'codex']) {
 
     const answer = answered(result, 'the compact');
     assert.ok(played, 'the premise: the return was sent and the compaction written');
-    assert.deepEqual(await sendsInto(box, bots), [{ text: COMPACT, enter: false }, { text: '\r', enter: false }]);
+    assert.deepEqual(await sendsInto(box, bots), [...typed(COMPACT), { text: '\r', enter: false }]);
     assert.equal(answer.bots, bots);
     assert.deepEqual(answer.compacted, { bot: BOT, session: 'daily', harness, conversation: 'sess-daily', confirmed: true });
     assert.deepEqual(await sessionIn(bots, BOT, 'daily'), book, 'a compact leaves the book as it was');
@@ -646,11 +774,11 @@ for (const harness of ['claude', 'codex']) {
 test('compact on a harness whose slash menu does not offer /compact: taken back with eight backspaces, nothing entered, and it says the harness cannot compact', async (t) => {
   const box = await createSandbox(t);
   const bots = await running(box, { harness: 'codex' });
-  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [CODEX_COMPACT_NOT_OFFERED, CODEX_IDLE] });
+  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('codex', COMPACT, CODEX_COMPACT_NOT_OFFERED, CODEX_IDLE) });
 
   const said = assertRefused(await sessionCommand(box, 'compact'));
 
-  assert.deepEqual(await sendsInto(box, bots), [{ text: COMPACT, enter: false }, { text: backspaces(COMPACT), enter: false }]);
+  assert.deepEqual(await sendsInto(box, bots), [...typed(COMPACT), { text: backspaces(COMPACT), enter: false }]);
   assert.match(said, /can(?:not|'t|’t) compact/i, `it says this harness cannot compact, got:\n${said}`);
 });
 
@@ -729,11 +857,11 @@ describe('the waits that run out, side by side', { concurrency: true }, () => {
   it('a clear entered whose new conversation never reaches the book in 30 s: refused, saying /clear went in and to look at the tab', async (t) => {
     const box = await createSandbox(t);
     const bots = await running(box);
-    await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [CLAUDE_CLEAR_TYPED, CLAUDE_IDLE] });
+    await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('claude', '/clear', CLAUDE_CLEAR_TYPED, CLAUDE_IDLE) });
 
     const said = assertRefused(await sessionCommand(box, 'clear'));
 
-    assert.deepEqual(await sendsInto(box, bots), [{ text: '/clear', enter: false }, { text: '\r', enter: false }], 'the premise: the command was entered');
+    assert.deepEqual(await sendsInto(box, bots), [...typed('/clear'), { text: '\r', enter: false }], 'the premise: the command was entered');
     assert.ok(said.includes('/clear'), `it says what was entered, got:\n${said}`);
     assert.match(said, /\bconversation\b/i, `it says the book has no new conversation, got:\n${said}`);
     assert.match(said, /\btab\b/i, `and to look at the tab, got:\n${said}`);
@@ -772,7 +900,7 @@ describe('the review of PR #466: Orca slow or quiet, side by side', { concurrenc
     // kit could give a call, so the looks are answers, not "cannot tell".
     const box = await createSandbox(t);
     const bots = await running(box);
-    await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [CLAUDE_CLEAR_TYPED, CLAUDE_IDLE] });
+    await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('claude', '/clear', CLAUDE_CLEAR_TYPED, CLAUDE_IDLE) });
     await box.orca.set({ waitIdle: [...Array(12).fill('busy'), true], hang: { command: 'terminal wait', ms: 3000 } });
     const before = await typedEverywhere(box);
 
@@ -787,7 +915,7 @@ describe('the review of PR #466: Orca slow or quiet, side by side', { concurrenc
     // answers 90 s late. The session is otherwise idle.
     const box = await createSandbox(t);
     const bots = await running(box);
-    await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [CLAUDE_CLEAR_TYPED, CLAUDE_IDLE] });
+    await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('claude', '/clear', CLAUDE_CLEAR_TYPED, CLAUDE_IDLE) });
     await box.orca.set({ hang: { command: 'terminal read', ms: 90_000 } });
     const before = await typedEverywhere(box);
 
@@ -811,7 +939,7 @@ describe('the review of PR #466: Orca slow or quiet, side by side', { concurrenc
       const box = await createSandbox(t);
       const bots = await running(box);
       const { tabId } = await liveTab(box, bots);
-      await changeTab(box, tabId, { nextScreens: [CLAUDE_CLEAR_TYPED, CLAUDE_IDLE] });
+      await changeTab(box, tabId, { nextScreens: screensFor('claude', '/clear', CLAUDE_CLEAR_TYPED, CLAUDE_IDLE) });
       await box.orca.set({ hang: { command: 'terminal read', ms: 50_000, after: nth - 1, times: 1, from: await callsOf(box, 'terminal read') } });
 
       const started = Date.now();
@@ -837,13 +965,15 @@ describe('the review of PR #466: Orca slow or quiet, side by side', { concurrenc
     });
   }
 
-  it('a screen Orca stops reading once /clear is typed is "cannot tell": taken back, never entered, refused within a minute', async (t) => {
+  it('a screen Orca stops reading once the first character is typed is "cannot tell": that character taken back, nothing entered, refused within a minute', async (t) => {
     // Screen reads answer at once until the kit's first send, and 90 s late
     // from then on: the look before typing sees an idle session, and the
-    // screen check after typing cannot read the screen.
+    // gate's look before the second character cannot read the screen. With
+    // one character a send (the ruling of 2026-10-03), the gate stops there,
+    // and the one character typed is taken back.
     const box = await createSandbox(t);
     const bots = await running(box);
-    await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [CLAUDE_CLEAR_TYPED, CLAUDE_IDLE] });
+    await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('claude', '/clear', CLAUDE_CLEAR_TYPED, CLAUDE_IDLE) });
     await box.orca.set({ hang: { command: 'terminal read', ms: 90_000, since: 'terminal send', sinceFrom: await callsOf(box, 'terminal send') } });
 
     const started = Date.now();
@@ -853,8 +983,8 @@ describe('the review of PR #466: Orca slow or quiet, side by side', { concurrenc
     assertRefused(result);
     assert.deepEqual(
       await sendsInto(box, bots),
-      [{ text: '/clear', enter: false }, { text: backspaces('/clear'), enter: false }],
-      'a screen that cannot be read fails the check: the command is taken back, and no return is sent',
+      [{ text: '/', enter: false }, { text: backspaces('/'), enter: false }],
+      'a screen that cannot be read stops the typing: what was typed is taken back, and no return is sent',
     );
     assert.ok(took < 60_000, `a quiet Orca does not hold the command; it took ${took} ms`);
     assert.equal((await sessionIn(bots, BOT, 'daily')).session, 'sess-daily', 'the book is as it was');
@@ -869,7 +999,7 @@ test('a compaction written while the kit still waits for the session to go idle 
   // that took the early one would have answered by then.
   const box = await createSandbox(t);
   const bots = await running(box);
-  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [CLAUDE_COMPACT_TYPED, CLAUDE_IDLE] });
+  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('claude', COMPACT, CLAUDE_COMPACT_TYPED, CLAUDE_IDLE) });
   const record = await recordFileOf(box, 'sess-daily');
   const early = "require('node:fs').appendFileSync(process.argv[1], JSON.stringify({ type: 'system', subtype: 'compact_boundary', content: 'Conversation compacted', sessionId: 'sess-daily', timestamp: new Date().toISOString(), compactMetadata: { trigger: 'auto', preTokens: 81522 } }) + '\\n');";
   await box.orca.set({
@@ -890,7 +1020,7 @@ test('a compaction written while the kit still waits for the session to go idle 
   const ran = await box.orca.ranDuring();
   assert.equal(ran.length, 1, `the premise: the early compaction was written during the busy looks, got: ${JSON.stringify(ran)}`);
   assert.equal(ran[0].status, 0, `the premise: and written without trouble: ${ran[0].stderr}`);
-  assert.deepEqual(await sendsInto(box, bots), [{ text: COMPACT, enter: false }, { text: '\r', enter: false }], 'the premise: /compact was typed and entered after the busy looks');
+  assert.deepEqual(await sendsInto(box, bots), [...typed(COMPACT), { text: '\r', enter: false }], 'the premise: /compact was typed and entered after the busy looks');
   assert.equal(answeredEarly, false, `the compact must not be confirmed by a compaction written before /compact was typed, but it had answered before the later one was written:\n${result.stdout}${result.stderr}`);
   const answer = answered(result, 'the compact');
   assert.deepEqual(answer.compacted, { bot: BOT, session: 'daily', harness: 'claude', conversation: 'sess-daily', confirmed: true });
@@ -904,7 +1034,7 @@ test('a compaction after a stretch of the record too large for one string still 
   // return, as the harness writes it.
   const box = await createSandbox(t);
   const bots = await running(box, { harness: 'codex' });
-  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [CODEX_COMPACT_TYPED, CODEX_IDLE] });
+  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('codex', COMPACT, CODEX_COMPACT_TYPED, CODEX_IDLE) });
   const record = await recordFileOf(box, 'sess-daily');
   await truncate(record, (await stat(record)).size + Math.round(1.1 * 2 ** 30));
   await appendFile(record, '\n');

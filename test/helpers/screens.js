@@ -467,13 +467,56 @@ const CODEX_STATUS = CODEX_ANSWERED.slice(13);
 /** Codex with `input` as its input line and `below` under it. */
 const codexWith = (input, below) => [...CODEX_ABOVE_INPUT, input, ...below];
 
-/** `/new` typed into Codex's empty input line, its menu open under it with `/new` first. A reconstruction. */
-export const CODEX_NEW_TYPED = codexWith('› /new', [
-  '',
-  '  /new         start a new chat during a conversation',
-]);
+// Codex 0.160.0 draws its slash popup ABOVE the input line, the selected row
+// with Codex's pointer, a blank row between it and the input line, and its
+// status rows below (#391, live run 2). Codex's own snapshot test at tag
+// rust-v0.160.0 (codex-rs/tui/src/bottom_pane/snapshots/
+// codex_tui__bottom_pane__chat_composer__tests__slash_popup_res.snap) draws
+// "› /resume  resume a saved chat", "", "› /res", "", "  100% context left".
+// The screens below are reconstructions on that layout, on the captured
+// CODEX_ANSWERED above the popup and its status row below, but for
+// CODEX_NEW_BARE_INPUT, which is the live capture.
 
-/** `/new` typed, and no menu at all: Codex's status rows under the line as when idle. A reconstruction. */
+/** Codex's screen above a popup: CODEX_ANSWERED's box and its answered turn. */
+const CODEX_ABOVE_POPUP = CODEX_ANSWERED.slice(0, 11);
+
+/** Codex with the popup's `selected` row above `input`, as the snapshot draws them. */
+const codexPopup = (selected, input) => [...CODEX_ABOVE_POPUP, selected, '', input, '', CODEX_STATUS[0]];
+
+/** Codex's popup row for each command the kit types, selected; the words of /new's as seen live. */
+const CODEX_ROWS = {
+  '/new': '› /new  start a new chat during a conversation',
+  '/compact': '› /compact  summarize conversation to prevent hitting the context limit',
+};
+
+/** `/new` typed into Codex's empty input line, its popup above with `/new` selected. A reconstruction. */
+export const CODEX_NEW_TYPED = codexPopup(CODEX_ROWS['/new'], '› /new');
+
+/**
+ * `/new` typed, and the input line left bare: the popup above it shows `/new`
+ * selected, and the line itself reads `›` alone. A live capture (live run 2 of
+ * #391, Codex 0.160.0), partial: the rows the kit's refusal printed, its last
+ * rows with the blank ones dropped, the folder as Codex shortened it. The line
+ * stayed bare for 3 s.
+ */
+export const CODEX_NEW_BARE_INPUT = [
+  '• DONE',
+  '  Worked for 1m 18s • 10:33 AM',
+  '› /new  start a new chat during a conversation',
+  '›',
+  '  GPT-6-Luna medium · /private/var/folders/…/bots/clear…',
+];
+
+/**
+ * `/new` typed, and the popup's selected row above it another command. A
+ * reconstruction made up to test the rule: no such screen was seen.
+ */
+export const CODEX_NEW_OTHER_SELECTED = codexPopup('› /model  choose what model and reasoning effort to use', '› /new');
+
+/**
+ * `/new` typed, and no popup at all: Codex's status rows under the line as
+ * when idle, and above it only the echo of the last turn. A reconstruction.
+ */
 export const CODEX_NEW_NO_MENU = codexWith('› /new', CODEX_STATUS);
 
 /**
@@ -486,21 +529,32 @@ export const CODEX_NEW_MENU_ON_TWO = CODEX_NEW_MENU.map((row) => {
   return row;
 });
 
-/** `/compact` typed into Codex's empty input line, its menu open with `/compact` first. A reconstruction. */
-export const CODEX_COMPACT_TYPED = codexWith('› /compact', [
-  '',
-  '  /compact     summarize conversation to prevent hitting the context limit',
-]);
+/** `/compact` typed into Codex's empty input line, its popup above with `/compact` selected. A reconstruction. */
+export const CODEX_COMPACT_TYPED = codexPopup(CODEX_ROWS['/compact'], '› /compact');
 
 /**
- * `/compact` typed into a Codex that has no such command: its menu finds
- * nothing to offer. A reconstruction; whether Codex 0.157 has `/compact` is
- * not known (#391).
+ * `/compact` typed into a Codex that has no such command: its popup finds
+ * nothing to offer, so no row of it is selected. A reconstruction.
  */
-export const CODEX_COMPACT_NOT_OFFERED = codexWith('› /compact', [
-  '',
-  '  no matches',
-]);
+export const CODEX_COMPACT_NOT_OFFERED = [...CODEX_ABOVE_POPUP, '  no matches', '', '› /compact', '', CODEX_STATUS[0]];
+
+/** Claude Code's menu row for each command the kit types. */
+const CLAUDE_ROWS = { '/clear': CLAUDE_CLEAR_ROW, '/compact': CLAUDE_COMPACT_ROW };
+
+/**
+ * What the harness shows after each character of `command` but the last, as
+ * the kit types it one character a send (#391): the typed part in the input
+ * line, and the command's own menu row where the harness draws it, below the
+ * input box on Claude Code and above the input line on Codex. One screen per
+ * send, for the fake Orca's `nextScreens`; the screen after the last
+ * character is the test's to give. Reconstructions, as above.
+ */
+export function whileTyping(harness, command) {
+  return [...command].slice(0, -1).map((_, at) => {
+    const typed = command.slice(0, at + 1);
+    return harness === 'codex' ? codexPopup(CODEX_ROWS[command], `› ${typed}`) : claudeWith(`❯ ${typed}`, [CLAUDE_ROWS[command]]);
+  });
+}
 
 /**
  * Codex at work on a turn, its empty input line below: the row above it says

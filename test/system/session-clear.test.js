@@ -232,8 +232,25 @@ function whatIsUp(handle) {
   ].join('');
 }
 
-/** A harness at work says how to interrupt it, on either harness. */
+/** Codex at work says how to interrupt it. Claude Code 2.1.288 does not (live run 2 of #391). */
 const isBusy = (rows) => rows.some((row) => /esc to interrupt/i.test(row));
+
+/**
+ * Whether Orca's `tui-idle` reads the tab busy now: a short wait that is not
+ * answered ok, the kit's own busy signal (the architect's ruling on #391,
+ * 2026-10-03). Answers Orca's answer too, for the run's record.
+ */
+function tuiBusy(handle) {
+  const answer = orca(['terminal', 'wait', '--terminal', handle, '--for', 'tui-idle', '--timeout-ms', '2000']);
+  return { busy: answer.ok !== true, answer };
+}
+
+/**
+ * A harness's status rows while it works, kept as evidence only: Claude Code
+ * 2.1.288's "✳ Nucleating… (1m 8s · ↓ 131 tokens)" and "(ctrl+b to run in
+ * background)", seen on live run 2, and Codex's "esc to interrupt".
+ */
+const statusRows = (rows) => rows.filter((row) => /\(\s*(?:\d+m\s*)?\d+s\b[^)]*\)|ctrl\+b to run in background|esc to interrupt/i.test(row));
 
 /** Wait until the tab is idle: a TUI up, nothing of its own waiting, and not at work. */
 async function idle(handle, within = READY_MS) {
@@ -440,13 +457,28 @@ for (const bot of BOTS) {
 
     // 1. Busy: a turn that runs longer than the kit waits. The clear refuses
     //    and types nothing.
+    //    Busy is what the kit itself goes by: Orca's tui-idle not answering
+    //    ok. On Claude Code that is the whole test, and this run must show it
+    //    reading busy while the foreground command runs. On Codex, whose
+    //    tui-idle can answer ok while it works (tech notes, section 1), the
+    //    kit also goes by "esc to interrupt" on screen, and so does this wait.
     await pressIn(handle, BUSY_LINE);
-    await until(
-      `${bot.name} daily to be at work on its foreground command`,
+    const atWork = await until(
+      `${bot.name} daily to be at work on its foreground command, as Orca's tui-idle reads it`,
       BUSY_START_MS,
-      async () => (isBusy(rowsOf(handle) ?? []) ? true : undefined),
+      async () => {
+        const look = tuiBusy(handle);
+        const rows = rowsOf(handle) ?? [];
+        if (look.busy || (bot.harness === 'codex' && isBusy(rows))) return { look, rows };
+        return undefined;
+      },
       () => whatIsUp(handle),
     );
+    if (bot.harness === 'claude') {
+      assert.equal(atWork.look.busy, true, `on Claude Code, tui-idle reads busy while the foreground command runs: ${JSON.stringify(atWork.look.answer)}`);
+    }
+    t.diagnostic(`${bot.harness} at work: tui-idle answered ${JSON.stringify(atWork.look.answer.ok === true ? atWork.look.answer.result?.wait : atWork.look.answer.error)};`
+      + ` its status rows: ${JSON.stringify(statusRows(atWork.rows))}`);
     const refused = sessionCall('clear');
     assert.notEqual(refused.status, 0, `a clear on a busy session should be refused: ${refused.stdout}${refused.stderr}`);
     assert.match(refused.stdout + refused.stderr, /busy/i, `and say it is busy: ${refused.stdout}${refused.stderr}`);
