@@ -34,12 +34,24 @@ import { promptPath, sessionsOf } from './up.js';
 export const retiredDir = (bots) => path.join(bots, 'retired');
 
 /**
- * Retire the session `session` of the bot `bot`. Returns `{ bot, session,
- * closed }`, and `promptsLeft` when its prompt file could not be removed.
+ * Retire the session `session` of the bot `bot`, and first the temporary
+ * sessions it made, and theirs (#464, ADR 0033). Returns `{ bot, session,
+ * closed, retiredWith }`, and `promptsLeft` when its prompt file could not be
+ * removed. `retiredWith` holds one `{ bot, session, maker, closed }` for each
+ * session that went with it, deepest first, with its own `promptsLeft`.
  */
 export async function retireSession(bots, { bot, session }) {
   const home = fleetMember(bots, bot, 'retire', session);
-  const sessions = sessionsOf(readBot(home, bot), session);
+  const known = readBot(home, bot);
+  const sessions = sessionsOf(known, session);
+
+  const retiredWith = [];
+  const book = readBook(home);
+  const made = known.sessions.filter((one) => book.sessions[one.name]?.temporary?.maker === session);
+  for (const { name } of made) {
+    const { retiredWith: theirs, ...gone } = await retireSession(bots, { bot, session: name });
+    retiredWith.push(...theirs, { ...gone, maker: session });
+  }
 
   const closed = await closeTabs(home, tabsToClose(bots, bot, home, sessions, { keepless: true }), bots, bot, commandLine('retire', bots, bot, session));
   dropSession(bots, bot, session);
@@ -53,7 +65,7 @@ export async function retireSession(bots, { bot, session }) {
   });
   const left = removePrompts([promptPath(bots, bot, session)]);
 
-  return { bot, session, closed, ...left };
+  return { bot, session, closed, retiredWith, ...left };
 }
 
 /**

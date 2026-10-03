@@ -4,7 +4,8 @@
 //
 // Any long-lived session can make a temporary session of its own bot for a
 // piece of work, and retire it when the work is done, without Bot Father, who
-// stays the manager of long-lived sessions. A temporary session is an ordinary
+// stays the manager of long-lived sessions. A temporary session can make one
+// of its own, one level deep and one at a time (#464, ADR 0033). A temporary session is an ordinary
 // session in every other way: in bot.yaml, brought up with a tab and a mailbox,
 // its conversations kept in the book. What makes it temporary is one field of
 // its book entry, `temporary: { maker, made }`, and the book is the one place
@@ -44,8 +45,18 @@ const INHERITED = ['model', 'effort', 'context', 'approval'];
  */
 export async function makeTemp(bots, { tab, ...given }) {
   const caller = callerIn(bots, tab, 'make');
+  // A temporary session makes one of its own, one level deep and one at a
+  // time (#464, ADR 0033).
   if (caller.temporary !== undefined) {
-    throw new Error(`${caller.bot}/${caller.session} is a temporary session, and only a long-lived session makes one. Nothing was made.`);
+    const book = readBook(caller.home);
+    const maker = caller.temporary.maker;
+    if (book.sessions[maker]?.temporary !== undefined) {
+      throw new Error(`${caller.bot}/${caller.session} is a temporary session ${maker} made, and ${maker} is temporary itself, so it makes none of its own: temporary sessions go one level deep. Nothing was made.`);
+    }
+    const open = Object.keys(book.sessions).filter((name) => book.sessions[name]?.temporary?.maker === caller.session);
+    if (open.length > 0) {
+      throw new Error(`${caller.bot}/${caller.session} is a temporary session, and it already has ${open.join(', ')} open; a temporary session has one of its own at a time. Retire it first with  ${shellWord(ownCli())} temp retire --bots ${shellWord(bots)} --name ${open[0]}  Nothing was made.`);
+    }
   }
   // The name is a folder under work/ and a file beside the bots folder, so it
   // is held to the rule a bot's name is: one plain name, never a path.

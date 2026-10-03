@@ -18,12 +18,18 @@
 // the runner as known, #240), and codex-trust-override.test.js, which builds the
 // same arguments itself and is the proof of them.
 //
-// Two forms of it are each taken for one call only, named below, and named
+// Two forms of it are each taken for the calls named below only, and named
 // anywhere else: `codexTrustArgs(…, { hooks: false })`, the folder trusted and
 // the hooks review not bypassed, for session-identity's `untrusted-codex`, the
-// case that wants the kit's hook not to run (#240); and `codexTrustArgs(…,
-// { sleep: true })`, Codex's sleep tool left on, for codex-sleep's sleep-codex,
-// the check that a real bot with the tool still gets its mail (#432).
+// case that wants the kit's hook not to run (#240), and for temp-of-temp's
+// Codex session, whose hooks review its maker answers (#464); and
+// `codexTrustArgs(…, { sleep: true })`, Codex's sleep tool left on, for
+// codex-sleep's sleep-codex, the check that a real bot with the tool still gets
+// its mail (#432).
+//
+// A `'temp', 'make'` call is read too (#464), by its `--name`, when its own
+// `--harness` is or could be Codex. One that names no harness takes its maker's,
+// which the call does not show, and is not read.
 //
 // Comments are taken out before anything is read, so a call left in a comment
 // is not a call.
@@ -41,13 +47,16 @@ const systemTestsDir = path.join(repoRoot, 'test', 'system');
 const LEFT_OUT = new Set(['codex-first-run-screens.test.js', 'codex-trust-override.test.js']);
 
 /**
- * The forms of `codexTrustArgs` each taken for one call only, by file and bot:
- * `hooks: false` for session-identity's case of a conversation that ran before
- * the hooks file was trusted, which wants the kit's hook not to run (#240), and
+ * The forms of `codexTrustArgs` each taken for the calls named only, by file
+ * and bot for a session add, by file and name for a temp make: `hooks: false`
+ * for session-identity's case of a conversation that ran before the hooks file
+ * was trusted, which wants the kit's hook not to run (#240), and for
+ * temp-of-temp's Codex session, whose maker answers its hooks review (#464);
  * `sleep: true` for codex-sleep's bot that keeps Codex's sleep tool (#432).
  */
 const ONE_CALL_FORMS = [
   { form: 'hooks: false', words: /\bhooks:\s*false\b/, file: 'session-identity.test.js', bot: "'untrusted-codex'" },
+  { form: 'hooks: false', words: /\bhooks:\s*false\b/, file: 'temp-of-temp.test.js', make: 'REVIEW' },
   { form: 'sleep: true', words: /\bsleep:\s*true\b/, file: 'codex-sleep.test.js', bot: 'SLEEPER.name' },
 ];
 
@@ -164,13 +173,37 @@ function untrustedCodexIn(source, file) {
     if (harness === 'claude') continue;
     const session = after(elements, '--name');
     if (text.includes('codexTrustArgs(')) {
-      for (const one of ONE_CALL_FORMS) {
-        if (!one.words.test(text) || (file === one.file && bot === one.bot)) continue;
-        trouble.push(`a session add for ${bot} ${session} passes codexTrustArgs with ${one.form}, which only ${one.file}'s ${one.bot.replace(/^'(.*)'$/, '$1')} may`);
-      }
+      trouble.push(...formsAgainst(text, file, 'bot', bot, `a session add for ${bot} ${session}`));
       continue;
     }
     trouble.push(`a session add for ${bot} ${session}, ${harness === 'codex' ? 'a Codex session' : 'which could be a Codex session'}, passes no codexTrustArgs(…)`);
+  }
+  for (const { elements, text } of callsOf(code, 'temp', 'make')) {
+    const own = after(elements, '--harness');
+    if (own === undefined || harnessOf(code, own) === 'claude') continue;
+    const name = after(elements, '--name');
+    if (text.includes('codexTrustArgs(')) {
+      trouble.push(...formsAgainst(text, file, 'make', name, `a temp make of ${name}`));
+      continue;
+    }
+    trouble.push(`a temp make of ${name}, ${harnessOf(code, own) === 'codex' ? 'a Codex session' : 'which could be a Codex session'}, passes no codexTrustArgs(…)`);
+  }
+  return trouble;
+}
+
+/**
+ * Each one-call form of `codexTrustArgs` a call's `text` uses that names
+ * another call, as a sentence: `key` is `bot` for a session add and `make` for
+ * a temp make, `who` the call's own for it, and `what` the call, as said.
+ */
+function formsAgainst(text, file, key, who, what) {
+  const trouble = [];
+  for (const form of new Set(ONE_CALL_FORMS.map((one) => one.form))) {
+    if (!ONE_CALL_FORMS.find((one) => one.form === form).words.test(text)) continue;
+    const named = ONE_CALL_FORMS.filter((one) => one.form === form && one[key] !== undefined);
+    if (named.some((one) => one.file === file && one[key] === who)) continue;
+    const only = named.map((one) => `${one.file}'s ${one[key].replace(/^'(.*)'$/, '$1')}`).join(' or ');
+    trouble.push(`${what} passes codexTrustArgs with ${form}, which only ${only === '' ? 'no call of its kind' : only} may`);
   }
   return trouble;
 }
@@ -221,6 +254,25 @@ test('hooks: false is taken for the one call named for it, and named anywhere el
   assert.deepEqual(untrustedCodexIn(otherBot, 'session-identity.test.js'), [
     'a session add for \'some-codex\' \'daily\' passes codexTrustArgs with hooks: false, which only session-identity.test.js\'s untrusted-codex may',
   ], 'another bot in that file');
+});
+
+test('a temp make on Codex is read by its name: hooks: false is taken for temp-of-temp\'s REVIEW, and named anywhere else (#464)', () => {
+  const makes = "obkJson(['temp', 'make', '--bots', bots, '--name', DEV, '--prompt', TASK], inTab(lead));\n"
+    + "obkJson(['temp', 'make', '--bots', bots, '--name', 'drafter', '--harness', 'claude']);\n"
+    + "obkJson(['temp', 'make', '--bots', bots, '--name', 'bare', '--harness', 'codex']);\n"
+    + "obkJson([\n  'temp', 'make', '--bots', bots, '--name', REVIEW, '--harness', 'codex',\n  ...codexTrustArgs(bots, { hooks: false }),\n], inTab(dev));\n";
+  assert.deepEqual(untrustedCodexIn(makes, 'temp-of-temp.test.js'), [
+    'a temp make of \'bare\', a Codex session, passes no codexTrustArgs(…)',
+  ], 'REVIEW in its file is taken; one with no harness or on Claude Code is not read; one on Codex with none is named');
+  assert.deepEqual(untrustedCodexIn(makes, 'other.test.js'), [
+    'a temp make of \'bare\', a Codex session, passes no codexTrustArgs(…)',
+    'a temp make of REVIEW passes codexTrustArgs with hooks: false, which only temp-of-temp.test.js\'s REVIEW may',
+  ], 'the same calls in another file');
+  const added = "obkJson(['bot', 'create', '--bots', bots, '--name', 'untrusted-codex', '--harness', 'codex']);\n"
+    + "obkJson(['session', 'add', '--bots', bots, '--bot', 'untrusted-codex', '--name', 'daily', ...codexTrustArgs(bots, { hooks: false })]);\n";
+  assert.deepEqual(untrustedCodexIn(added, 'temp-of-temp.test.js'), [
+    'a session add for \'untrusted-codex\' \'daily\' passes codexTrustArgs with hooks: false, which only session-identity.test.js\'s untrusted-codex may',
+  ], 'temp-of-temp\'s leave covers its temp make, not a session add in it');
 });
 
 test('sleep: true is taken for the one call named for it, and named anywhere else', () => {

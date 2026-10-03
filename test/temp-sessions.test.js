@@ -519,19 +519,8 @@ test('TM7 make with no prompt is refused, and nothing is written', async (t) => 
   assert.ok(await entryIn(bots, BOT, 'scout'), 'the same make with a prompt works');
 });
 
-// No nesting (PRD 6.4, "A temporary session does not make one of its own"):
-// only a long-lived session makes temporary sessions.
-test('TM8 a temporary session cannot make one of its own, and nothing is written', async (t) => {
-  const box = await createSandbox(t);
-  const { bots, planner } = await fleet(box);
-  await made(box, planner, ['--name', 'scout', '--prompt', TASK]);
-  const scout = await liveTab(box, bots, BOT, 'scout');
-
-  await assertMakeRefused(box, bots, { terminal: scout, args: ['--name', 'scout-helper', '--prompt', TASK] });
-
-  await made(box, planner, ['--name', 'scout-helper', '--prompt', TASK]);
-  assert.ok(await entryIn(bots, BOT, 'scout-helper'), 'the same make from a long-lived session works');
-});
+// A temporary session making one of its own, one level and one at a time
+// (#464, which overruled TM8's "no nesting"): temp-nested.test.js.
 
 // ------------------------------------------- making on another harness (#238)
 

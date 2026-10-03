@@ -91,28 +91,34 @@ Usage:
                             session with the conversation it was having.
   obk retire --bots <path> --bot <bot> [--session <name>]
                             End a session: close its tab and take it off the
-                            bot, keeping its conversations in the book. Or end
-                            a bot: close its tabs, remove its Orca project and
-                            move its folder to retired/. It will not retire a
-                            bot whose Orca project holds a tab your book does
-                            not name, and moves the folder only once Orca no
-                            longer lists the project.
+                            bot, keeping its conversations in the book, and
+                            first do the same for the temporary sessions it
+                            made, and theirs. Or end a bot: close its tabs,
+                            remove its Orca project and move its folder to
+                            retired/. It will not retire a bot whose Orca
+                            project holds a tab your book does not name, and
+                            moves the folder only once Orca no longer lists
+                            the project.
   obk temp make --bots <path> --name <session>
                 (--prompt <text> | --prompt-file <path>) [--harness claude|codex]
                 [--model <m>] [--effort <e>] [--context <c>]
                 [--approval ${APPROVALS.join('|')}] [--extra-arg=<arg>]...
-                            Run in a long-lived session's own tab: make a
-                            temporary session of that session's bot for a piece
-                            of work, and bring it up. It takes your harness,
-                            model, effort, context and approval unless you say
-                            otherwise; on another harness than yours it takes
-                            only your approval. It works in work/<session>, and
-                            has the task as its start prompt. The book records
-                            it as temporary, made by you.
+                            Run in a session's own tab: make a temporary
+                            session of that session's bot for a piece of work,
+                            and bring it up. A temporary session makes one at
+                            a time, and one it made makes none. It takes your
+                            harness, model, effort, context and approval unless
+                            you say otherwise; on another harness than yours
+                            it takes only your approval. It works in
+                            work/<session>, and has the task as its start
+                            prompt. The book records it as temporary, made by
+                            you.
   obk temp retire --bots <path> --name <session>
                             Run in the maker's own tab: retire a temporary
                             session it made, as obk retire does. It refuses a
                             long-lived session, or one another session made.
+                            Like obk retire, it first retires the temporary
+                            sessions that session made.
   obk temp trust-hooks --bots <path> --name <session>
                             Run in the maker's own tab: answer the hooks review
                             of a Codex temporary session it made with "Trust
@@ -600,6 +606,7 @@ const commands = {
       return {
         answer: { bots, ...retired },
         lines: [
+          ...withLines(retired.retiredWith, retired.session),
           ...closedLines(retired.closed),
           `retired    ${retired.bot} ${retired.session}: off ${path.join('bots', retired.bot, 'bot.yaml')}, and its conversations kept in the book under retired`,
           ...leftLines(retired.promptsLeft),
@@ -662,6 +669,7 @@ const commands = {
     return {
       answer: { bots, ...retired },
       lines: [
+        ...withLines(retired.retiredWith, retired.session),
         ...closedLines(retired.closed),
         `retired    ${retired.bot} ${retired.session}, a temporary session of ${retired.maker}'s: off ${path.join('bots', retired.bot, 'bot.yaml')}, and its conversations kept in the book under retired`,
         ...leftLines(retired.promptsLeft),
@@ -1134,6 +1142,13 @@ function settingsOf(values) {
 
 /** The tabs a command closed, one line each. */
 const closedLines = (closed) => closed.map((tab) => `closed     ${tab.bot} ${tab.name}  tab ${tab.tabId}  terminal ${tab.terminal}`);
+
+/** The temporary sessions a retire took along with the one it named, each as it went (#464). */
+const withLines = (retiredWith, session) => retiredWith.flatMap((gone) => [
+  ...closedLines(gone.closed),
+  `retired    ${gone.bot} ${gone.session}, a temporary session of ${gone.maker}'s, along with ${session}: off ${path.join('bots', gone.bot, 'bot.yaml')}, and its conversations kept in the book under retired`,
+  ...leftLines(gone.promptsLeft),
+]);
 
 /** What a retire could not remove, and how to: nothing reads these files now (#393). */
 const leftLines = (left = []) => left.flatMap(({ file, reason }) => [
