@@ -1,6 +1,7 @@
 # ADR 0005: Three approval levels, `auto` by default
 
-Date: 2026-09-19. Status: superseded by [ADR 0015](0015-three-approval-levels-auto-by-default.md). Until then, the Decision was the owner's unless a sentence is marked (proposed).
+Date: 2026-09-19.
+Status: superseded by [ADR 0015](0015-three-approval-levels-auto-by-default.md). Until then, the Decision was the owner's unless a sentence is marked (proposed).
 
 ## Context
 

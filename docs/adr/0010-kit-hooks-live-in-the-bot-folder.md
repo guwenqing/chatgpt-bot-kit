@@ -1,6 +1,7 @@
 # ADR 0010: Kit hooks live in the bot folder, not in user settings
 
-Date: 2026-09-19. Status: superseded by [ADR 0020](0020-kit-hooks-live-in-the-bot-folder.md). Until then, the Decision was the owner's unless a sentence is marked (proposed).
+Date: 2026-09-19.
+Status: superseded by [ADR 0020](0020-kit-hooks-live-in-the-bot-folder.md). Until then, the Decision was the owner's unless a sentence is marked (proposed).
 
 ## Context
 

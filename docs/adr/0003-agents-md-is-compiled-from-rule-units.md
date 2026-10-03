@@ -1,6 +1,7 @@
 # ADR 0003: `AGENTS.md` is compiled from rule units
 
-Date: 2026-09-19. Status: superseded by [ADR 0013](0013-agents-md-is-compiled-from-rule-units.md). Until then, the Decision was the owner's unless a sentence is marked (proposed).
+Date: 2026-09-19.
+Status: superseded by [ADR 0013](0013-agents-md-is-compiled-from-rule-units.md). Until then, the Decision was the owner's unless a sentence is marked (proposed).
 
 ## Context
 

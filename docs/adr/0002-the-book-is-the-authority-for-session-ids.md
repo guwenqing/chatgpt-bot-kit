@@ -1,6 +1,7 @@
 # ADR 0002: The kit's book is the authority for session ids
 
-Date: 2026-09-19. Status: superseded by [ADR 0012](0012-the-book-is-the-authority-for-session-ids.md). Until then, the Decision was the owner's unless a sentence is marked (proposed).
+Date: 2026-09-19.
+Status: superseded by [ADR 0012](0012-the-book-is-the-authority-for-session-ids.md). Until then, the Decision was the owner's unless a sentence is marked (proposed).
 
 ## Context
 
