@@ -38,10 +38,11 @@
 // answer it, which is the point. Trust all and continue makes Codex write a
 // `[hooks.state."…"]` key under this test's folder into ~/.codex/config.toml.
 // The runner removes keys a run added under its own folders, from that file
-// and from ~/.claude.json alike, but it fails a run whose Codex wrote keys
-// unless the test is one of its known writers (scripts/test-system.js,
-// KNOWN_WRITERS); this one is not listed there yet, which is the architect's
-// to settle. Codex's one turn, on its start prompt, is told to do nothing.
+// and from ~/.claude.json alike, and fails a run whose Codex wrote keys unless
+// the test is one of its known writers (scripts/test-system.js,
+// KNOWN_WRITERS); this one is listed there, so its key is named and removed
+// and does not fail the run (#464). Codex's one turn, on its start prompt, is
+// told to do nothing.
 //
 // The machine it runs on is someone's working machine. So this test, like the
 // ones beside it: works in a throwaway bots folder under the system temp
