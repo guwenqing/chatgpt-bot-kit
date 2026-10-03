@@ -506,7 +506,11 @@ function leftForHook(to, from, subject, tab) {
     const dir = leftDir(tab);
     mkdirSync(dir, { recursive: true });
     const left = { bots: to.bots, to: `${to.bot}/${to.session}`, from: `${from.bot}/${from.session}`, subject };
-    writeFileSync(path.join(dir, `${stamp()}.${process.pid}.json`), `${JSON.stringify(left)}\n`);
+    // Written under a name the hook does not take, then put in place whole: a
+    // hook running beside this send never takes a file still being written.
+    const name = path.join(dir, `${stamp()}.${process.pid}`);
+    writeFileSync(`${name}.writing`, `${JSON.stringify(left)}\n`);
+    renameSync(`${name}.writing`, `${name}.json`);
     return { nudgeLeft: true };
   } catch {
     return {};
@@ -534,9 +538,14 @@ export function decideLeftNudges(tab) {
   }
   return names.flatMap((name) => {
     const taking = path.join(dir, `${name}.taking`);
-    let left;
+    // Another hook took it first: it is that hook's to decide, and to remove.
     try {
       renameSync(path.join(dir, name), taking);
+    } catch {
+      return [];
+    }
+    let left;
+    try {
       left = JSON.parse(readFileSync(taking, 'utf8'));
     } catch {
       return [];
