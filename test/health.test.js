@@ -739,6 +739,16 @@ test('H10 a line of the user\'s that mentions obk session record, beside the kit
   assert.deepEqual(answer.found, [], `nothing else is wrong in the fleet, got: ${JSON.stringify(answer.found, null, 2)}`);
 });
 
+/**
+ * The kit's nudge hook on Codex (#350), in the form `obk up` writes it, run by
+ * `cli`. Written beside a hand-written SessionStart line, so that the file
+ * holds every hook of the kit's and what health says of it is about that line.
+ */
+const kitNudgeGroups = (cli, bots) => [{
+  matcher: 'Bash',
+  hooks: [{ type: 'command', command: `${shellWord(cli)} session nudge --bots ${shellWord(bots)} --bot api-bot 2>/dev/null || true`, timeout: 10 }],
+}];
+
 test('H10 a hook of the kit\'s in the bare obk form an earlier kit wrote is in order', async (t) => {
   // Every bot folder on a machine today holds this form. It still records
   // sessions, through the `obk` the machine has installed, and the next `up`
@@ -749,7 +759,7 @@ test('H10 a hook of the kit\'s in the bare obk form an earlier kit wrote is in o
   await botUp(box, 'api-bot', { sessions: [['daily'], ['nightly', '--harness', 'codex']] });
   const file = hookFileOf(bots, 'api-bot', 'codex');
   const bare = `obk session record --bots ${shellWord(bots)} --bot api-bot 2>/dev/null || true`;
-  await writeFile(file, `${JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: bare, timeout: 10 }] }] } }, null, 2)}\n`);
+  await writeFile(file, `${JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: bare, timeout: 10 }] }], PostToolUse: kitNudgeGroups(box.cli, bots) } }, null, 2)}\n`);
 
   const answer = await found(box);
 
@@ -766,7 +776,7 @@ test('H10 a hook that runs the kit by its own path is the kit\'s hook, and in or
   await botUp(box, 'api-bot', { sessions: [['daily'], ['nightly', '--harness', 'codex']] });
   const file = hookFileOf(bots, 'api-bot', 'codex');
   const kit = `${shellWord(box.cli)} session record --bots ${shellWord(bots)} --bot api-bot 2>/dev/null || true`;
-  await writeFile(file, `${JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: kit, timeout: 10 }] }] } }, null, 2)}\n`);
+  await writeFile(file, `${JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: kit, timeout: 10 }] }], PostToolUse: kitNudgeGroups(box.cli, bots) } }, null, 2)}\n`);
 
   const answer = await found(box);
 
@@ -811,10 +821,14 @@ test('H10 a user\'s line that ends like the kit\'s, beside the kit\'s own hook, 
   assert.deepEqual(answer.found, [], `nothing else is wrong in the fleet, got: ${JSON.stringify(answer.found, null, 2)}`);
 });
 
-/** A hooks file holding one line of the kit's, in the form `obk up` writes it, naming `cli`. */
-async function kitHookNaming(file, cli, bots) {
+/**
+ * A hooks file holding one line of the kit's, in the form `obk up` writes it,
+ * naming `cli`; with `nudgeCli`, the kit's nudge hook beside it, run by that.
+ */
+async function kitHookNaming(file, cli, bots, nudgeCli) {
   const kit = `${shellWord(cli)} session record --bots ${shellWord(bots)} --bot api-bot 2>/dev/null || true`;
-  await writeFile(file, `${JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: kit, timeout: 10 }] }] } }, null, 2)}\n`);
+  const nudge = nudgeCli === undefined ? {} : { PostToolUse: kitNudgeGroups(nudgeCli, bots) };
+  await writeFile(file, `${JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: kit, timeout: 10 }] }], ...nudge } }, null, 2)}\n`);
 }
 
 test('H10 a hook of the kit\'s naming another CLI that is there is in order', async (t) => {
@@ -825,7 +839,7 @@ test('H10 a hook of the kit\'s naming another CLI that is there is in order', as
   const bots = await seeded(box);
   await botUp(box, 'api-bot', { sessions: [['daily'], ['nightly', '--harness', 'codex']] });
   const file = hookFileOf(bots, 'api-bot', 'codex');
-  await kitHookNaming(file, cliEntry, bots);
+  await kitHookNaming(file, cliEntry, bots, box.cli);
 
   const answer = await found(box);
 
