@@ -191,8 +191,8 @@ test('every link to a heading in the PRD lands on one, and on the section it nam
     // A link that says which section it is (`PRD 7.3`) lands on that section.
     const section = /\bPRD (\d+(?:\.\d+)*)\b/.exec(link.label)?.[1];
     if (section === undefined) continue;
-    const numbered = new RegExp(`(^|[\\s\\]])${section.replace(/\./g, '\\.')}\\.?(\\s|$)`);
-    if (!numbered.test(heading.text)) problems.push(`${where}: lands on "${heading.text}", not on section ${section}`);
+    const numbered = heading.text.split(/[\s\]]+/).some((word) => word === section || word === `${section}.`);
+    if (!numbered) problems.push(`${where}: lands on "${heading.text}", not on section ${section}`);
   }
   assert.deepEqual(problems, []);
 });
