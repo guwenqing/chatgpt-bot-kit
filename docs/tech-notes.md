@@ -688,7 +688,10 @@ Proved live on 2026-09-21 (Orca 1.4.205), in throwaway workspaces since removed:
   "additionalContext":"…"}}` reached the model before its reply. 0.160.0's binary also names
   `PreToolUse`, `PermissionRequest`, `PreCompact`, `PostCompact`, `SessionEnd`, `UserPromptSubmit`,
   `SubagentStart`, `SubagentStop`, `Stop` and `Interrupt`, and a hook may be `async`. **verified**
-  (live, once)
+  (live, once) Then through the kit, in `test/system/codex-nudge.test.js` (2026-10-03, Orca 1.4.219,
+  codex-cli 0.160.0, Claude Code 2.1.288): a Codex sender in its sandbox left the nudges for a Claude
+  receiver running a loop and one holding a background `sleep`, both `tty_boundary`; the kit's hook
+  typed both, and each receiver read its mail, the busy one after its loop. **verified** (live)
 - **A new hook entry does not run until it is trusted, and nothing says so.** Codex's hooks
   documentation (read 2026-10-03): "Codex records trust against the hook's current hash, so new or
   changed hooks are marked for review." The same `codex exec` without the bypass switch ran Codex's
