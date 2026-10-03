@@ -640,6 +640,46 @@ test('the fake can be slow to answer one command, and then answers it as it woul
   assert.equal(slow.result.runtime.reachable, true);
 });
 
+test('the fake can be slow to answer one command only once another has been called, counting from when it was told (#391)', async (t) => {
+  // A screen that reads at once until a key is sent, and hangs after.
+  const box = await createSandbox(t);
+  await twoTabs(box);
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_a', '--text', 'before', '--json']));
+  await box.orca.set({ hang: { command: 'terminal read', ms: 5000, since: 'terminal send', sinceFrom: 1 } });
+  const timedRead = () => {
+    const started = Date.now();
+    const read = answer(ask(box, ['terminal', 'read', '--terminal', 'term_a', '--screen', '--json']));
+    return { took: Date.now() - started, read };
+  };
+
+  const quick = timedRead();
+  assert.ok(quick.took < 5000, `a send made before the hang was set does not count, took ${quick.took} ms`);
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_a', '--text', 'after', '--json']));
+  const slow = timedRead();
+  assert.ok(slow.took >= 5000, `once a send is made, the read waits, took ${slow.took} ms`);
+  assert.equal(slow.read.ok, true, 'and then answers as ever');
+  const status = Date.now();
+  answer(ask(box, ['status', '--json']));
+  assert.ok(Date.now() - status < 5000, 'and another command is not held');
+});
+
+test('the fake can hold back one answer of a command among prompt ones: the nth, counting from when it was told (#391)', async (t) => {
+  const box = await createSandbox(t);
+  await twoTabs(box);
+  answer(ask(box, ['terminal', 'read', '--terminal', 'term_a', '--screen', '--json']));
+  await box.orca.set({ hang: { command: 'terminal read', ms: 5000, after: 1, times: 1, from: 1 } });
+  const took = () => {
+    const started = Date.now();
+    assert.equal(answer(ask(box, ['terminal', 'read', '--terminal', 'term_a', '--screen', '--json'])).ok, true);
+    return Date.now() - started;
+  };
+
+  const [first, second, third] = [took(), took(), took()];
+  assert.ok(first < 5000, `the first read since it was told is not held, took ${first} ms`);
+  assert.ok(second >= 5000, `the second is, took ${second} ms`);
+  assert.ok(third < 5000, `and the third is not, took ${third} ms`);
+});
+
 test('the fake can do what a command asks and then hold its answer back', async (t) => {
   // The case a caller that gives up on Orca cannot see into: the Run is made,
   // and nobody is told so.

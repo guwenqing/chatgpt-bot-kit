@@ -76,7 +76,8 @@
 // keys, the line's words and the JSON's shape.
 
 import assert from 'node:assert/strict';
-import { appendFile } from 'node:fs/promises';
+import { appendFile, readdir, stat, truncate } from 'node:fs/promises';
+import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import test, { describe, it } from 'node:test';
 
@@ -167,6 +168,30 @@ async function running(box, { harness = 'claude', sessions = ['daily', 'review']
     assert.equal((await sessionIn(bots, BOT, 'daily')).session, 'sess-daily', 'the premise: the book holds daily\'s conversation');
   }
   return bots;
+}
+
+/**
+ * The file the harness keeps for conversation `id`, the one `running` left
+ * on its record: one conversation has one record, and a test that writes
+ * into it writes there rather than making a second (a Codex rollout's name
+ * carries the second it was made in, so a second write is a second file).
+ */
+async function recordFileOf(box, id) {
+  const roots = [path.join(box.home, '.codex', 'sessions'), path.join(box.home, '.claude', 'projects')];
+  const found = [];
+  for (const root of roots) {
+    let names = [];
+    try {
+      names = await readdir(root, { recursive: true });
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    for (const name of names) {
+      if (path.basename(name) === `${id}.jsonl` || path.basename(name).endsWith(`-${id}.jsonl`)) found.push(path.join(root, name));
+    }
+  }
+  assert.equal(found.length, 1, `the premise: one record for ${id}, got: ${JSON.stringify(found)}`);
+  return found[0];
 }
 
 /** Change one of Orca's terminals, found by its tab id, as `change` says. */
@@ -597,7 +622,7 @@ for (const harness of ['claude', 'codex']) {
     const bots = await running(box, { harness });
     const tab = await liveTab(box, bots);
     await changeTab(box, tab.tabId, { nextScreens: [harness === 'codex' ? CODEX_COMPACT_TYPED : CLAUDE_COMPACT_TYPED, harness === 'codex' ? CODEX_IDLE : CLAUDE_IDLE] });
-    const record = await conversationOnRecord(box, { harness, cwd: botHomeOf(bots, BOT), id: 'sess-daily' });
+    const record = await recordFileOf(box, 'sess-daily');
     const book = await sessionIn(bots, BOT, 'daily');
     const from = (await box.orca.calls()).length;
 
@@ -714,4 +739,182 @@ describe('the waits that run out, side by side', { concurrency: true }, () => {
     assert.match(said, /\btab\b/i, `and to look at the tab, got:\n${said}`);
     assert.equal((await sessionIn(bots, BOT, 'daily')).session, 'sess-daily', 'the book is as it was');
   });
+});
+
+// ---------------------------------------------------- the review of PR #466
+//
+// Four gaps the review found. Each is the requirement as it stood, now with a
+// test of its own:
+//
+//   - The 30 s wait for an idle session is a cutoff, not a count of looks, as
+//     #421 ruled for the list line: a look that finds the session idle but
+//     answers after the 30 s are up is too late, and nothing is typed.
+//   - Every call the command makes to Orca is bounded. A screen read Orca does
+//     not answer in time is "cannot tell": before anything is typed, it is no
+//     reason to type; after the command is typed, the screen check cannot
+//     pass, so the command is taken back, as for any screen that fails it. It
+//     never holds the command for as long as Orca stays quiet.
+//   - "A compaction made after the command began" means after /compact was
+//     typed: one written while the kit still waits for the session to go idle
+//     does not confirm it.
+//   - The harness's record can be larger than one string holds (a live Codex
+//     rollout of 1.28 GB, #396). A compaction after such a stretch still
+//     confirms the compact.
+
+/** How many calls of `command` the fake Orca has answered so far. */
+const callsOf = async (box, command) => orcaCallsOf(await box.orca.calls(), command).length;
+
+describe('the review of PR #466: Orca slow or quiet, side by side', { concurrency: true }, () => {
+  it('a look that finds the session idle only after the 30 s are up is too late: refused, and nothing typed', async (t) => {
+    // Every tui-idle wait answers 3 s late, and the first twelve say busy, so
+    // the look that finds the session idle starts at least 36 s in, whatever
+    // the kit does between looks. Each answer comes well inside any bound the
+    // kit could give a call, so the looks are answers, not "cannot tell".
+    const box = await createSandbox(t);
+    const bots = await running(box);
+    await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [CLAUDE_CLEAR_TYPED, CLAUDE_IDLE] });
+    await box.orca.set({ waitIdle: [...Array(12).fill('busy'), true], hang: { command: 'terminal wait', ms: 3000 } });
+    const before = await typedEverywhere(box);
+
+    assertRefused(await sessionCommand(box, 'clear'));
+
+    await assertNothingTyped(box, before, 'idle only after the 30 s');
+    assert.equal((await sessionIn(bots, BOT, 'daily')).session, 'sess-daily', 'the book is as it was');
+  });
+
+  it('a screen Orca does not read for 90 s before anything is typed is "cannot tell": refused within a minute, and nothing typed', async (t) => {
+    // The review's probe, made longer than the whole wait: every screen read
+    // answers 90 s late. The session is otherwise idle.
+    const box = await createSandbox(t);
+    const bots = await running(box);
+    await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [CLAUDE_CLEAR_TYPED, CLAUDE_IDLE] });
+    await box.orca.set({ hang: { command: 'terminal read', ms: 90_000 } });
+    const before = await typedEverywhere(box);
+
+    const started = Date.now();
+    const result = await sessionCommand(box, 'clear');
+    const took = Date.now() - started;
+
+    assertRefused(result);
+    await assertNothingTyped(box, before, 'a screen Orca does not read');
+    assert.ok(took < 60_000, `a quiet Orca does not hold the command past its 30 s wait and a bounded call; it took ${took} ms`);
+  });
+
+  // The review's probe itself: one screen read answered 50 s late, the rest
+  // at once, on an idle session. Which read the kit makes first is its own
+  // business, so each of the first three takes its turn at being the late one.
+  // Whatever the kit then does (clears, or refuses), it types nothing after
+  // the 30 s are up, and the late read does not hold it: a read is bounded.
+  // The harness is played as ever, so a kit that goes on can finish.
+  for (const nth of [1, 2, 3]) {
+    it(`one screen read, the ${['first', 'second', 'third'][nth - 1]}, answered 50 s late: nothing is typed after the 30 s are up, and the command is not held by it`, async (t) => {
+      const box = await createSandbox(t);
+      const bots = await running(box);
+      const { tabId } = await liveTab(box, bots);
+      await changeTab(box, tabId, { nextScreens: [CLAUDE_CLEAR_TYPED, CLAUDE_IDLE] });
+      await box.orca.set({ hang: { command: 'terminal read', ms: 50_000, after: nth - 1, times: 1, from: await callsOf(box, 'terminal read') } });
+
+      const started = Date.now();
+      let finished = false;
+      const run = sessionCommand(box, 'clear', { flags: ['--json'] });
+      run.then(() => { finished = true; });
+      let typedAt;
+      let played = false;
+      while (!finished) {
+        const sends = await sendsInto(box, bots);
+        if (typedAt === undefined && sends.length > 0) typedAt = Date.now() - started;
+        if (!played && sends.some((one) => one.text === '\r')) {
+          await hookReports(box, bots, 'sess-cleared', 'clear');
+          played = true;
+        }
+        await sleep(50);
+      }
+      const result = await run;
+      const took = Date.now() - started;
+
+      assert.ok(typedAt === undefined || typedAt < 40_000, `anything typed is typed inside the 30 s wait; the first send came ${typedAt} ms in:\n${result.stdout}${result.stderr}`);
+      assert.ok(took < 45_000, `one late read does not hold the command; it took ${took} ms:\n${result.stdout}${result.stderr}`);
+    });
+  }
+
+  it('a screen Orca stops reading once /clear is typed is "cannot tell": taken back, never entered, refused within a minute', async (t) => {
+    // Screen reads answer at once until the kit's first send, and 90 s late
+    // from then on: the look before typing sees an idle session, and the
+    // screen check after typing cannot read the screen.
+    const box = await createSandbox(t);
+    const bots = await running(box);
+    await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [CLAUDE_CLEAR_TYPED, CLAUDE_IDLE] });
+    await box.orca.set({ hang: { command: 'terminal read', ms: 90_000, since: 'terminal send', sinceFrom: await callsOf(box, 'terminal send') } });
+
+    const started = Date.now();
+    const result = await sessionCommand(box, 'clear');
+    const took = Date.now() - started;
+
+    assertRefused(result);
+    assert.deepEqual(
+      await sendsInto(box, bots),
+      [{ text: '/clear', enter: false }, { text: backspaces('/clear'), enter: false }],
+      'a screen that cannot be read fails the check: the command is taken back, and no return is sent',
+    );
+    assert.ok(took < 60_000, `a quiet Orca does not hold the command; it took ${took} ms`);
+    assert.equal((await sessionIn(bots, BOT, 'daily')).session, 'sess-daily', 'the book is as it was');
+  });
+});
+
+test('a compaction written while the kit still waits for the session to go idle does not confirm the compact; the one after the return does', async (t) => {
+  // Orca says busy on the first four looks. Before it answers the first of
+  // them, the fake writes a compaction into the conversation's record, dated
+  // then: after the command began, before /compact was typed. Then, once the
+  // return has gone in, the test waits 10 s and writes the real one. A kit
+  // that took the early one would have answered by then.
+  const box = await createSandbox(t);
+  const bots = await running(box);
+  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [CLAUDE_COMPACT_TYPED, CLAUDE_IDLE] });
+  const record = await recordFileOf(box, 'sess-daily');
+  const early = "require('node:fs').appendFileSync(process.argv[1], JSON.stringify({ type: 'system', subtype: 'compact_boundary', content: 'Conversation compacted', sessionId: 'sess-daily', timestamp: new Date().toISOString(), compactMetadata: { trigger: 'auto', preTokens: 81522 } }) + '\\n');";
+  await box.orca.set({
+    waitIdle: ['busy', 'busy', 'busy', 'busy', true],
+    runDuring: { command: 'terminal wait', argv: [process.execPath, '-e', early, record], on: (await callsOf(box, 'terminal wait')) + 1 },
+  });
+
+  let finished = false;
+  const run = sessionCommand(box, 'compact', { flags: ['--json'] });
+  run.then(() => { finished = true; });
+  const until = Date.now() + 25_000;
+  while (!finished && Date.now() < until && !(await sendsInto(box, bots)).some((one) => one.text === '\r')) await sleep(50);
+  await sleep(10_000);
+  const answeredEarly = finished;
+  await compactionIn(record, 'claude');
+  const result = await run;
+
+  const ran = await box.orca.ranDuring();
+  assert.equal(ran.length, 1, `the premise: the early compaction was written during the busy looks, got: ${JSON.stringify(ran)}`);
+  assert.equal(ran[0].status, 0, `the premise: and written without trouble: ${ran[0].stderr}`);
+  assert.deepEqual(await sendsInto(box, bots), [{ text: COMPACT, enter: false }, { text: '\r', enter: false }], 'the premise: /compact was typed and entered after the busy looks');
+  assert.equal(answeredEarly, false, `the compact must not be confirmed by a compaction written before /compact was typed, but it had answered before the later one was written:\n${result.stdout}${result.stderr}`);
+  const answer = answered(result, 'the compact');
+  assert.deepEqual(answer.compacted, { bot: BOT, session: 'daily', harness: 'claude', conversation: 'sess-daily', confirmed: true });
+});
+
+test('a compaction after a stretch of the record too large for one string still confirms the compact', async (t) => {
+  // Codex rollouts of 1.28 and 1.56 GB were seen live (#396). Here the
+  // conversation's rollout carries 1.1 GiB of NUL bytes after its first line,
+  // one "line" longer than any string can hold, written as a sparse stretch
+  // that takes no room on disk; then a newline. The compaction comes after the
+  // return, as the harness writes it.
+  const box = await createSandbox(t);
+  const bots = await running(box, { harness: 'codex' });
+  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [CODEX_COMPACT_TYPED, CODEX_IDLE] });
+  const record = await recordFileOf(box, 'sess-daily');
+  await truncate(record, (await stat(record)).size + Math.round(1.1 * 2 ** 30));
+  await appendFile(record, '\n');
+
+  const { result, played } = await runPlaying(box, bots, 'compact', {
+    when: (sends) => sends.some((one) => one.text === '\r'),
+    then: () => compactionIn(record, 'codex'),
+  });
+
+  assert.ok(played, 'the premise: the return was sent and the compaction written');
+  const answer = answered(result, 'the compact');
+  assert.deepEqual(answer.compacted, { bot: BOT, session: 'daily', harness: 'codex', conversation: 'sess-daily', confirmed: true });
 });

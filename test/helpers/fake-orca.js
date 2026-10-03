@@ -237,7 +237,18 @@
 //               command takes effect at once, in the world the fake keeps,
 //               and only its answer is held back: an Orca that did what it was
 //               asked and then went quiet, so a caller that gave up cannot
-//               know whether it happened.
+//               know whether it happened. With `since: "<other command>"` the
+//               command answers at once until that other command has been
+//               called more than `sinceFrom` times (0 if left out) in all, and
+//               is held back every time after: an Orca that goes quiet once
+//               something has been typed, say, and not before (#391).
+//               `sinceFrom` counts the calls made before the hang was set, so
+//               the ones a test's own setup made do not count.
+//               With `after: n` the first n calls of the command answer at
+//               once, and with `times: n` only n calls are held back, the
+//               first n after those: one late answer among prompt ones. Both
+//               count from `from`, the calls of the command made before the
+//               hang was set (0 if left out).
 //   crash       { command, exitCode, stdout, stderr } — no JSON, a bad exit code
 //   garbage     { command, text } — output that is not JSON at all
 //   runs        [{ id, objective, coordinator_handle, consumer_generation,
@@ -396,7 +407,7 @@ function write(answer) {
 
 function ok(result) {
   // Whatever the command did is saved by now; only the answer is held back.
-  if (aimedHere(state.hang) && state.hang.applied === true) hangFor(state.hang.ms);
+  if (hangsNow() && state.hang.applied === true) hangFor(state.hang.ms);
   write({ id: `fake-${answered + 1}`, ok: true, result, _meta: { durationMs: 1 } });
   process.exit(0);
 }
@@ -407,6 +418,15 @@ function fail(code, message, data = {}) {
 }
 
 const aimedHere = (spec) => spec != null && (spec.command === undefined || spec.command === '*' || spec.command === command);
+
+/** Whether the `hang` is on for this call: aimed at it, and past its `since`. */
+const hangsNow = () => {
+  if (!aimedHere(state.hang)) return false;
+  if (state.hang.since !== undefined && callsSoFar(state.hang.since) <= (state.hang.sinceFrom ?? 0)) return false;
+  const nth = callsSoFar() - (state.hang.from ?? 0);
+  const after = state.hang.after ?? 0;
+  return nth > after && (state.hang.times === undefined || nth <= after + state.hang.times);
+};
 
 // Real Orca prints human text without --json, and the kit must never read that.
 if (!args.includes('--json')) {
@@ -430,7 +450,7 @@ const hangFor = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0
 
 // An Orca slow to answer: the call waits, then goes on as it would have, on
 // whatever the world holds by then. One that applies first waits in `ok`.
-if (aimedHere(state.hang) && state.hang.applied !== true) {
+if (hangsNow() && state.hang.applied !== true) {
   hangFor(state.hang.ms);
   state = JSON.parse(readFileSync(stateFile, 'utf8'));
 }

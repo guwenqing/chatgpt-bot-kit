@@ -11,13 +11,14 @@
 // records, not from the screen: the book's new conversation for a clear, the
 // harness's own record of a compaction for a compact.
 
-import { readFileSync, realpathSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import { setTimeout as pause } from 'node:timers/promises';
 
 import { readBook } from './book.js';
 import { botDir, readBot } from './bot.js';
 import { claudeTranscript, codexRollout } from './conversations.js';
 import { harnessOf, ownCli, shellWord } from './launch.js';
+import { eachLine } from './lines.js';
 import { findProject, orca, QUESTION_ON_SCREEN, screenRows, tabs, tabToTypeInto } from './orca.js';
 import { botsNamed, sessionsOf, typeListLine } from './up.js';
 
@@ -49,8 +50,11 @@ const SCREEN_MS = 3000;
 /** How long the book is given to hold the new conversation, and a harness to record a compaction (the architect: up to 5 minutes). */
 const CLEAR_MS = 30_000;
 const COMPACT_MS = 300_000;
-/** The pause between looks. */
+/** How long each screen read is given before it counts as a screen that cannot be read. */
+const READ_MS = 5000;
+/** The pause between looks, and between looks at a record that may be large. */
 const ASK_MS = 500;
+const RECORD_ASK_MS = 2000;
 
 /** A row that says the harness is at work on a turn: both draw it while one runs. */
 const WORKING = /esc to interrupt/i;
@@ -92,17 +96,25 @@ export async function clearSession(bots, { bot, session }) {
  */
 export async function compactSession(bots, { bot, session }) {
   const it = sessionToType(bots, bot, session);
-  const began = Date.now();
-  await enter(it, 'compact');
+  // What the record holds when /compact is typed is not this compact's: one
+  // that ends while the kit waits for the session to be idle is the one
+  // before it (review of PR #466). So only what is written after counts.
+  let record;
+  const { typedAt } = await enter(it, 'compact', () => {
+    record = recordAt(it.harness, it.home, readBook(it.home).sessions[session]?.session ?? null);
+  });
 
-  const until = began + COMPACT_MS;
+  const until = typedAt + COMPACT_MS;
   for (;;) {
     const conversation = readBook(it.home).sessions[session]?.session ?? null;
-    if (conversation !== null && compactedSince(it.harness, it.home, conversation, began)) {
+    // A conversation the book did not hold when it was typed is read whole.
+    if (conversation !== record.id) record = { id: conversation, from: 0 };
+    record.file ??= recordFile(it.harness, it.home, conversation);
+    if (record.file !== undefined && compactedSince(it.harness, record, typedAt)) {
       return { bot, session, harness: it.harness, conversation, confirmed: true };
     }
     if (Date.now() >= until) return { bot, session, harness: it.harness, conversation, confirmed: false };
-    await pause(ASK_MS);
+    await pause(RECORD_ASK_MS);
   }
 }
 
@@ -133,12 +145,15 @@ function sessionToType(bots, bot, session) {
 /**
  * Type the harness's command for `verb` into the session's tab and press
  * return, once it is idle and the screen shows the command typed and nothing
- * else. Returns the command, and the handle it went into.
+ * else. `before` runs just before the command is typed. Returns the command,
+ * the handle it went into, and when it was typed.
  */
-async function enter(it, verb) {
+async function enter(it, verb, before = () => {}) {
   const command = COMMANDS[verb][it.harness];
   const handle = await idleTab(it);
 
+  before();
+  const typedAt = Date.now();
   send(handle, command);
   const wrong = await typedWrong(handle, it.harness, command);
   if (wrong !== undefined) {
@@ -151,7 +166,7 @@ async function enter(it, verb) {
   // with `--enter` while it names a reason, and on Codex a return inside the
   // text lands in the draft (helpers in the system tests, #329).
   send(handle, '\r');
-  return { command, handle };
+  return { command, handle, typedAt };
 }
 
 /**
@@ -176,9 +191,12 @@ async function idleTab(it) {
     } else if (found.agent !== it.harness) {
       why = `Orca names ${found.agent} in it, and the session runs on ${it.harness}`;
     } else {
-      const seen = screenRows(found.handle);
+      const seen = screenRows(found.handle, READ_MS);
       if (!found.idle || seen.rows?.some((row) => WORKING.test(row))) why = 'it is busy with a turn';
       else if (seen.rows === undefined) why = `its screen could not be read (${seen.unreadable})`;
+      // The wait is a cutoff, not a count of looks: a yes that comes after it
+      // is too late (as for LIST_LINE, review of PR #421).
+      else if (Date.now() >= until) why = 'the look that found it idle came only after the wait was up';
       else return found.handle;
     }
     if (Date.now() >= until) throw new Error(`${it.name}: nothing was typed, because after ${IDLE_WAIT_MS / 1000} s ${why}. Run this again once it is idle.`);
@@ -197,7 +215,7 @@ async function idleTab(it) {
 async function typedWrong(handle, harness, command) {
   const until = Date.now() + SCREEN_MS;
   for (;;) {
-    const seen = screenRows(handle);
+    const seen = screenRows(handle, READ_MS);
     const wrong = seen.rows === undefined ? { why: `its screen could not be read (${seen.unreadable})` } : menuWrong(seen.rows, harness, command);
     if (wrong === undefined || Date.now() >= until) return wrong && { ...wrong, rows: seen.rows };
     await pause(ASK_MS);
@@ -223,7 +241,7 @@ function menuWrong(rows, harness, command) {
 async function answerWhereToRun(it, handle, command) {
   const until = Date.now() + SCREEN_MS;
   for (;;) {
-    const rows = screenRows(handle).rows ?? [];
+    const rows = screenRows(handle, READ_MS).rows ?? [];
     if (rows.some((row) => row.includes(WHERE_TO_RUN))) {
       const pointer = rows.findLast((row) => /^ *›/.test(row));
       if (pointer === undefined || !CURRENT_CHECKOUT.test(pointer)) {
@@ -238,28 +256,52 @@ async function answerWhereToRun(it, handle, command) {
   }
 }
 
-/** Whether the harness's record of `conversation` holds a compaction made at `since` or later. */
-function compactedSince(harness, home, conversation, since) {
-  const file = harness === 'claude' ? claudeTranscript(home, conversation) : codexRollout(conversation);
-  let text;
+/** Where the harness keeps the record of `conversation`, or undefined when it has none yet. */
+function recordFile(harness, home, conversation) {
+  if (conversation === null) return undefined;
+  return harness === 'claude' ? claudeTranscript(home, conversation) : codexRollout(conversation);
+}
+
+/** The record of `conversation` as it is now: `{ id, file, from }`, `from` the byte it ends at. */
+function recordAt(harness, home, conversation) {
+  const file = recordFile(harness, home, conversation);
+  let from = 0;
   try {
-    text = readFileSync(file, 'utf8');
+    from = file === undefined ? 0 : statSync(file).size;
+  } catch {
+    // Not written yet: everything in it will be new.
+  }
+  return { id: conversation, file, from };
+}
+
+/**
+ * Whether the record holds, from its byte `from` on, a compaction made at
+ * `since` or later. Read a line at a time: a record can be larger than one
+ * string holds (#396).
+ */
+function compactedSince(harness, record, since) {
+  let found = false;
+  try {
+    eachLine(record.file, (line) => {
+      // Only a line that names a compaction is worth parsing.
+      if (line === undefined || !line.includes('compact')) return false;
+      let entry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        return false;
+      }
+      // Claude Code's marker, and Codex's (tech notes, sections 2 and 3).
+      const compaction = harness === 'claude'
+        ? entry?.type === 'system' && entry.subtype === 'compact_boundary'
+        : entry?.type === 'compacted';
+      found = compaction && Date.parse(entry.timestamp) >= since;
+      return found;
+    }, { from: record.from });
   } catch {
     return false;
   }
-  return text.split('\n').some((line) => {
-    let entry;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      return false;
-    }
-    // Claude Code's marker, and Codex's (tech notes, sections 2 and 3).
-    const compaction = harness === 'claude'
-      ? entry?.type === 'system' && entry.subtype === 'compact_boundary'
-      : entry?.type === 'compacted';
-    return compaction && Date.parse(entry.timestamp) >= since;
-  });
+  return found;
 }
 
 /**
