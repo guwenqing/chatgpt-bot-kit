@@ -32,7 +32,8 @@ const HEADER = `# What Orca calls this bot on this machine, and where each of it
 # the bot, with when, so the conversations it had are still accounted for.
 #
 # \`temporary\` marks a session another session of this bot made with
-# \`obk temp make\`: which session made it, and when. Its maker retires it.
+# \`obk temp make\`: which session made it, and when, and the role and option
+# of bot.yaml's temp_roles it was made in, if any. Its maker retires it.
 `;
 
 export const bookFile = (home) => path.join(home, 'sessions.yaml');

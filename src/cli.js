@@ -29,7 +29,7 @@ import { readRoster } from './roster.js';
 import { buildAgents, buildRules, CODEX_CAP } from './rules.js';
 import { addSkill, buildSkills, linkSkills, removeSkill } from './skills.js';
 import { addSource, fetchSources } from './sources.js';
-import { makeTemp, retireTemp, trustHooks } from './temp.js';
+import { listRoles, makeTemp, optionsLine, retireTemp, trustHooks } from './temp.js';
 import { readUsage } from './usage.js';
 import { BOT_FATHER, bringUp, ownMailbox } from './up.js';
 
@@ -99,7 +99,7 @@ Usage:
                             project holds a tab your book does not name, and
                             moves the folder only once Orca no longer lists
                             the project.
-  obk temp make --bots <path> --name <session>
+  obk temp make --bots <path> --name <session> [--role <role>[:<option>]]
                 (--prompt <text> | --prompt-file <path>) [--harness claude|codex]
                 [--model <m>] [--effort <e>] [--context <c>]
                 [--approval ${APPROVALS.join('|')}] [--extra-arg=<arg>]...
@@ -113,6 +113,19 @@ Usage:
                             work/<session>, and has the task as its start
                             prompt. The book records it as temporary, made by
                             you.
+                            --role takes the harness, model, effort and context
+                            of an option of a role in the bot's temp_roles, the
+                            role's first option when none is named, and the
+                            role's prompt file when no task is given; a flag
+                            still wins, and what the option leaves out is
+                            taken as above. The session is named
+                            <role>-<session>. A role's cap, if it has one,
+                            counts its open sessions. The answer says where
+                            each setting came from.
+  obk temp roles --bots <path>
+                            Run in a session's own tab: list the roles of your
+                            bot's temp_roles, each option with what it is for,
+                            and each role's cap and open sessions.
   obk temp retire --bots <path> --name <session>
                             Run in the maker's own tab: retire a temporary
                             session it made, as obk retire does. It refuses a
@@ -284,6 +297,7 @@ const COMMANDS = {
   'session sent': ['bots', 'bot'],
   'session mailbox': ['bots', 'bot', 'session'],
   'temp make': ['bots', 'name'],
+  'temp roles': ['bots'],
   'temp retire': ['bots', 'name'],
   'temp trust-hooks': ['bots', 'name'],
 };
@@ -306,6 +320,7 @@ const NEEDED = {
   to: '--to <bot>/<session>: which session to write to',
   from: '--from <bot>/<session>: which session is writing',
   subject: '--subject <text>: what the message is about',
+  role: '--role <role>[:<option>]: which role of the bot\'s temp_roles',
 };
 
 /** The flags that name something. A name that is empty names nothing. */
@@ -360,6 +375,7 @@ async function run(argv) {
       ...Object.fromEntries(SETTINGS.map(([flag]) => [flag, { type: 'string' }])),
       'extra-arg': { type: 'string', multiple: true },
       'run-on': { type: 'string' },
+      role: { type: 'string' },
       json: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean' },
@@ -647,19 +663,39 @@ const commands = {
     const tab = callerTab(bots, true);
     refuseWhenOrcaIsDown();
     const given = { name: values.name };
-    for (const [flag, key] of [['harness', 'harness'], ['model', 'model'], ['effort', 'effort'], ['approval', 'approval'], ['prompt', 'prompt'], ['prompt-file', 'prompt_file']]) {
+    for (const [flag, key] of [['harness', 'harness'], ['model', 'model'], ['effort', 'effort'], ['approval', 'approval'], ['prompt', 'prompt'], ['prompt-file', 'prompt_file'], ['role', 'role']]) {
       if (values[flag] !== undefined) given[key] = values[flag];
     }
     if (values.context !== undefined) given.context = asNumberOrText(values.context);
     if (values['extra-arg'] !== undefined) given.extra_args = values['extra-arg'];
     const made = await makeTemp(bots, { tab, ...given });
     const { tabs, rules, skills, permissions, paused, projects } = made.up;
-    const answer = { bots, bot: made.bot, session: made.session, maker: made.maker, settings: made.settings, created: [], completed: [], rules, skills, permissions, tabs, paused, projects };
+    const answer = {
+      bots, bot: made.bot, session: made.session, maker: made.maker, ...(made.role === undefined ? {} : { role: made.role }), settings: made.settings, chosen: made.chosen,
+      created: [], completed: [], rules, skills, permissions, tabs, paused, projects,
+    };
     const retire = `${shellWord(ownCli())} temp retire --bots ${shellWord(bots)} --name ${made.session}`;
     return {
       answer,
-      lines: tabLines(answer, `Made ${made.bot}/${made.session}, a temporary session of ${made.maker}'s, working in work/${made.session}. Retire it when its work is done:  ${retire}`),
+      lines: [
+        ...(made.role === undefined ? [] : [`role       ${made.role.name}:${made.role.option}${made.role.for === undefined ? '' : `, for ${made.role.for}`}. Its options: ${optionsLine(made.role.options)}`]),
+        ...Object.entries(made.chosen).map(([setting, one]) => `${setting.padEnd(9)}  ${one.value === undefined ? `the ${one.from}` : `${one.value}, from ${one.from === 'flag' ? `--${setting}` : `the ${one.from}`}`}`),
+        ...tabLines(answer, `Made ${made.bot}/${made.session}, a temporary session of ${made.maker}'s, working in work/${made.session}. Retire it when its work is done:  ${retire}`),
+      ],
     };
+  },
+
+  'temp roles'(bots) {
+    const tab = callerTab(bots, true);
+    const listed = listRoles(bots, { tab });
+    const lines = listed.roles.length === 0
+      ? [`${listed.bot} has no roles for temporary sessions: its bot.yaml has no temp_roles.`]
+      : listed.roles.flatMap((role) => [
+        `role       ${role.name}${role.cap === undefined ? '' : `, cap ${role.cap}`}, open: ${role.open.length === 0 ? 'none' : role.open.join(', ')}${role.prompt_file === undefined ? '' : `, prompt file ${role.prompt_file}`}`,
+        ...role.options.map((option) => `  ${option.default ? 'default' : 'option '}  ${role.name}:${option.name}${option.for === undefined ? '' : `, for ${option.for}`}: ${['harness', 'model', 'effort', 'context'].filter((key) => option[key] !== undefined).map((key) => `${key} ${option[key]}`).join(', ') || 'all as you have them'}`),
+        ...(role.trouble ?? []).map((says) => `  trouble  ${says}`),
+      ]);
+    return { answer: { bots, ...listed }, lines };
   },
 
   async 'temp retire'(bots, values) {
