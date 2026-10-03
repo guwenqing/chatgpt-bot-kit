@@ -9,7 +9,8 @@
 //        works. A role with no cap has no limit.
 //   R10  Refused, naming the problem, with nothing written: --role on a bot
 //        with no temp_roles; an unknown role (naming the bot's roles); an
-//        unknown option (naming the role's options); a malformed role.
+//        unknown option (naming the role's options); a malformed role, an
+//        option whose name is not a string among them (review of PR #470).
 //   L    `obk temp roles --bots <path> [--json]`, run in a session's own tab,
 //        lists the caller's bot's roles: each with its cap, its open sessions,
 //        its prompt file and its options, the first the default; `roles: []`
@@ -172,6 +173,26 @@ for (const [label, breakIt, role, named] of MALFORMED) {
     await setRoles(bots, rolesCopy());
     await made(box, planner, ['--role', role, '--name', 'reviewer-1', '--prompt', TASK]);
     assert.ok(await entryIn(bots, 'reviewer-1'), 'with the role put right, the same make works');
+  });
+}
+
+// An option name YAML reads as a number or a boolean is malformed (review of PR
+// #470): asked for by the text it reads as, it is refused, not picked and not
+// passed over as unknown.
+for (const [label, name] of [['a number', 1], ['true', true]]) {
+  test(`R10 a make with a role whose option name is ${label} is refused, naming the problem, and nothing is written`, async (t) => {
+    const box = await createSandbox(t);
+    const { bots, planner } = await fleet(box);
+    const broken = rolesCopy();
+    broken.reviewer.options[1].name = name;
+    await setRoles(bots, broken);
+
+    const said = await assertMakeRefused(box, bots, planner, ['--role', `reviewer:${name}`, '--name', 'reviewer-1', '--prompt', TASK], ['reviewer']);
+
+    assert.match(said, /\bname\b/i, `the refusal says what is wrong: the option's name, got:\n${said}`);
+    await setRoles(bots, rolesCopy());
+    await made(box, planner, ['--role', 'reviewer:light', '--name', 'reviewer-1', '--prompt', TASK]);
+    assert.ok(await entryIn(bots, 'reviewer-1'), 'with the name put right, the option is made from');
   });
 }
 

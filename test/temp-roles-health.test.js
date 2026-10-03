@@ -7,7 +7,8 @@
 // `where` that bot's bot.yaml, and `says` naming the role, and the option
 // where one is at fault. Malformed is: an option's harness not claude or
 // codex; a prompt_file that cannot be read; a cap that is not a positive whole
-// number; a role with no options; an option with no name; two options of one
+// number; a role with no options; an option with no name, or a name that is not
+// a string (`name: 1`, `name: true`, review of PR #470); two options of one
 // name; a key the kit does not know in an option or a role mapping. The
 // wording of `says` is not pinned.
 //
@@ -125,6 +126,9 @@ const MALFORMED = [
   ['a role mapping with no options', (r) => { delete r.reviewer.options; }, ['reviewer'], 'developer'],
   ['a role mapping with an empty list of options', (r) => { r.reviewer.options = []; }, ['reviewer'], 'developer'],
   ['an option with no name', (r) => { delete r.reviewer.options[1].name; }, ['reviewer'], 'developer'],
+  // A name YAML reads as a number or a boolean can never be picked by --role (review of PR #470).
+  ['an option whose name is a number', (r) => { r.reviewer.options[1].name = 1; }, ['reviewer'], 'developer'],
+  ['an option whose name is true', (r) => { r.reviewer.options[1].name = true; }, ['reviewer'], 'developer'],
   ['two options of the same name', (r) => { r.reviewer.options[1].name = 'thorough'; }, ['reviewer', 'thorough'], 'developer'],
   ['an option key the kit does not know', (r) => { r.reviewer.options[1].efort = 'high'; delete r.reviewer.options[1].effort; }, ['reviewer', 'light'], 'developer'],
   ['a role-mapping key the kit does not know', (r) => { r.reviewer.limit = 3; }, ['reviewer'], 'developer'],

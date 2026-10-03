@@ -18,7 +18,11 @@
 //       option's harness, which is the maker's when the option names none.
 //   R5  A gap is filled as temp make fills it today: from the maker on the
 //       maker's harness, else left to the harness's own default. Approval
-//       comes from the flag or the maker.
+//       comes from the flag or the maker. A setting written with no value
+//       (`model:`, which YAML reads as null) is a gap too, in an option and in
+//       the maker's entry alike; a maker's null approval gives the kit's
+//       default, auto (ADR 0015), and `chosen` says "kit default" (review of
+//       PR #470).
 //
 // The name, the prompt file, the book and the output are in
 // temp-roles-output.test.js; the cap, the refusals and `obk temp roles` in
@@ -35,7 +39,20 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { createSandbox, fakeProgram, typedInto } from './helpers/cli.js';
-import { argvOf, fleet, liveTab, made, settingsOf, TASK } from './helpers/temp-roles.js';
+import {
+  answerIn,
+  argvOf,
+  chosenIn,
+  editBotYaml,
+  entryIn,
+  fleet,
+  liveTab,
+  made,
+  rolesCopy,
+  setRoles,
+  settingsOf,
+  TASK,
+} from './helpers/temp-roles.js';
 
 // ------------------------------------------------------- R1 the option taken
 
@@ -92,7 +109,7 @@ test('R1 a Codex option made from a Claude maker: the option\'s harness, model, 
   const argv = await argvOf(box, line, fake);
   const words = argv.join('\n');
   for (const part of ['-a\non-request', '-m\ngpt-6.1-sol', '-c\nmodel_reasoning_effort=xhigh', '-c\nmodel_context_window=400000']) {
-    assert.ok(words.includes(part), `Codex is given ${part.replace('\n', ' ')}, got: ${JSON.stringify(argv)}`);
+    assert.ok(words.includes(part), `Codex is given ${part.replaceAll('\n', ' ')}, got: ${JSON.stringify(argv)}`);
   }
   assert.ok(!argv.slice(0, -1).some((word) => /opus|\b1m\b/.test(word)), `nothing of planner's Claude settings, got: ${JSON.stringify(argv)}`);
 });
@@ -198,4 +215,86 @@ test('R5 a gap on another harness than the maker\'s is left to the harness\'s ow
     { harness: 'codex', model: 'gpt-6.1-mini', effort: 'medium', context: undefined, approval: 'ask' },
     'light\'s settings, no context written, planner\'s approval',
   );
+});
+
+// ------------------------------------------------------- R5 a null is a gap (review of PR #470)
+
+/** The roles, with reviewer's default option written as `model:`, `effort:` and `context:` with no value. */
+function rolesWithNulls() {
+  const roles = rolesCopy();
+  Object.assign(roles.reviewer.options[0], { model: null, effort: null, context: null });
+  return roles;
+}
+
+test('R5 a null model, effort and context in an option are gaps: on the maker\'s harness the maker\'s fill them, in bot.yaml, on the launch line and in chosen', async (t) => {
+  // The reviewer's repro: nightly is Codex, gpt-6-sol, low, 200000.
+  const box = await createSandbox(t);
+  const { bots, nightly } = await fleet(box);
+  await setRoles(bots, rolesWithNulls());
+
+  const result = await made(box, nightly, ['--role', 'reviewer', '--name', 'reviewer-1', '--prompt', TASK, '--json']);
+
+  assert.deepEqual(
+    await settingsOf(bots, 'reviewer-1'),
+    { harness: 'codex', model: 'gpt-6-sol', effort: 'low', context: '200000', approval: 'auto' },
+    'nightly\'s model, effort and context, not nothing',
+  );
+  const entry = await entryIn(bots, 'reviewer-1');
+  for (const setting of ['model', 'effort', 'context']) {
+    assert.notEqual(entry[setting], null, `no null ${setting} is written into bot.yaml: ${JSON.stringify(entry)}`);
+  }
+  assert.deepEqual(chosenIn(answerIn(result)), {
+    harness: { value: 'codex', from: 'role' },
+    model: { value: 'gpt-6-sol', from: 'maker' },
+    effort: { value: 'low', from: 'maker' },
+    context: { value: '200000', from: 'maker' },
+    approval: { value: 'auto', from: 'maker' },
+  }, `got: ${result.stdout}`);
+  const [line] = typedInto(await liveTab(box, bots, 'reviewer-1'));
+  const fake = await fakeProgram(box, 'codex', {});
+  const words = (await argvOf(box, line, fake)).join('\n');
+  for (const part of ['-m\ngpt-6-sol', '-c\nmodel_reasoning_effort=low', '-c\nmodel_context_window=200000']) {
+    assert.ok(words.includes(part), `Codex is given ${part.replaceAll('\n', ' ')}, got: ${JSON.stringify(words.split('\n'))}`);
+  }
+});
+
+test('R5 a null model, effort and context in an option, on another harness than the maker\'s, are left to the harness\'s own default', async (t) => {
+  // planner is Claude; reviewer's option is Codex, so nothing of planner's applies.
+  const box = await createSandbox(t);
+  const { bots, planner } = await fleet(box);
+  await setRoles(bots, rolesWithNulls());
+
+  const result = await made(box, planner, ['--role', 'reviewer', '--name', 'reviewer-1', '--prompt', TASK, '--json']);
+
+  const entry = await entryIn(bots, 'reviewer-1');
+  for (const setting of ['model', 'effort', 'context']) {
+    assert.equal(setting in entry, false, `no ${setting} is written into bot.yaml, null or other: ${JSON.stringify(entry)}`);
+  }
+  assert.deepEqual(chosenIn(answerIn(result)), {
+    harness: { value: 'codex', from: 'role' },
+    model: { from: 'harness default' },
+    effort: { from: 'harness default' },
+    context: { from: 'harness default' },
+    approval: { value: 'ask', from: 'maker' },
+  }, `got: ${result.stdout}`);
+});
+
+test('R5 a maker whose approval is null gives the kit\'s default, auto, and chosen says so', async (t) => {
+  // planner asks for approval ask; written as `approval:` with no value, it asks for none.
+  const box = await createSandbox(t);
+  const { bots, planner } = await fleet(box);
+  await editBotYaml(bots, (doc) => {
+    doc.sessions.find((one) => one?.name === 'planner').approval = null;
+    return doc;
+  });
+
+  const result = await made(box, planner, ['--role', 'developer', '--name', 'developer-1', '--prompt', TASK, '--json']);
+
+  const entry = await entryIn(bots, 'developer-1');
+  assert.ok(entry.approval === undefined || entry.approval === 'auto', `bot.yaml gets auto, or no approval, which is auto, and not null or ask: ${JSON.stringify(entry)}`);
+  assert.deepEqual(chosenIn(answerIn(result)).approval, { value: 'auto', from: 'kit default' }, `chosen agrees with bot.yaml, got: ${result.stdout}`);
+  const [line] = typedInto(await liveTab(box, bots, 'developer-1'));
+  const fake = await fakeProgram(box, 'claude', {});
+  const argv = await argvOf(box, line, fake);
+  assert.deepEqual(argv.slice(0, 2), ['--permission-mode', 'auto'], `Claude Code is launched in auto, got: ${JSON.stringify(argv)}`);
 });
