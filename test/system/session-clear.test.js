@@ -70,7 +70,7 @@
 // wait says what the tab is showing when it runs out of patience, so a run left
 // alone names the screen that stopped it.
 //
-// It takes several minutes: two real harnesses, a busy turn of 45 s on each, a
+// It takes several minutes: two real harnesses, a busy turn of 75 s on each, a
 // clear, a question and a compact.
 
 import assert from 'node:assert/strict';
@@ -98,8 +98,24 @@ const READY_MS = 180000;
 /** How long a session is given to answer one question. */
 const ANSWER_MS = 120000;
 
-/** How long the busy turn runs: longer than the kit's 30 s wait for an idle session. */
-const BUSY_SECONDS = 45;
+/**
+ * How long the busy turn's command runs: well past the kit's 30 s wait for an
+ * idle session, counted from when the test sees the turn start.
+ */
+const BUSY_SECONDS = 75;
+
+/**
+ * The busy turn: one shell command run in the foreground, which holds the
+ * turn open for BUSY_SECONDS. Not `sleep`: on the live run Claude Code 2.1.288
+ * ran `sleep 45` as a background command and was never busy. A `perl` that
+ * waits on `select` is a program like any other, and the line says plainly to
+ * run it in the foreground and wait for it, so neither harness has a reason to
+ * put it in the background. Whether it does is still the model's; if it does,
+ * the wait for the turn to show as busy runs out and prints the screen.
+ */
+const BUSY_LINE = 'Run exactly this shell command once, in the foreground, not in the background, and wait until it'
+  + ` has finished before you reply: perl -e 'select(undef, undef, undef, ${BUSY_SECONDS}); print "waited\\n"'`
+  + ' . When it has finished, reply DONE and nothing else.';
 
 /** How long a session is given to start its busy turn before the clear is asked for. */
 const BUSY_START_MS = 60000;
@@ -201,6 +217,9 @@ function rowsOf(handle) {
   const tail = answer.ok === true && answer.result?.terminal?.source === 'screen' ? answer.result.terminal.tail : undefined;
   return Array.isArray(tail) ? tail : undefined;
 }
+
+/** Every row the tab renders now, one to a line, for a message. */
+const screenRows = (handle) => (rowsOf(handle) ?? ['(unreadable)']).join('\n    ');
 
 /** What the tab is showing, for the message of a wait that ran out. */
 function whatIsUp(handle) {
@@ -360,6 +379,20 @@ for (const bot of BOTS) {
     assert.equal(entry.harnessStarted, true, `no ${bot.harness} came up in ${entry.title}: \`orca terminal read --terminal ${entry.terminal} --screen\``);
     const handle = entry.terminal;
 
+    /**
+     * `obk session <verb>` for this bot's session. When it fails, the tab's
+     * screen as Orca renders it goes into the run's diagnostics, so a refusal
+     * comes with the layout it saw (on the first live run Codex 0.160.0's
+     * input line after `/new` was not the one the unit fixture has).
+     */
+    const sessionCall = (verb, flags = []) => {
+      const done = obk(['session', verb, '--bots', bots, '--bot', bot.name, '--session', 'daily', ...flags]);
+      if (done.status !== 0) {
+        t.diagnostic(`obk session ${verb} exited ${done.status}: ${(done.stdout + done.stderr).trim()}\n  the tab's screen now:\n    ${screenRows(handle)}`);
+      }
+      return done;
+    };
+
     // A Claude bot's folder trust, which this test answers itself, once, and
     // only when it is the plain one for this tab's own folder (the ruling on
     // #391, option (c); the same check as send-outside-fleet's under #451).
@@ -407,14 +440,14 @@ for (const bot of BOTS) {
 
     // 1. Busy: a turn that runs longer than the kit waits. The clear refuses
     //    and types nothing.
-    await pressIn(handle, `Run the shell command sleep ${BUSY_SECONDS} now, and then reply DONE and nothing else.`);
+    await pressIn(handle, BUSY_LINE);
     await until(
-      `${bot.name} daily to be at work on the sleep`,
+      `${bot.name} daily to be at work on its foreground command`,
       BUSY_START_MS,
       async () => (isBusy(rowsOf(handle) ?? []) ? true : undefined),
       () => whatIsUp(handle),
     );
-    const refused = obk(['session', 'clear', '--bots', bots, '--bot', bot.name, '--session', 'daily']);
+    const refused = sessionCall('clear');
     assert.notEqual(refused.status, 0, `a clear on a busy session should be refused: ${refused.stdout}${refused.stderr}`);
     assert.match(refused.stdout + refused.stderr, /busy/i, `and say it is busy: ${refused.stdout}${refused.stderr}`);
     assert.equal(sessionIn(home, 'daily').session, first, 'the book holds the same conversation: nothing was cleared');
@@ -423,7 +456,9 @@ for (const bot of BOTS) {
 
     // 2. Idle: the clear gives a new conversation in the book.
     await idle(handle);
-    const cleared = obkJson(['session', 'clear', '--bots', bots, '--bot', bot.name, '--session', 'daily']).cleared;
+    const clear = sessionCall('clear', ['--json']);
+    assert.equal(clear.status, 0, `the clear on an idle session should go through: ${clear.stdout}${clear.stderr}\n  the tab's screen now:\n    ${screenRows(handle)}`);
+    const { cleared } = JSON.parse(clear.stdout);
     assert.equal(cleared?.bot, bot.name, JSON.stringify(cleared));
     assert.equal(cleared.session, 'daily');
     assert.equal(cleared.harness, bot.harness);
@@ -457,7 +492,7 @@ for (const bot of BOTS) {
     // 5. A compact, or the harness says it cannot.
     await idle(handle);
     const compactions = compactionsIn(bot.harness, recordOf(bot.harness, home, cleared.now));
-    const compact = obk(['session', 'compact', '--bots', bots, '--bot', bot.name, '--session', 'daily', '--json']);
+    const compact = sessionCall('compact', ['--json']);
     const said = compact.stdout + compact.stderr;
     if (compact.status === 0) {
       // Not confirmed in the kit's 5 minutes is not a failure (the architect's

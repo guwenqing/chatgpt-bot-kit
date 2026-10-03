@@ -145,7 +145,7 @@ async function enter(it, verb) {
     // Taken back, one backspace a character, so the input line is as it was.
     send(handle, '\x7f'.repeat(command.length));
     const cannot = verb === 'compact' && wrong.menu ? ` ${harnessName(it.harness)} here cannot compact: its menu does not offer ${command}.` : '';
-    throw new Error(`${it.name}: ${command} was typed but not entered, and was taken back, because ${wrong.why}.${cannot}`);
+    throw new Error(`${it.name}: ${command} was typed but not entered, and was taken back, because ${wrong.why}.${cannot}${shownEnd(wrong.rows)}`);
   }
   // A return of its own, not `--enter`: Orca's gate can refuse a line sent
   // with `--enter` while it names a reason, and on Codex a return inside the
@@ -199,7 +199,7 @@ async function typedWrong(handle, harness, command) {
   for (;;) {
     const seen = screenRows(handle);
     const wrong = seen.rows === undefined ? { why: `its screen could not be read (${seen.unreadable})` } : menuWrong(seen.rows, harness, command);
-    if (wrong === undefined || Date.now() >= until) return wrong;
+    if (wrong === undefined || Date.now() >= until) return wrong && { ...wrong, rows: seen.rows };
     await pause(ASK_MS);
   }
 }
@@ -261,6 +261,18 @@ function compactedSince(harness, home, conversation, since) {
     return compaction && Date.parse(entry.timestamp) >= since;
   });
 }
+
+/**
+ * The last rows of the screen with words in them, as a sentence for a refusal,
+ * so whoever reads it sees what the harness drew there.
+ */
+function shownEnd(rows) {
+  const shown = (rows ?? []).filter((row) => row.trim() !== '').slice(-SHOWN_ROWS);
+  return shown.length === 0 ? '' : ` Its screen ended: ${shown.map((row) => row.trimEnd()).join(' ⏎ ')}`;
+}
+
+/** How many rows of the screen a refusal shows. */
+const SHOWN_ROWS = 12;
 
 /** Type `keys` into the tab as they are, with no return of Orca's. */
 const send = (handle, keys) => orca(['terminal', 'send', '--terminal', handle, '--text', keys]);

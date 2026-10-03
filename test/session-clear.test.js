@@ -498,14 +498,18 @@ test('Claude Code\'s menu with another command first, one whose name only starts
   assert.ok(said.includes('/clear-history'), `it says what the menu showed first, got:\n${said}`);
 });
 
-test('no slash menu under Claude Code\'s input line: /clear taken back, nothing entered', async (t) => {
+test('no slash menu under Claude Code\'s input line: /clear taken back, nothing entered, and the refusal shows how the screen ended', async (t) => {
   const box = await createSandbox(t);
   const bots = await running(box);
   await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [CLAUDE_CLEAR_NO_MENU, CLAUDE_IDLE] });
 
-  assertRefused(await sessionCommand(box, 'clear'));
+  const said = assertRefused(await sessionCommand(box, 'clear'));
 
   assert.deepEqual(await sendsInto(box, bots), [{ text: '/clear', enter: false }, { text: backspaces('/clear'), enter: false }]);
+  // The screen's last rows, those below the input line among them, so a
+  // layout the check did not expect can be seen from the refusal alone (the
+  // first live run, #391).
+  assert.ok(said.includes('auto mode on (shift+tab to cycle)'), `it shows the screen's last rows, the foot row below the input box among them, got:\n${said}`);
 });
 
 // ---------------------------------------------------------------- clear, Codex
@@ -574,14 +578,15 @@ test('Codex\'s "Where should the new conversation run?" with its pointer on "2. 
   ], 'the menu is backed out of with Esc, and nothing picks a worktree');
 });
 
-test('no slash menu under Codex\'s input line: /new taken back with four backspaces in one send, nothing entered', async (t) => {
+test('no slash menu under Codex\'s input line: /new taken back with four backspaces in one send, nothing entered, and the refusal shows how the screen ended', async (t) => {
   const box = await createSandbox(t);
   const bots = await running(box, { harness: 'codex' });
   await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [CODEX_NEW_NO_MENU, CODEX_IDLE] });
 
-  assertRefused(await sessionCommand(box, 'clear'));
+  const said = assertRefused(await sessionCommand(box, 'clear'));
 
   assert.deepEqual(await sendsInto(box, bots), [{ text: '/new', enter: false }, { text: backspaces('/new'), enter: false }]);
+  assert.ok(said.includes('? for shortcuts'), `it shows the screen's last rows, Codex's status rows below the input line among them, got:\n${said}`);
 });
 
 // ---------------------------------------------------------------- compact
