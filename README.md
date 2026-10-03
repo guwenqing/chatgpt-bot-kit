@@ -649,7 +649,7 @@ editor's runner, skips and says how to run it.
 JavaScript this branch changed against `main` — committed, still in the working
 tree, or not tracked yet — and reports the mutants the tests do not kill. It is
 an audit, not a step of every pull request
-([PRD 7.3](docs/prd/prd.md#73-decided-rules-inside-the-skills)): the everyday
+([PRD 7.3](docs/prd/prd.md#prd-21-73-decided-rules-inside-the-skills)): the everyday
 check is the implementer's own hand check, and the tool runs over the whole
 suite at a milestone or when the owner asks, or once, narrowed to the changed
 logic, for a change at the core of the kit. A surviving mutant is a change to
