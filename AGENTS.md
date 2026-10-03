@@ -19,9 +19,9 @@ baseline is `docs/prd/` (`.assuredloop`); the decision records are `docs/adr/`.
 Every PR states its tier, in its commit message (`al check` reads it there) and the PR:
 
 - No promise in the baseline changes: tier 0. Write no record. `Tier: 0 — <what it restores>`.
-- A small change to a promise: tier 1. `al new <name> --tier 1`, the owner's sign-off
-  recorded, the baseline section edited, and `al conclude <name>`, all in the PR.
-  `Tier: 1 — <claim>`. The owner signs, not you.
+- A small change to a promise: tier 1. `al new <name> --tier 1 --from -`, the owner's
+  words on stdin, the owner's sign-off recorded, the baseline section edited, and
+  `al conclude <name>`, all in the PR. `Tier: 1 — <claim>`. The owner signs, not you.
 - Tier 2, 3 and S keep their records in the PR the same way; the skill says how.
 
 ## How code is made here
