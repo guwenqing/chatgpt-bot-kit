@@ -65,8 +65,14 @@ const RECORD_ASK_MS = 2000;
  */
 const CHAR_GAP_MS = 100;
 
-/** A row that says the harness is at work on a turn: both draw it while one runs. */
-const WORKING = /esc to interrupt/i;
+/**
+ * A row that says the harness is at work on a turn, as seen live (#391): Codex
+ * 0.160.0's "• Working (8s • esc to interrupt)", and Claude Code 2.1.288's
+ * spinner row, "✳ Nucleating… (1m 8s · ↓ 131 tokens)": a glyph, a word that
+ * ends in "…", then the time. A finished turn's row, "✻ Churned for 13s · done
+ * 12:27 PM", has no "…".
+ */
+const AT_WORK = [/esc to interrupt/i, /^\s*\S\s+\S+…\s+\(\d/];
 
 /**
  * Clear the session: `/clear` on Claude Code, `/new` on Codex. Returns
@@ -166,19 +172,23 @@ async function enter(it, verb, before = () => {}) {
   // One character a send, each after a look through the gate, so nothing goes
   // in as one burst and nothing goes in once something asks a question
   // (the architect's ruling on #391, after live run 2).
+  // Between characters, and once more before the return, the look is the gate
+  // and the harness's own at-work row, not Orca's tui-idle: an open slash menu
+  // can stop it answering ok (live run 3).
   let typed = 0;
+  const lookAgain = async () => {
+    await pause(CHAR_GAP_MS);
+    const look = lookAt(it, { idle: false });
+    if (look.why === undefined) return;
+    send(handle, '\x7f'.repeat(typed));
+    throw new Error(`${it.name}: ${command} was being typed, and after ${command.slice(0, typed)} ${look.why}, so what was typed was taken back and nothing was entered.`);
+  };
   for (const char of command) {
-    if (typed > 0) {
-      await pause(CHAR_GAP_MS);
-      const look = lookAt(it);
-      if (look.why !== undefined) {
-        send(handle, '\x7f'.repeat(typed));
-        throw new Error(`${it.name}: ${command} was being typed, and after ${command.slice(0, typed)} ${look.why}, so what was typed was taken back and nothing was entered.`);
-      }
-    }
+    if (typed > 0) await lookAgain();
     send(handle, char);
     typed += 1;
   }
+  await lookAgain();
   const wrong = await typedWrong(handle, it.harness, command);
   if (wrong !== undefined) {
     // Taken back, one backspace a character, so the input line is as it was.
@@ -214,11 +224,12 @@ async function idleTab(it) {
 }
 
 /**
- * One look through the typing gate at the session's tab: `{ handle }` when it
- * is idle with nothing on its screen to answer, or `{ why }`. Throws when the
- * tab holds no harness.
+ * One look through the typing gate at the session's tab: `{ handle }` when
+ * nothing on its screen asks a question and nothing says it is at work, and,
+ * with `idle`, Orca's tui-idle answered ok; or `{ why }`, naming the signal.
+ * Throws when the tab holds no harness.
  */
-function lookAt(it) {
+function lookAt(it, { idle = true } = {}) {
   const found = tabToTypeInto(it.home, it.tabId, LOOK_MS);
   if (found.blocked !== undefined) {
     return {
@@ -233,7 +244,9 @@ function lookAt(it) {
   }
   if (found.agent !== it.harness) return { why: `Orca names ${found.agent} in it, and the session runs on ${it.harness}` };
   // The gate has read the screen already: it saw no question on it.
-  if (!found.idle || found.rows.some((row) => WORKING.test(row))) return { why: 'it is busy with a turn' };
+  const working = found.rows.find((row) => AT_WORK.some((marker) => marker.test(row)));
+  if (working !== undefined) return { why: `it is busy with a turn: its screen shows "${working.trim()}"` };
+  if (idle && !found.idle) return { why: 'it is busy with a turn: Orca\'s tui-idle did not answer ok' };
   return { handle: found.handle };
 }
 

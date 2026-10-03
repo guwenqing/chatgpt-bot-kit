@@ -5,6 +5,9 @@
 //
 // It is the live done check of #391, on Claude Code and on Codex:
 //
+//   0. Recorded, not checked: what Orca's tui-idle answers with a "/" typed
+//      into the idle tab and its slash popup open, which live run 3 worked out
+//      turns it off. The "/" is taken back, and that is checked.
 //   1. On a busy session, `obk session clear` waits and then refuses, and types
 //      nothing: the session's conversation in the book is the same, and its
 //      record holds no clear.
@@ -66,7 +69,12 @@
 // hooks review; it may still offer an update, which is the person's. Bot
 // Father's tab shows the same folder trust, which nothing here waits on, and it
 // can be left. After a turn Claude Code may offer "Teach auto mode about your
-// environment?", where Esc cancels it (#416); that too is the person's. Every
+// environment?" (#416). The test answers that too, in its own Claude bot's tab
+// alone, by the architect's ruling after live run 3: with Esc, at most once,
+// only when every row from its title down is the captured form's
+// (helpers/screens.js `onlyTeachFormOf`, the pointer on any of its rows), and
+// it then shows the form gone and ~/.claude.json's autoModeEnvSetup unchanged,
+// or fails; any other form fails, printing its rows. Every
 // wait says what the tab is showing when it runs out of patience, so a run left
 // alone names the screen that stopped it.
 //
@@ -85,7 +93,7 @@ import { parse } from 'yaml';
 
 import { cliEntry } from '../helpers/cli.js';
 import { codexTrustArgs } from '../helpers/codex-trust.js';
-import { onlyPlainTrustOf, waitingOn } from '../helpers/screens.js';
+import { onlyPlainTrustOf, onlyTeachFormOf, waitingOn } from '../helpers/screens.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
 
@@ -252,12 +260,18 @@ function tuiBusy(handle) {
  */
 const statusRows = (rows) => rows.filter((row) => /\(\s*(?:\d+m\s*)?\d+s\b[^)]*\)|ctrl\+b to run in background|esc to interrupt/i.test(row));
 
-/** Wait until the tab is idle: a TUI up, nothing of its own waiting, and not at work. */
-async function idle(handle, within = READY_MS) {
+/**
+ * Wait until the tab is idle: a TUI up, nothing of its own waiting, and not at
+ * work. `onScreen` is shown the tab's rows at each look first, for a screen
+ * the test itself may answer.
+ */
+async function idle(handle, onScreen = async () => {}, within = READY_MS) {
   await until(
     `${handle} to be idle`,
     within,
     async () => {
+      const shown = rowsOf(handle);
+      if (shown !== undefined) await onScreen(shown);
       const answer = orca(['terminal', 'wait', '--terminal', handle, '--for', 'tui-idle', '--timeout-ms', '5000']);
       if (answer.ok !== true || answer.result?.wait?.satisfied !== true) return undefined;
       if (waitingOn(orca, handle) !== undefined) return undefined;
@@ -438,6 +452,50 @@ for (const bot of BOTS) {
       }
     }
 
+    // Claude Code's "Teach auto mode about your environment?" form, which
+    // 2.1.288 put up after the session's first turn on live run 3 (#416's
+    // form). This test answers it with Esc, "Not now", once, in its own tab,
+    // and only when every row from its title down is the captured form's (the
+    // architect's ruling on #391 after live run 3). Esc teaching nothing is
+    // read in the 2.1.283 binary and not seen live, so the run shows it: the
+    // form gone, and ~/.claude.json's autoModeEnvSetup, which only the accept
+    // path clears (tech notes, section 1), as it was. Anything else fails.
+    const TEACH_TITLE = 'Teach auto mode about your environment?';
+    const claudeJson = path.join(os.homedir(), '.claude.json');
+    const autoModeState = () => {
+      try {
+        const held = JSON.parse(readFileSync(claudeJson, 'utf8')).autoModeEnvSetup;
+        return held === undefined ? 'absent' : JSON.stringify(held);
+      } catch (error) {
+        return `unreadable (${error.message})`;
+      }
+    };
+    let taught = false;
+    const teach = async (rows) => {
+      if (bot.harness !== 'claude' || !rows.some((row) => row.trim() === TEACH_TITLE)) return;
+      assert.equal(taught, false, `the Teach form came up again in ${entry.title}, and this test answers it at most once:\n    ${rows.join('\n    ')}`);
+      const wrong = onlyTeachFormOf(rows);
+      assert.equal(
+        wrong,
+        undefined,
+        `${entry.title}'s Teach form is not the captured one, so this test answered nothing: ${wrong}.\n  what it showed:\n    ${rows.join('\n    ')}`,
+      );
+      const was = autoModeState();
+      const sent = orca(['terminal', 'send', '--terminal', handle, '--text', '\x1b']);
+      assert.equal(sent.ok, true, `answering ${entry.title}'s Teach form with Esc failed: ${JSON.stringify(sent.error)}`);
+      taught = true;
+      await until(
+        `${entry.title}'s Teach form to go after Esc`,
+        15000,
+        async () => ((rowsOf(handle) ?? []).some((row) => row.trim() === TEACH_TITLE) ? undefined : true),
+        () => whatIsUp(handle),
+      );
+      await setTimeout(2000);
+      const now = autoModeState();
+      assert.equal(now, was, `Esc on the Teach form taught nothing: ~/.claude.json's autoModeEnvSetup should be as it was (before: ${was}, after: ${now})`);
+      t.diagnostic(`answered ${entry.title}'s Teach form with Esc; it went, and ~/.claude.json's autoModeEnvSetup stayed ${was}`);
+    };
+
     // The session's first conversation, reported by the hook, and the tab idle.
     const first = await until(
       `${bot.name} daily to report its conversation`,
@@ -445,7 +503,31 @@ for (const bot of BOTS) {
       async () => sessionIn(home, 'daily').session,
       () => whatIsUp(handle),
     );
-    await idle(handle);
+    await idle(handle, teach);
+
+    // 0. A recorded fact, not a check that fails the run either way: whether an
+    //    open slash popup turns Orca's tui-idle off, which live run 3 worked
+    //    out and did not see (the ruling after live run 3). The test types "/"
+    //    into its own idle tab, records tui-idle and the screen, and takes the
+    //    "/" back with one backspace. That the "/" went is checked: the tab is
+    //    the test's own, and what follows types into it.
+    const tuiSaid = (look) => JSON.stringify(look.answer.ok === true ? look.answer.result?.wait : look.answer.error);
+    const quiet = tuiBusy(handle);
+    const slash = orca(['terminal', 'send', '--terminal', handle, '--text', '/']);
+    assert.equal(slash.ok, true, `typing "/" into ${entry.title} failed: ${JSON.stringify(slash.error)}`);
+    await setTimeout(1500);
+    const open = tuiBusy(handle);
+    const openRows = rowsOf(handle) ?? ['(unreadable)'];
+    const back = orca(['terminal', 'send', '--terminal', handle, '--text', '\x7f']);
+    assert.equal(back.ok, true, `taking the "/" back from ${entry.title} failed: ${JSON.stringify(back.error)}`);
+    await setTimeout(1500);
+    const shut = tuiBusy(handle);
+    const shutRows = rowsOf(handle) ?? [];
+    t.diagnostic(`a "/" typed into idle ${bot.harness}: tui-idle before it ${tuiSaid(quiet)}; with the popup open ${tuiSaid(open)}; after the backspace ${tuiSaid(shut)}.`
+      + ` The screen with the popup open:\n    ${openRows.join('\n    ')}`);
+    const input = shutRows.findLast((row) => /^\s*[›❯]/.test(row));
+    assert.ok(input !== undefined && !/^\s*[›❯]\s*\//.test(input), `the "/" was taken back: the input line reads ${JSON.stringify(input)}:\n    ${shutRows.join('\n    ')}`);
+    await idle(handle, teach);
 
     // The rules change before the clear: a line only the new AGENTS.md holds.
     obkJson(['bot', 'change', '--bots', bots, '--bot', bot.name, '--charter', `${bot.name} exists for one system test run and owns nothing. Its charter marker is ${bot.marker}.`]);
@@ -487,7 +569,7 @@ for (const bot of BOTS) {
     assert.deepEqual(typedIn, [], `and nothing was typed into the input line: ${(rowsOf(handle) ?? []).join('\n')}`);
 
     // 2. Idle: the clear gives a new conversation in the book.
-    await idle(handle);
+    await idle(handle, teach);
     const clear = sessionCall('clear', ['--json']);
     assert.equal(clear.status, 0, `the clear on an idle session should go through: ${clear.stdout}${clear.stderr}\n  the tab's screen now:\n    ${screenRows(handle)}`);
     const { cleared } = JSON.parse(clear.stdout);
@@ -500,7 +582,7 @@ for (const bot of BOTS) {
 
     // 3. The new conversation was briefed by the hook: asked for its word, it
     //    answers it, though the question does not carry it.
-    await idle(handle);
+    await idle(handle, teach);
     await pressIn(handle, 'What is your word? Reply with it and nothing else.');
     await until(
       `the new conversation ${cleared.now} to answer with its word`,
@@ -522,7 +604,7 @@ for (const bot of BOTS) {
     assert.equal(healthOf(health(bots), bot.name, 'daily').rules?.state, 'current', 'health says the session is on the current rules after the clear');
 
     // 5. A compact, or the harness says it cannot.
-    await idle(handle);
+    await idle(handle, teach);
     const compactions = compactionsIn(bot.harness, recordOf(bot.harness, home, cleared.now));
     const compact = sessionCall('compact', ['--json']);
     const said = compact.stdout + compact.stderr;

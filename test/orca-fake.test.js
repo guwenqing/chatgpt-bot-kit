@@ -640,6 +640,33 @@ test('the fake can be slow to answer one command, and then answers it as it woul
   assert.equal(slow.result.runtime.reachable, true);
 });
 
+test('a screen the fake puts up at a send can carry what tui-idle finds in that tab, until a screen that says nothing takes it away (#391)', async (t) => {
+  // An open slash popup that stops Orca's tui-idle answering ok, worked out
+  // on live run 3 of #391: the screen and the answer move on together.
+  const box = await createSandbox(t);
+  await twoTabs(box);
+  const popup = ['› /new  start a new chat during a conversation', '', '› /'];
+  const closed = ['› Ask Codex to do anything'];
+  await box.orca.set({
+    terminals: (await box.orca.terminals()).map((terminal) => (terminal.handle === 'term_a'
+      ? { ...terminal, nextScreens: [{ screen: popup, tuiIdle: 'busy' }, { screen: closed }] }
+      : terminal)),
+  });
+  const wait = (on) => JSON.parse(ask(box, ['terminal', 'wait', '--terminal', on, '--for', 'tui-idle', '--json']).stdout);
+  const read = (on) => answer(ask(box, ['terminal', 'read', '--terminal', on, '--screen', '--json'])).result.terminal.tail;
+
+  assert.equal(wait('term_a').ok, true, 'idle before any key');
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_a', '--text', '/', '--json']));
+  assert.deepEqual(read('term_a'), popup, 'the first key puts up the popup');
+  assert.equal(wait('term_a').error?.code, 'timeout', 'and tui-idle no longer answers ok there');
+  assert.equal(wait('term_b').ok, true, 'while the other tab answers as ever');
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_a', '--text', '\x7f', '--json']));
+  assert.deepEqual(read('term_a'), closed, 'the next key closes it');
+  assert.equal(wait('term_a').ok, true, 'and tui-idle answers ok again');
+  const listed = answer(ask(box, ['terminal', 'list', '--json'])).result.terminals.find((one) => one.handle === 'term_a');
+  assert.equal('tuiIdle' in listed, false, 'Orca never lists it');
+});
+
 test('the fake can be slow to answer one command only once another has been called, counting from when it was told (#391)', async (t) => {
   // A screen that reads at once until a key is sent, and hangs after.
   const box = await createSandbox(t);

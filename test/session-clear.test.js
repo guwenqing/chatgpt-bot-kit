@@ -110,6 +110,7 @@ import {
   CLAUDE_CLEAR_OTHER_FIRST,
   CLAUDE_CLEAR_TYPED,
   CLAUDE_COMPACT_TYPED,
+  CLAUDE_AT_WORK,
   CLAUDE_IDLE,
   CLAUDE_TEACH_AUTO,
   CLAUDE_WORKING,
@@ -124,6 +125,7 @@ import {
   CODEX_NEW_TYPED,
   CODEX_UPDATE_OFFER,
   CODEX_WORKING,
+  atWork,
   whileTyping,
 } from './helpers/screens.js';
 
@@ -742,6 +744,69 @@ test('Codex\'s popup above the input line with another command selected: /new ta
   assert.ok(said.includes('/model'), `it says what the popup had selected, got:\n${said}`);
 });
 
+// ---------------------------------- the look between characters (after live run 3)
+//
+// Live run 3 of #391: Codex's look before the second character found Orca's
+// tui-idle no longer answering ok once "/" was typed, most likely because the
+// open slash popup turns it off (worked out, not seen). The architect's
+// ruling: before the first character, idle as before; between characters, and
+// once more after the last before the return, the typing gate plus the
+// harness's own at-work row on screen, with no tui-idle-ok requirement. A
+// refusal names its signal. Here the popup's effect is the fake's `tuiIdle`
+// on each screen put up while the command is typed.
+
+/** Screens that each turn Orca's tui-idle off in their tab, as an open slash popup was worked out to. */
+const popupOpen = (screens) => screens.map((screen) => ({ screen, tuiIdle: 'busy' }));
+
+/** Screens that leave Orca's tui-idle to answer as it did before the popup. */
+const popupClosed = (screens) => screens.map((screen) => ({ screen }));
+
+for (const { harness, command, typedScreen, after, source, last } of TYPING) {
+  test(`${harness}: Orca's tui-idle stops answering ok once the first character is typed, and no at-work row is on screen: ${command} is still typed and entered`, async (t) => {
+    const box = await createSandbox(t);
+    const bots = await running(box, { harness });
+    await changeTab(box, (await liveTab(box, bots)).tabId, {
+      nextScreens: [...popupOpen([...whileTyping(harness, command), typedScreen]), ...popupClosed(after)],
+    });
+
+    const { result, played } = await runPlaying(box, bots, 'clear', {
+      when: (sends) => sends.some((one) => one.text === last),
+      then: () => hookReports(box, bots, 'sess-new', source),
+    });
+
+    const answer = answered(result, 'the clear');
+    assert.ok(played, 'the premise: the hook reported the new conversation');
+    assert.deepEqual(answer.cleared, { bot: BOT, session: 'daily', harness, was: 'sess-daily', now: 'sess-new' });
+    assert.deepEqual((await sendsInto(box, bots)).slice(0, command.length + 1), [...typed(command), { text: '\r', enter: false }], 'every character, then the return');
+  });
+
+  test(`${harness}: the harness's at-work row comes up after two characters of ${command}: the typing stops, the two are taken back, and the refusal names the row`, async (t) => {
+    const box = await createSandbox(t);
+    const bots = await running(box, { harness });
+    await changeTab(box, (await liveTab(box, bots)).tabId, {
+      nextScreens: [whileTyping(harness, command)[0], atWork(harness, command.slice(0, 2), command)],
+    });
+
+    const said = assertRefused(await sessionCommand(box, 'clear'));
+
+    assert.deepEqual(await sendsInto(box, bots), [...typed(command.slice(0, 2)), { text: backspaces(command.slice(0, 2)), enter: false }]);
+    assert.ok(said.includes(harness === 'codex' ? 'esc to interrupt' : 'Nucleating'), `it names its signal, the at-work row, got:\n${said}`);
+  });
+
+  test(`${harness}: the harness's at-work row is up once the last character of ${command} is in: no return, the command taken back, and the refusal names the row`, async (t) => {
+    const box = await createSandbox(t);
+    const bots = await running(box, { harness });
+    await changeTab(box, (await liveTab(box, bots)).tabId, {
+      nextScreens: [...whileTyping(harness, command), atWork(harness, command, command)],
+    });
+
+    const said = assertRefused(await sessionCommand(box, 'clear'));
+
+    assert.deepEqual(await sendsInto(box, bots), [...typed(command), { text: backspaces(command), enter: false }], 'the look before the return stops it');
+    assert.ok(said.includes(harness === 'codex' ? 'esc to interrupt' : 'Nucleating'), `it names its signal, the at-work row, got:\n${said}`);
+  });
+}
+
 // ---------------------------------------------------------------- compact
 
 for (const harness of ['claude', 'codex']) {
@@ -799,10 +864,26 @@ describe('the waits that run out, side by side', { concurrency: true }, () => {
 
     const said = assertRefused(result);
     assert.match(said, /busy/i, `it says the session is busy, got:\n${said}`);
+    assert.match(said, /tui-idle/, `and names its signal, Orca's tui-idle (the ruling after live run 3), got:\n${said}`);
     await assertNothingTyped(box, before, 'busy throughout');
     assert.ok(took >= 25_000, `it waited for the session, up to 30 s, before refusing; it took ${took} ms`);
     assert.ok(took < 90_000, `and the wait is bounded; it took ${took} ms`);
     assert.equal((await sessionIn(bots, BOT, 'daily')).session, 'sess-daily', 'the book is as it was');
+  });
+
+  it('a Claude Code tab Orca calls idle while its spinner row says it is at work: refused as busy, naming the row, nothing typed', async (t) => {
+    // Claude Code 2.1.288 shows no "esc to interrupt"; its at-work marker is
+    // its spinner row (the ruling after live run 3).
+    const box = await createSandbox(t);
+    const bots = await running(box);
+    await changeTab(box, (await liveTab(box, bots)).tabId, { screen: CLAUDE_AT_WORK });
+    const before = await typedEverywhere(box);
+
+    const said = assertRefused(await sessionCommand(box, 'clear'));
+
+    assert.match(said, /busy/i, `it says the session is busy, got:\n${said}`);
+    assert.ok(said.includes('Nucleating'), `and names its signal, the at-work row, got:\n${said}`);
+    await assertNothingTyped(box, before, 'the spinner row on screen');
   });
 
   it('a Codex Orca calls idle while its screen says "esc to interrupt": refused as busy, nothing typed', async (t) => {
@@ -814,6 +895,7 @@ describe('the waits that run out, side by side', { concurrency: true }, () => {
     const said = assertRefused(await sessionCommand(box, 'clear'));
 
     assert.match(said, /busy/i, `it says the session is busy, got:\n${said}`);
+    assert.ok(said.includes('esc to interrupt'), `and names its signal, the at-work row (the ruling after live run 3), got:\n${said}`);
     await assertNothingTyped(box, before, 'esc to interrupt on screen');
   });
 
@@ -923,7 +1005,8 @@ describe('the review of PR #466: Orca slow or quiet, side by side', { concurrenc
     const result = await sessionCommand(box, 'clear');
     const took = Date.now() - started;
 
-    assertRefused(result);
+    const said = assertRefused(result);
+    assert.match(said, /\b(?:can(?:not|'t|’t)|could(?: not|n't|n’t)) tell\b/i, `it names its signal, that it cannot tell (the ruling after live run 3), got:\n${said}`);
     await assertNothingTyped(box, before, 'a screen Orca does not read');
     assert.ok(took < 60_000, `a quiet Orca does not hold the command past its 30 s wait and a bounded call; it took ${took} ms`);
   });

@@ -569,6 +569,40 @@ export const CODEX_WORKING = [
   ...CODEX_STATUS,
 ];
 
+// The harness's own at-work marker, as seen live (#391, the architect's
+// ruling after live run 3). Codex: a row with "esc to interrupt", here as live
+// run 3 showed it, "• Working (8s • esc to interrupt)". Claude Code 2.1.288:
+// its spinner status row, a glyph, a word ending in "…", then "(" and a time,
+// as live run 2 showed it, "✳ Nucleating… (1m 8s · ↓ 131 tokens)"; it shows
+// no "esc to interrupt". A finished row, such as CLAUDE_ANSWERED's "✻ Cooked
+// for 1s · done 4:14 AM", is no marker. The words of both rows are live; the
+// screens around them are reconstructions on the captures above.
+
+/** Claude Code 2.1.288's spinner row while it works, word for word as seen on live run 2. */
+const CLAUDE_SPINNER_ROW = '✳ Nucleating… (1m 8s · ↓ 131 tokens)';
+
+/** Codex's at-work row, word for word as seen on live run 3. */
+const CODEX_WORKING_ROW = '• Working (8s • esc to interrupt)';
+
+/**
+ * Claude Code 2.1.288 at work, its empty input line below: its spinner row and
+ * nothing that says "esc to interrupt". Orca's tui-idle may still answer ok. A
+ * reconstruction on the live row.
+ */
+export const CLAUDE_AT_WORK = [...CLAUDE_ABOVE_INPUT.slice(0, 5), CLAUDE_SPINNER_ROW, ...CLAUDE_INPUT_LINE];
+
+/**
+ * The harness at work, with `typed` (part or all of `command`) in its input
+ * line and the command's menu row where that harness draws it: what the
+ * screen shows when the harness starts working partway through the kit's
+ * typing, or just before its return. A reconstruction on the live rows.
+ */
+export function atWork(harness, typed, command) {
+  return harness === 'codex'
+    ? [...CODEX_ABOVE_POPUP.slice(0, 9), CODEX_WORKING_ROW, '', CODEX_ROWS[command], '', `› ${typed}`, '', CODEX_STATUS[0]]
+    : [...CLAUDE_ABOVE_INPUT.slice(0, 5), CLAUDE_SPINNER_ROW, CLAUDE_INPUT_LINE[0], `❯ ${typed}`, CLAUDE_INPUT_LINE[2], CLAUDE_ROWS[command]];
+}
+
 /** A row the pointer starts, whatever follows it: a choice, the input line, or an echoed turn. */
 const POINTER_ROW = /^ *[›❯]/;
 
@@ -637,6 +671,37 @@ export function waitingOn(orca, handle) {
   return question === undefined
     ? undefined
     : ` The tab is waiting on a question of its harness's own, and this test answers none:\n    ${question.join('\n    ')}`;
+}
+
+/** The title of Claude Code's "Teach auto mode" form (#416). */
+const TEACH_TITLE = 'Teach auto mode about your environment?';
+
+/** A form row with its pointer, wherever it sits, taken out: `❯ Continue` reads as `Continue`. */
+const unpointed = (row) => row.replace('❯', ' ').trim();
+
+/**
+ * Whether Claude Code's "Teach auto mode about your environment?" form on a
+ * tab's rendered `rows` is the captured one and nothing else, the one a system
+ * test may answer with Esc in its own throwaway tab (the architect's ruling
+ * on #391 after live run 3): undefined when it may, or why not. Every
+ * non-blank row from the form's title down is a row of CLAUDE_TEACH_FORM from
+ * its title down, the pointer `❯` on exactly one of them, on whichever row
+ * it sits; nothing is missing and nothing is added. A row not on that list is
+ * refused by name. See test/teach-form.test.js.
+ */
+export function onlyTeachFormOf(rows) {
+  const from = rows.findIndex((row) => row.trim() === TEACH_TITLE);
+  if (from < 0) return `it has no "${TEACH_TITLE}" row, so it is not the form captured as CLAUDE_TEACH_FORM`;
+  const seen = rows.slice(from).filter((row) => row.trim() !== '');
+  const captured = CLAUDE_TEACH_FORM.slice(CLAUDE_TEACH_FORM.findIndex((row) => row.trim() === TEACH_TITLE)).filter((row) => row.trim() !== '');
+  const pointers = seen.filter((row) => row.includes('❯')).length;
+  if (pointers !== 1) return `it has ${pointers} rows with the pointer ❯, where the captured form has one`;
+  const odd = seen.find((row) => !captured.map(unpointed).includes(unpointed(row)));
+  if (odd !== undefined) return `it carries a row the captured form does not, which this test has no ruling for: ${odd.trim()}`;
+  const missing = captured.find((row) => !seen.map(unpointed).includes(unpointed(row)));
+  if (missing !== undefined) return `it lacks a row the captured form has: ${missing.trim()}`;
+  if (seen.length !== captured.length) return `it has ${seen.length} rows from its title down, where the captured form has ${captured.length}`;
+  return undefined;
 }
 
 /**

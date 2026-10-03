@@ -124,6 +124,16 @@
 //               moves on with every key, as a harness's input line and its
 //               menus do while a command is typed, entered and answered (#391).
 //               When a terminal carries both, `screenAfterSend` is used first.
+//               An entry may be `{ screen, tuiIdle }` in place of the rows: it
+//               puts up `screen` and sets the terminal's own `tuiIdle` to what
+//               it says, or takes it away when it says nothing.
+//   tuiIdle     on one terminal only: what `terminal wait --for tui-idle`
+//               finds in that tab, one of the `waitIdle` words below, in
+//               place of `waitIdle`, which goes on deciding everything else
+//               (who `ps` finds in front, what a send's receipt says). A
+//               screen Orca's tui-idle reads apart from the harness's state:
+//               an open slash popup, worked out on live run 3 of #391 to stop
+//               tui-idle answering ok (not seen). Orca never lists it.
 //   agentIdentity  what `terminal show` and `terminal list` give as every
 //               tab's `agentIdentity`, when the key is there (null included).
 //               Left out, a tab carries its own: null when it is made, and the
@@ -634,7 +644,7 @@ if (command === 'project setup-delete') {
  * a test gave it, which only `terminal read` shows, and what a send into it is
  * seen to do, which only `terminal send` answers.
  */
-const asReported = ({ typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, nextScreens: _nextScreens, submit: _submit, refuseClose: _refuseClose, ...rest }) => (rest.orphaned === true
+const asReported = ({ typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, nextScreens: _nextScreens, tuiIdle: _tuiIdle, submit: _submit, refuseClose: _refuseClose, ...rest }) => (rest.orphaned === true
   ? { ...rest, ...identity(), tabId: `pty:${rest.ptyId}`, leafId: `pty:${rest.ptyId}`, orphaned: true }
   : { ...rest, ...identity(), orphaned: false });
 
@@ -767,7 +777,7 @@ if (command === 'terminal close') {
 if (command === 'terminal show') {
   const terminal = (state.terminals ?? []).find((entry) => entry.handle === flag('--terminal'));
   if (!terminal) fail('terminal_not_found', `no terminal with handle ${flag('--terminal')}`);
-  const { typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, nextScreens: _nextScreens, submit: _submit, refuseClose: _refuseClose, ...rest } = terminal;
+  const { typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, nextScreens: _nextScreens, tuiIdle: _tuiIdle, submit: _submit, refuseClose: _refuseClose, ...rest } = terminal;
   ok({ terminal: { ...rest, ...identity(), orphaned: terminal.orphaned === true } });
 }
 
@@ -814,9 +824,11 @@ if (command === 'terminal wait') {
 
   // One answer per call when a test gave a list, so a tab can hold a TUI on
   // one look and none on the next; the last entry stands for every call after.
-  const idle = Array.isArray(state.waitIdle)
-    ? state.waitIdle[Math.min(Math.max(callsSoFar() - 1 - (state.waitIdleFrom ?? 0), 0), state.waitIdle.length - 1)]
-    : state.waitIdle;
+  const idle = terminal.tuiIdle !== undefined
+    ? terminal.tuiIdle
+    : Array.isArray(state.waitIdle)
+      ? state.waitIdle[Math.min(Math.max(callsSoFar() - 1 - (state.waitIdleFrom ?? 0), 0), state.waitIdle.length - 1)]
+      : state.waitIdle;
 
   // `tui-idle` asks about a TUI, not about a shell. Seen live: a tab with no
   // TUI in it — a clean zsh prompt — is refused with `timeout`, however long
@@ -875,7 +887,14 @@ if (command === 'terminal send') {
     terminal.screen = terminal.screenAfterSend;
     delete terminal.screenAfterSend;
   } else if (Array.isArray(terminal.nextScreens) && terminal.nextScreens.length > 0) {
-    terminal.screen = terminal.nextScreens.shift();
+    const next = terminal.nextScreens.shift();
+    if (Array.isArray(next)) {
+      terminal.screen = next;
+    } else {
+      terminal.screen = next.screen;
+      if (next.tuiIdle === undefined) delete terminal.tuiIdle;
+      else terminal.tuiIdle = next.tuiIdle;
+    }
   }
   // Orca learns which agent is in a tab once it runs there. The fake gives it
   // at once; a test that wants it late says so with `agentIdentity`.
