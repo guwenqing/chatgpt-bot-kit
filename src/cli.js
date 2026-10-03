@@ -17,7 +17,7 @@ import { addCommand, groomCommand, grooming, upCommand } from './groom.js';
 import { checkHealth, orcaSettingFindings } from './health.js';
 import { initBots } from './init.js';
 import { APPROVALS, HARNESSES, ownCli, shellWord, workDirOf } from './launch.js';
-import { checkMail, lookUp, noMailboxYet, sendMessage, sessionInTab } from './message.js';
+import { checkMail, decideLeftNudges, lookUp, noMailboxYet, sendMessage, sessionInTab } from './message.js';
 import { orcaCli, orcaTrouble, RELOAD_LINE, TERMINAL_ENV } from './orca.js';
 import { allowCommand, allowIn, beyondDefaults, refuseBroad, refuseNoCodexForm, runsOnClaude, runsOnCodex, takeBack, writePermissions } from './permissions.js';
 import { pauseSessions, unpauseSessions } from './pause.js';
@@ -255,6 +255,12 @@ Usage:
                             Claude session's native message, it warns the
                             session when the address was none of this bots
                             folder's own. It never stops a message.
+  obk session nudge --bots <path> --bot <bot>
+                            For the kit's own hook, not for typing: after a
+                            Codex session's shell command, it decides the mail
+                            nudges a send there left because it could not
+                            tell from inside Codex's sandbox, and types each
+                            one or says why not.
   obk session mailbox --bots <path> --bot <bot> --session <name>
                             For the kit's own launch line, not for typing: run
                             in the session's own tab, it gives the session its
@@ -295,6 +301,7 @@ const COMMANDS = {
   'message check': ['bots'],
   'session record': ['bots', 'bot'],
   'session sent': ['bots', 'bot'],
+  'session nudge': ['bots', 'bot'],
   'session mailbox': ['bots', 'bot', 'session'],
   'temp make': ['bots', 'name'],
   'temp roles': ['bots'],
@@ -426,6 +433,7 @@ async function run(argv) {
   // The send hook is quiet whatever it is given, a bots folder that is not
   // there included, so it goes before anything that can complain (ADR 0032).
   if (command === SENT) return sent(path.resolve(values.bots));
+  if (command === NUDGE) return nudgeLeft();
 
   // One fleet, one identity, whatever spelling of its path was given (#164).
   const bots = command === 'init' ? path.resolve(values.bots) : sameFleet(path.resolve(values.bots));
@@ -493,6 +501,7 @@ const ANSWER_IT = [
 /** The commands a harness runs rather than a person: the kit's hooks. */
 const RECORD = 'session record';
 const SENT = 'session sent';
+const NUDGE = 'session nudge';
 
 /**
  * What the kit's send hook says after a native message: a warning the session
@@ -504,6 +513,27 @@ function sent(bots) {
     const warning = sentWarning(bots, JSON.parse(readFileSync(0, 'utf8')));
     if (warning !== undefined) {
       process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: warning } })}\n`);
+    }
+  } catch {
+    // Nothing: a hook does not disturb the session it runs in.
+  }
+  return 0;
+}
+
+/**
+ * What the kit's Codex hook does after a shell command: decide the nudges a
+ * send in this tab left for it, outside Codex's sandbox, and say to the session
+ * what became of each, as Codex's `additionalContext` (#350, ADR 0034). Silent
+ * when nothing was left, never a decision, and never anything but exit 0.
+ */
+function nudgeLeft() {
+  try {
+    const said = JSON.parse(readFileSync(0, 'utf8'));
+    if (said?.hook_event_name !== 'PostToolUse') return 0;
+    const decided = decideLeftNudges(process.env[TAB_ENV]);
+    if (decided.length > 0) {
+      const words = decided.map((one) => `Your mail "${one.subject}" to ${one.to}: ${one.nudged ? "the kit's hook nudged its tab, from outside Codex's sandbox:" : "the kit's hook looked at its tab from outside Codex's sandbox, and"} ${nudgeLine(one, one.to).trim()}`);
+      process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: words.join('\n') } })}\n`);
     }
   } catch {
     // Nothing: a hook does not disturb the session it runs in.
@@ -1142,6 +1172,9 @@ function nudgeLine(answer, where) {
   if (answer.nudged) return '             its tab was told to look; it will read it when it is done with what it is doing.';
   if (answer.blocked !== undefined) {
     return `             its tab has something waiting to be answered (${answer.blocked}), so nothing was typed into it. Settle that, and the mail is there.`;
+  }
+  if (answer.nudgeLeft) {
+    return `             it is queued, and its tab could not be told to look from here: ${answer.nudgeTrouble}. So the nudge is left for this session's hook, which looks at the tab from outside Codex's sandbox when this command is done, and says what it did.`;
   }
   if (answer.nudgeTrouble !== undefined) {
     return `             it is queued, and its tab could not be told to look: ${answer.nudgeTrouble}`;

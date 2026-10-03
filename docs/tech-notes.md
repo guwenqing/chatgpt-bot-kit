@@ -37,7 +37,7 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
   finds a workspace it made earlier. **verified** (live)
 - **A removed project stays in the window's sidebar until the window is rebuilt.** `setup-delete`
   sends the window nothing, so the row keeps its old name. The `project.update` call the kit makes
-  after a change (ADR 0031) makes the window re-read, and the row stays, now under "Unknown": the
+  after a change (ADR 0034) makes the window re-read, and the row stays, now under "Unknown": the
   sidebar builds its rows from the window's own list of workspaces, which a re-read does not prune
   (read in the bundle). Orca's menu item View › Force Reload (`Force Reload\t⌘⇧R` as the menu draws
   it; the name is localized, the shortcut is `app.forceReload` and the user may change it) rebuilds
@@ -208,7 +208,7 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
   under it and lined up with it (`  GPT-6-Luna medium · <path>`), and a wrapped draft or echo goes on
   in rows lined up the same way. So the kit takes the lowest pointer row on the screen, which is the
   input line whenever that is up, and counts a question only when that row is a numbered choice with
-  another numbered choice lined up beside it (ADR 0031). Claude Code's trust list does not count; what
+  another numbered choice lined up beside it (ADR 0034). Claude Code's trust list does not count; what
   keeps the nudge out of it is Orca naming no agent in that tab. **verified** (live, 2026-09-26)
   **A handle just listed can be refused as `terminal_handle_stale`, for a moment.** Seen five times
   between 2026-09-24 20:30Z and 2026-09-25 06:40Z (Orca 1.4.209), every time `obk message send`'s
@@ -261,7 +261,7 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
   `satisfied:true` for 20 s. So the kit takes a harness to be in a tab when the foreground is not its
   shell (a busy one included), and the mail nudge types only when the process in front is the one
   Orca names. When the pid or the group cannot be read it says it cannot tell and
-  types nothing (ADR 0031). `diagnostics memory` is a diagnostics command and may change.
+  types nothing (ADR 0034). `diagnostics memory` is a diagnostics command and may change.
   **verified** (live, 2026-09-24, Orca 1.4.209, macOS 26.6.2, Claude Code 2.1.281, Codex 0.156.1, #232)
 - **Orca's runtime says who is in front of a tab, from outside any sandbox: `terminal.inspectProcess`.**
   Its CLI does not offer it; Orca's own runtime client does (`call('terminal.inspectProcess', {
@@ -276,7 +276,7 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
   null`, `hasChildProcesses: false`; `less` gave `foregroundProcess: "less"`, `hasChildProcesses:
   true`; a `node` program gave `"node"`. `terminal.isRunningAgent` took more than 5 s on that `node`
   program and timed out, and it guesses from titles and output as well. The kit asks
-  `inspectProcess` where `ps` cannot read a tab (ADR 0031, #298). **verified** (live, 2026-09-26, Orca
+  `inspectProcess` where `ps` cannot read a tab (ADR 0034, #298). **verified** (live, 2026-09-26, Orca
   1.4.212, for the shell, `less` and `node`, and in #298's attended system test for an idle Claude Code,
   which was named in front).
   **On macOS it cannot see a harness that is running a command.** `ps` prints `??` for a process with
@@ -287,11 +287,13 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
   a native Claude Code is its version file (`2.1.282`; `ps -o comm=` gives `claude`, `-o ucomm=` gives
   the version). Seen live on 2026-09-26 (Orca 1.4.212, Claude Code 2.1.282, the architect, #298's run
   and a direct call); read in Orca's source at `agent-foreground-process-remote-evidence.ts:74-78` and
-  `process-table-snapshot.ts:156`, whose own pty code does treat `??` as no terminal. An Orca bug; the
-  kit's answer to it is #350. **verified** (live)
+  `process-table-snapshot.ts:156`, whose own pty code does treat `??` as no terminal. An Orca bug,
+  reported as stablyai/orca#23245; its proposed fix, stablyai/orca#23251, was still open on 2026-10-03
+  and is not in Orca 1.4.219. The kit's answer is a Codex sender's own hook, which reads the tab with
+  `ps` outside the sandbox (#350, ADR 0034; section 3). **verified** (live)
 - **Orca's runtime client answers in well under a second, even on a loaded machine.** The kit runs it
   as Orca's binary with `ELECTRON_RUN_AS_NODE=1` and `src/orca-runtime.cjs`, gives the client 2 s
-  (`CLIENT_WAIT_MS`) and ends it at 3 s (`CLIENT_KILL_MS`) (ADR 0031). On 2026-09-27 (#384; Orca
+  (`CLIENT_WAIT_MS`) and ends it at 3 s (`CLIENT_KILL_MS`) (ADR 0034). On 2026-09-27 (#384; Orca
   1.4.214, macOS, 10 cores) a throwaway probe run through `scripts/test-system.js` made its own folder
   project and one plain shell tab. It ran the client exactly as the kit does, with its own bounds
   raised to 30 s so that slow calls showed rather than being cut off, and timed each call to the end
@@ -323,7 +325,7 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
   variable, so a reader should look for one whole word it knows. That answers the reading half of
   #261's open question on macOS. #318 uses the marker only to report in `obk health` which sessions
   the kit's launch line did not start, never to decide what is typed into a tab. Whether the mail
-  nudge may rest on it was #261's to settle, as below, and ADR 0031 records it. **verified** (live)
+  nudge may rest on it was #261's to settle, as below, and ADR 0034 records it. **verified** (live)
   **#261 settles it: the kit types into a harness under another name when it carries the launch
   mark.** When the program in front of a tab is not named as the agent Orca names, the kit reads
   its environment and parent with `ps`. It types only when that process carries this tab's
@@ -333,7 +335,7 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
   the harness starts has the harness as its parent. A tab Orca restored by itself has no mark, and
   keeps the name rule (a harness under another name there stays "cannot tell"). A sender inside
   Codex's sandbox cannot run `ps` at all (#298, #408), gets only Orca's runtime, which gives no pid,
-  and so stays "cannot tell" as in #350. Seen outside Orca first (2026-09-28): a shell starting
+  and so stays "cannot tell"; its own hook then decides it with `ps` (#350). Seen outside Orca first (2026-09-28): a shell starting
   `OBK_TAB_SHELL=$$ … node …` gave a `node` whose `ps -E` carried `OBK_TAB_SHELL=<the shell's pid>`
   with that shell as its parent. Seen live (2026-09-28, Orca 1.4.215, Claude Code 2.1.283 run as
   the child of a `node` wrapper typed on the kit's launch-line shape, codex-cli 0.157.1 as the
@@ -672,6 +674,30 @@ Proved live on 2026-09-21 (Orca 1.4.205), in throwaway workspaces since removed:
   outside the sandbox after you trust them" (seen 2026-09-26 on 0.156.1 and on 0.157.1). A `/new`
   goes the same way: in #318's live check (0.156.1), a `/new` in a `workspace-write` session was
   written to the book. **verified** (through the kit's own record, and on Codex's screen)
+- **Codex runs a `PostToolUse` hook for its shell tool outside the sandbox too, right after the
+  command** (#350). Seen on 2026-10-03 (codex-cli 0.160.0, `codex exec -s workspace-write` in a
+  throwaway folder, trust given at launch): with `{"PostToolUse":[{"matcher":"Bash","hooks":[…]}]}`
+  in the folder's `.codex/hooks.json`, the model's one shell command could not start `/bin/ps`
+  (`zsh:1: operation not permitted: /bin/ps`), and the hook that ran straight after it ran `/bin/ps`
+  with exit 0. Its stdin was `{ session_id, turn_id, transcript_path, cwd, hook_event_name:
+  "PostToolUse", model, permission_mode, tool_name: "Bash", tool_input: { command }, tool_response,
+  tool_use_id }`, with `tool_response` the command's output as a string and `transcript_path` null.
+  Both saw the same `TMPDIR`, and a file the command wrote there was there for the hook: Codex lists
+  the sandbox's writable places as `[workdir, /tmp, $TMPDIR]`. The hook inherited `ORCA_TAB_ID` and
+  `OBK_TAB_SHELL` from the launch. Its `{"hookSpecificOutput":{"hookEventName":"PostToolUse",
+  "additionalContext":"…"}}` reached the model before its reply. 0.160.0's binary also names
+  `PreToolUse`, `PermissionRequest`, `PreCompact`, `PostCompact`, `SessionEnd`, `UserPromptSubmit`,
+  `SubagentStart`, `SubagentStop`, `Stop` and `Interrupt`, and a hook may be `async`. **verified**
+  (live, once) Then through the kit, in `test/system/codex-nudge.test.js` (2026-10-03, Orca 1.4.219,
+  codex-cli 0.160.0, Claude Code 2.1.288): a Codex sender in its sandbox left the nudges for a Claude
+  receiver running a loop and one holding a background `sleep`, both `tty_boundary`; the kit's hook
+  typed both, and each receiver read its mail, the busy one after its loop. **verified** (live)
+- **A new hook entry does not run until it is trusted, and nothing says so.** Codex's hooks
+  documentation (read 2026-10-03): "Codex records trust against the hook's current hash, so new or
+  changed hooks are marked for review." The same `codex exec` without the bypass switch ran Codex's
+  other, trusted hooks and not the new entry, and printed nothing about it (0.160.0, 2026-10-03). So
+  a hook entry the kit adds to a Codex bot's file brings up `Hooks need review` there once more.
+  **verified** (live, for the entry not running; the review screen for an added entry not seen)
 - **Trusting a hooks file does not replay what it missed.** A conversation that was already running when the file was still untrusted is never reported: no SessionStart arrives for it after `t`, and nothing else says the kit missed one. The next conversation reports normally. So "no id recorded" cannot be read as "there was no conversation". **verified** (live, in the PR #88 review)
 - **Codex records no pid anywhere a reader can use.** `~/.codex/thread-writer-locks/<thread>.lock` is an empty lock file; `~/.codex/session_index.jsonl` holds `{ id, thread_name, updated_at }`; a rollout's `session_meta` carries the id, the folder and the time and no pid. So there is no Codex equivalent of Claude Code's live-session registry. **verified** (read on this machine, 0.155.1)
 - **Neither harness links a new conversation to the one the same process had before.** A `/clear` or a `/new` leaves nothing behind saying "this replaced that". With the point above, that means **a conversation that has ended cannot be tied to the session that had it** by anything either harness writes down — which is why the kit never assigns an unrecorded conversation to a session and says what it found instead. **verified** (live, and by reading both harnesses' own files)

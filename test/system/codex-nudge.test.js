@@ -4,35 +4,46 @@
 //
 // Before #298 a Codex session's mail never told anybody. The kit types the
 // one-line nudge into a receiver's tab only when it can see a harness in front
-// of it (ADR 0031), and it looked with `/bin/ps`. At the kit's `auto` level,
+// of it (ADR 0034), and it looked with `/bin/ps`. At the kit's `auto` level,
 // the default, the kit launches Codex with `--approve-for-me -c
 // sandbox_workspace_write.network_access=true`: Codex's `workspace-write`
 // sandbox, where /bin/ps does not start at all (`Operation not permitted`, exit
 // 126). So every send from there said it could not tell, and typed nothing.
 // Since #298 the kit asks Orca's runtime when `ps` cannot read the tab.
 //
+// For a Claude Code running a command, or holding one in the background,
+// Orca's runtime cannot say either (#350). That is an Orca bug, not the kit's
+// choice: on macOS, `terminal.inspectProcess` answers verdict `unverifiable`,
+// reason `tty_boundary`, whenever the harness has a child with no terminal
+// (`ps` prints `??`), which is every Claude Code running a command (read in
+// Orca's source and seen live). So since #350 the send leaves the nudge it
+// could not decide on (`nudgeLeft: true`), and the kit's hook in the Codex bot's
+// `.codex/hooks.json`, on Codex's `PostToolUse` event matched to its shell tool
+// `Bash`, decides it right after the shell command that ran the send. Codex
+// runs its hooks outside its sandbox, so there `ps` runs, and the hook types
+// the nudge by #232's gate. The day Orca fixes its bug the send nudges by
+// itself, and this test takes either road.
+//
 // The Codex bot here sends with the kit's own command, `"$OBK_CLI" message
 // send`, from its start prompt, so every send runs inside its sandbox. It sends
-// to four Claude sessions, one after another, each in the state the case needs
+// to five Claude sessions, one after another, each in the state the case needs
 // when the mail arrives:
 //
 //   1. `idle`: waiting at its prompt. It is nudged, and reads the mail with the
 //      command the nudge names.
-//   2. `busy`: part way through a shell loop of about a minute and a half.
-//      Nothing is typed, and the send says it could not tell, naming
-//      `tty_boundary`. That is an Orca bug, not the kit's choice: on macOS,
-//      `terminal.inspectProcess` answers verdict `unverifiable`, reason
-//      `tty_boundary`, whenever the harness has a child with no terminal (`ps`
-//      prints `??`), which is every Claude Code running a command (read in
-//      Orca's source and seen live). The receiver finishes its loop, and its
-//      mail waits unread. The day Orca fixes it this case fails, loudly, and
-//      #350 turns it back into a nudge read after the work (PRD 6.9).
-//   3. `quit`: its Claude Code ended with `/exit`, so the tab's shell is in
+//   2. `busy`: part way through a shell loop of about a minute and a half. It
+//      is told of its mail, by the send or by the sender's hook, finishes its
+//      loop, and then reads the mail (PRD 6.9: queued, not interrupting).
+//   3. `background`: idle at its prompt while it holds a long `sleep` it started
+//      as a background command, with Claude Code's own way of running one. It
+//      is told of its mail the same way, and reads it.
+//   4. `quit`: its Claude Code ended with `/exit`, so the tab's shell is in
 //      front. Nothing is typed, the send says it was not nudged, and plainly:
 //      the shell in front is no harness (#232).
-//   4. `pager`: its Claude Code ended with `/exit` and `less` started in its
+//   5. `pager`: its Claude Code ended with `/exit` and `less` started in its
 //      shell, so a pager is in front under what may be a stale `agentIdentity`
-//      of `claude`. Nothing is typed, and the send says it could not tell.
+//      of `claude`. Nothing is typed, by the send or by the hook, and the send
+//      says it could not tell.
 //
 // What the send answered is taken from the kit's own words, not from the
 // model: each send is piped through `tee` into a file in the Codex bot's own
@@ -41,19 +52,23 @@
 // file the model wrote by itself would not pass for it. The same way, the bot
 // first writes the exit status of a `/bin/ps` it runs, which is the premise:
 // a status of 0 is a run outside the sandbox that shows nothing about #298.
-// The four answers are printed as diagnostics of the run.
+// The five answers are printed as diagnostics of the run, with the road each
+// told receiver was told by.
 //
 // **What a receipt here may be made of.** Every word waited for is one the
 // tab it is waited for in was never told. Each message's body carries a word
 // that is only in the Codex bot's start prompt; the nudge says who wrote and
 // what the subject is, and not the body, so that word on a receiver's screen
 // is the mail having been read. Nothing having arrived is read the same way:
-// neither the subject nor the body word is on the busy, quit or pager tab's
-// screen long after the send, and Orca's mailbox holds that mail unread, where
-// the idle receiver's is read. The busy receiver's loop was still running when
-// its answer came back, and its total, which its instruction asks for and
-// never states, says it finished; a minute after that total nothing of the
-// mail is on its screen. `less` is still showing the test's own file.
+// neither the subject nor the body word is on the quit or pager tab's screen
+// long after the send, and Orca's mailbox holds that mail unread, where the
+// idle, busy and background receivers' is read. The busy receiver's loop was
+// still running when its answer came back, and its total, which its
+// instruction asks for and never states, says it finished; the body word comes
+// after that. The background receiver's `sleep` writes its own pid to a file
+// in its bot's folder as it starts, and the test looks at that one pid with
+// `ps -p`: it was running when the sender started and when the answer came
+// back. `less` is still showing the test's own file.
 //
 // **How the mailboxes are looked at, and what that rests on.** A live run is
 // started from an Orca tab, and from there `obk message check` refuses any
@@ -65,15 +80,15 @@
 // `{ messages, count }`, newest first by `sequence`, each message with its
 // `run_id`, `to_handle`, `read` (0 or 1), `sequence`, `delivered_at`, subject
 // and body. It lists every recipient's mail on the machine, so the test keeps
-// only the entries of its own four Runs, the ones the book holds, and no
+// only the entries of its own five Runs, the ones the book holds, and no
 // assertion or failure message prints anything else. A message of the test's
 // that the listing does not hold fails the test and says so; it is never
 // taken for read. Not known until a run shows it: that `read` turns 1 when
-// `obk message check` acknowledges a message. The idle receiver's must be 1
-// and the other three's 0; if `read` means something else, the failure says
-// so. Also not known: whether 100 is Orca's cap for `--limit`, and whether a
-// machine busy with other mail between the sends and the look pushes the
-// test's four out of the newest 100.
+// `obk message check` acknowledges a message. The idle, busy and background
+// receivers' must be 1 and the other two's 0; if `read` means something else,
+// the failure says so. Also not known: whether 100 is Orca's cap for `--limit`,
+// and whether a machine busy with other mail between the sends and the look
+// pushes the test's five out of the newest 100.
 //
 // The machine it runs on is someone's working machine, with their own tabs open.
 // So this test, like the ones beside it:
@@ -89,6 +104,9 @@
 //   - checks afterwards that it closed no tab it did not create;
 //   - signals no process: a process is only ever looked at, with `ps -p <pid>`,
 //     one pid at a time, and a harness is ended with `/exit` or with its tab.
+//     The background receiver's `sleep` is not this test's to end: it ends by
+//     itself BACKGROUND_S seconds after it starts, if closing its tab has not
+//     ended it first.
 //
 // `orca terminal close --worktree … --all` is never run here, and the helper
 // below refuses to run it at all.
@@ -96,35 +114,41 @@
 // It leaves behind what every system test does: offline entries in Claude
 // Code's Remote Control list, and the Run mailboxes Orca cannot delete.
 //
-// It is slow: two warm-up tabs, four receivers, a loop of a minute and a half
-// and a real read. Ten minutes or more, attended.
+// It is slow: two warm-up tabs, five receivers, a loop of a minute and a half
+// and three real reads. Ten minutes or more, attended.
 //
-// **It is attended.** A bot folder nobody has opened before asks questions
-// before the harness is running in it, and this test answers none of them —
-// answering them is the caller's job and not the kit's (PRD 6.5). What to
-// expect, in order:
+// **Nobody answers anything by hand.** A bot folder nobody has opened before
+// asks questions before the harness is running in it (PRD 6.5). This test
+// answers one of them itself, Claude Code's folder trust, in its own throwaway
+// Claude tabs alone, under the architect's rulings on #451
+// (https://github.com/guwenqing/orca-bot-kit/issues/451#issuecomment-5961132572)
+// and #391, as send-outside-fleet does: only when the screen is the plain trust
+// for the Claude bot's own throwaway folder, every row from "Accessing
+// workspace:" down a row of the captured plain screen with that folder in the
+// folder's place, the pointer on "No, exit", "Yes, I trust this folder" there,
+// and no line pre-approving a permission (helpers/screens.js
+// `onlyPlainTrustOf`). Then down and return, at most once for that tab, with no
+// `--enter`. `Nudge Claude idle` comes up first and should be the only one to
+// show it: `quit`, `pager`, `background` and `busy` share its folder. Any
+// other screen gets no answer, and the test fails printing its rows; a hooks
+// line on the trust screen goes to the architect before any rerun. What else
+// may show:
 //
-//   1. `Bot Father daily`: Claude Code's folder trust. Nothing here waits on
-//      Bot Father or writes to it. Leave it.
-//   2. `Nudge Codex warmup` should ask nothing: both Codex sessions are given
-//      their folder's trust at launch (#240, test/helpers/codex-trust.js), so
-//      Codex asks neither its folder trust nor its hooks review, and writes
-//      nothing about this folder into the user's own ~/.codex/config.toml. The
-//      tab still comes up first, as it did when it carried those questions for
-//      the sender; it does nothing else.
-//   3. `Nudge Claude idle`: Claude Code's folder trust, once for the folder.
-//      Its selection starts on `No, exit`, so it takes a down-arrow and then
-//      return. `quit`, `pager` and `busy` come up in the same folder after
-//      it, and should ask nothing.
-//   4. Any Claude tab: if Claude Code asks before it runs a command (the loop
-//      in `busy`, or the command the nudge names in `idle`), allow it.
-//   5. Any tab, if its harness offers an update: accept it (PRD 6.5). In
-//      `Nudge Codex sender` or `Nudge Claude busy` that costs time the loop
-//      may not have; a run that misses it says so.
-//   6. `Nudge Codex sender` should ask nothing, for the same reason as 2.
+//   - `Bot Father daily` shows the same folder trust for its own folder.
+//     Nothing here waits on Bot Father or writes to it, and it is left.
+//   - Both Codex sessions, `Nudge Codex warmup` and `Nudge Codex sender`, should
+//     ask nothing: they are given their folder's trust at launch (#240,
+//     test/helpers/codex-trust.js), which also bypasses Codex's hooks review, so
+//     the kit's hooks in its folder, the nudge hook among them, run without
+//     one, and nothing about this folder is written into the user's own
+//     ~/.codex/config.toml.
+//   - A Claude Code that asks before it runs a command (the loop in `busy`, the
+//     background `sleep` in `background`, or the command the nudge names), or
+//     any harness offering an update, is a screen this test does not answer:
+//     the wait it stops fails, printing what the tab shows.
 //
 // Every wait says what the tab is showing when it runs out of patience, so a
-// run that was left alone names the screen that stopped it.
+// run that stopped names the screen that stopped it.
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -138,7 +162,7 @@ import { parse } from 'yaml';
 
 import { cliEntry } from '../helpers/cli.js';
 import { codexTrustArgs } from '../helpers/codex-trust.js';
-import { waitingOn } from '../helpers/screens.js';
+import { onlyPlainTrustOf, questionOn, waitingOn } from '../helpers/screens.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 
 /**
@@ -173,11 +197,11 @@ const HOOK_MS = 60000;
 const READY_MS = 180000;
 
 /**
- * How long after the busy receiver's loop is done its screen is watched for
- * the mail. A line typed while it worked would be its next turn, read within
- * seconds of the total.
+ * How long the background receiver's `sleep` runs, in seconds: past the
+ * slowest the sender can be started and get to its sends after it, so the
+ * receiver still holds it when its mail is sent.
  */
-const AFTER_WORK_MS = 60000;
+const BACKGROUND_S = 900;
 
 /**
  * How long a harness that quit is given before mail is sent to its tab. Orca
@@ -268,6 +292,13 @@ async function until(what, within, look, note = () => '') {
     assert.ok(Date.now() < stop, `gave up waiting for ${what} after ${within}ms.${note()}`);
     await setTimeout(1000);
   }
+}
+
+/** The rows the tab renders right now, or undefined when Orca gives no rendered screen. */
+function rowsOf(handle) {
+  const answer = orca(['terminal', 'read', '--terminal', handle, '--screen']);
+  const tail = answer.ok === true && answer.result?.terminal?.source === 'screen' ? answer.result.terminal.tail : undefined;
+  return Array.isArray(tail) ? tail : undefined;
 }
 
 /** Everything the tab is rendering right now, as one piece of text to look through. */
@@ -399,13 +430,14 @@ const CLAUDE = { name: 'nudge-claude', display: 'Nudge Claude' };
 const CODEX = { name: 'nudge-codex', display: 'Nudge Codex' };
 
 /**
- * The four sends, in the order the Codex bot makes them: the busy receiver
+ * The five sends, in the order the Codex bot makes them: the busy receiver
  * first, while its loop is still running. `subject` and `body` are each only
  * in the Codex bot's start prompt; the nudge carries the subject, the body
  * only the mail.
  */
 const SENDS = [
   { session: 'busy', subject: 'while you work SUBJ-4410', body: 'WALRUS-7720' },
+  { session: 'background', subject: 'while you hold a job SUBJ-5174', body: 'HERON-9036' },
   { session: 'idle', subject: 'while you wait SUBJ-2291', body: 'KESTREL-5163' },
   { session: 'quit', subject: 'after you quit SUBJ-8812', body: 'IBIS-3308' },
   { session: 'pager', subject: 'behind the pager SUBJ-6630', body: 'LYNX-4471' },
@@ -421,6 +453,16 @@ const COUNT_TO = 96;
 const WORK = `for i in $(seq 1 ${COUNT_TO}); do printf 'STEP-%02d\\n' "$i"; sleep 1; done`;
 const TOTAL = `TOTAL: ${(COUNT_TO * (COUNT_TO + 1)) / 2}`;
 
+/**
+ * The background receiver's command: a `sleep` that writes its own pid to
+ * `file` as it starts (`exec` keeps the shell's pid), so the test can look at
+ * that one process, and at no other, with `ps -p`.
+ */
+const backgroundCommand = (file) => `/bin/sh -c 'echo $$ > ${file}; exec sleep ${BACKGROUND_S}'`;
+
+/** Whether the one process `pid` is there, looked at with `ps -p` from this test's own process, which only reads. */
+const running = (pid) => spawnSync('ps', ['-p', String(pid), '-o', 'pid='], { encoding: 'utf8' }).status === 0;
+
 /** The word in the file `less` shows in the pager tab: that tab is only ever told the file's path. */
 const PAGER_WORD = 'PAGER-6042';
 
@@ -433,8 +475,11 @@ const aBotOf = (bots) => [
   `Your bots folder is ${bots}.`,
 ];
 
+/** The file the background receiver's `sleep` writes its pid to, in that bot's own folder. */
+const backgroundPidFile = (home) => path.join(home, 'background-pid.txt');
+
 /** A Claude receiver: reads its own mail when the kit says there is some. */
-const receiverPrompt = (bots, session) => [
+const receiverPrompt = (bots, session, home) => [
   ...aBotOf(bots),
   'Do nothing that is not written here: read no file, write nothing, and run no command but the ones below.',
   ...(session === 'busy'
@@ -443,6 +488,13 @@ const receiverPrompt = (bots, session) => [
       `it takes about a minute and a half: ${WORK}`,
       'When it has finished, print TOTAL: followed by the sum of the numbers in the STEP lines it printed,',
       'on a line of its own.',
+    ]
+    : []),
+  ...(session === 'background'
+    ? [
+      'As soon as you are running, start exactly this command, once, as a background command, with your own way',
+      'of running a command in the background, and do not wait for it to finish or look at it again:',
+      `${backgroundCommand(backgroundPidFile(home))}`,
     ]
     : []),
   'When a line arrives saying fleet mail is waiting, run exactly the command that line names to read it,',
@@ -455,7 +507,7 @@ const psStatusFile = (home) => path.join(home, 'ps-status.txt');
 const answerFile = (home, session) => path.join(home, `answer-${session}.json`);
 
 /**
- * The Codex sender: the premise first, then the four sends, each answer piped
+ * The Codex sender: the premise first, then the five sends, each answer piped
  * through `tee` into its own file, so what the kit said is on disk in its own
  * words. `tee` rather than `>`: a redirect the sandbox refused would stop the
  * send from running at all.
@@ -525,7 +577,7 @@ async function inboxOf(home, sessions) {
   return ours;
 }
 
-test('mail from a Codex session in its sandbox nudges an idle Claude receiver, and nothing is typed into a busy one, a quit one or one behind a pager', async (t) => {
+test('mail from a Codex session in its sandbox tells an idle Claude receiver, a busy one and one holding a background command, and nothing is typed into a quit one or one behind a pager', async (t) => {
   const before = {
     handles: new Set(allTerminals().map((terminal) => terminal.handle)),
     setups: new Set(allSetups().map((setup) => setup.id)),
@@ -576,8 +628,8 @@ test('mail from a Codex session in its sandbox nudges an idle Claude receiver, a
   // which for Codex is the workspace-write sandbox.
   obkJson(['session', 'add', '--bots', bots, '--bot', CODEX.name, '--name', 'warmup', `--prompt=${[...aBotOf(bots), 'Say nothing now and wait.'].join(' ')}`, ...codexTrustArgs(bots)]);
   obkJson(['session', 'add', '--bots', bots, '--bot', CODEX.name, '--name', 'sender', `--prompt=${senderPrompt(bots, codexHome)}`, ...codexTrustArgs(bots)]);
-  for (const session of ['idle', 'quit', 'pager', 'busy']) {
-    obkJson(['session', 'add', '--bots', bots, '--bot', CLAUDE.name, '--name', session, `--prompt=${receiverPrompt(bots, session)}`]);
+  for (const session of ['idle', 'quit', 'pager', 'background', 'busy']) {
+    obkJson(['session', 'add', '--bots', bots, '--bot', CLAUDE.name, '--name', session, `--prompt=${receiverPrompt(bots, session, claudeHome)}`]);
   }
 
   /** Bring one session up, alone, and hand back its tab's entry. */
@@ -592,38 +644,100 @@ test('mail from a Codex session in its sandbox nudges an idle Claude receiver, a
     return entry;
   };
 
+  /**
+   * Get one of this test's own Claude tabs past its first-run screens: Claude
+   * Code's folder trust, answered here at most once for the tab and only when
+   * it is the plain one for the Claude bot's own folder (see the header). Any
+   * other question fails the test with its rows. Done when the session has
+   * reported its conversation.
+   */
+  const pastTrust = async (session, entry) => {
+    const asked = await until(
+      `${CLAUDE.name}/${session} to show Claude Code's folder trust, or report its conversation`,
+      READY_MS,
+      async () => {
+        if (typeof (await sessionIn(claudeHome, session)).session === 'string') return { rows: null };
+        const rows = rowsOf(entry.terminal);
+        if (rows === undefined) return undefined;
+        if (rows.some((row) => row.includes('Yes, I trust this folder'))) return { rows };
+        const question = questionOn(rows);
+        assert.equal(
+          question,
+          undefined,
+          `${entry.title} asks something this test does not answer, so it answered nothing.\n  what it showed:\n    ${rows.join('\n    ')}`,
+        );
+        return undefined;
+      },
+      () => whatIsUp(entry.terminal),
+    );
+    if (asked.rows !== null) {
+      const wrong = onlyPlainTrustOf(asked.rows, claudeHome);
+      assert.equal(
+        wrong,
+        undefined,
+        `${entry.title}'s folder trust is not one this test may answer, so it answered nothing: ${wrong}.`
+        + `\n  what it showed:\n    ${asked.rows.join('\n    ')}`,
+      );
+      const sent = orca(['terminal', 'send', '--terminal', entry.terminal, '--text', '\x1b[B\r']);
+      assert.equal(sent.ok, true, `answering ${entry.title}'s folder trust failed: ${JSON.stringify(sent.error)}`);
+      t.diagnostic(`answered ${entry.title}'s plain folder trust (the rulings on #451 and #391)`);
+    }
+    await until(
+      `${CLAUDE.name}/${session} to report its session id`,
+      READY_MS,
+      async () => (await sessionIn(claudeHome, session)).session,
+      () => ` Its folder trust was answered, or never asked.${whatIsUp(entry.terminal)}`,
+    );
+  };
+
   // A Codex tab that does nothing else, up before the sender. It used to carry
   // the folder's first-run screens, answered by hand; with the trust given at
   // launch (#240) it should ask nothing, and is waited for all the same.
   const warmup = bringUp(CODEX.name, 'warmup');
   await readyForMail(warmup.terminal);
 
-  // 1. The idle receiver. Its folder trust is the one the other three share.
+  // 1. The idle receiver. Its folder trust is the one the other four share.
   const idle = bringUp(CLAUDE.name, 'idle');
+  await pastTrust('idle', idle);
   await readyForMail(idle.terminal);
 
-  // 3. The shell in front: Claude Code ended in its own tab.
+  // 4. The shell in front: Claude Code ended in its own tab.
   const quit = bringUp(CLAUDE.name, 'quit');
+  await pastTrust('quit', quit);
   await quitIn(claudeHome, 'quit', quit.terminal);
 
-  // 4. `less` in front: Claude Code ended, and the pager started in its shell
+  // 5. `less` in front: Claude Code ended, and the pager started in its shell
   //    on this test's own file. The tab is told only the file's path.
   const pager = bringUp(CLAUDE.name, 'pager');
+  await pastTrust('pager', pager);
   await quitIn(claudeHome, 'pager', pager.terminal);
   await writeFile(pagerFile, `${Array.from({ length: 200 }, (_, n) => `${PAGER_WORD} line ${n + 1}`).join('\n')}\n`);
   sendLine(pager.terminal, `less ${pagerFile}`);
   await showsUp(pager.terminal, PAGER_WORD, ANSWER_MS);
 
+  // 3. Idle, holding a background command: the `sleep` writes its pid as it
+  //    starts, and the test waits for that process to be there and for the
+  //    tab to be idle.
+  const background = bringUp(CLAUDE.name, 'background');
+  await pastTrust('background', background);
+  const backgroundPid = await until(
+    `${CLAUDE.name}/background's sleep to write its pid to ${backgroundPidFile(claudeHome)}`,
+    ANSWER_MS,
+    async () => {
+      if (!existsSync(backgroundPidFile(claudeHome))) return undefined;
+      const text = readFileSync(backgroundPidFile(claudeHome), 'utf8').trim();
+      return /^\d+$/.test(text) ? Number(text) : undefined;
+    },
+    () => whatIsUp(background.terminal),
+  );
+  assert.ok(running(backgroundPid), `the premise: the background receiver's sleep, pid ${backgroundPid}, is running`);
+  await readyForMail(background.terminal);
+
   // 2. The busy receiver, last: it starts its loop the moment it is running.
   //    Once its hook has reported, a TUI wait that times out with no total on
   //    the screen is Claude Code at work (#232).
   const busy = bringUp(CLAUDE.name, 'busy');
-  await until(
-    `${CLAUDE.name}/busy to report its session id`,
-    HOOK_MS,
-    async () => (await sessionIn(claudeHome, 'busy')).session,
-    () => ` The kit's hook has not run.${whatIsUp(busy.terminal)}`,
-  );
+  await pastTrust('busy', busy);
   await until(
     `${busy.terminal} to be at work on its loop`,
     ANSWER_MS,
@@ -643,6 +757,15 @@ test('mail from a Codex session in its sandbox nudges an idle Claude receiver, a
     const shown = orca(['terminal', 'show', '--terminal', entry.terminal]);
     t.diagnostic(`${session}: Orca names ${JSON.stringify(shown.result?.terminal?.agentIdentity ?? null)} as its agent before the sends`);
   }
+
+  // The sender's hooks file holds the kit's nudge hook, which `up` wrote when
+  // the Codex bot came up; and the background receiver still holds its sleep.
+  const codexHooks = path.join(codexHome, '.codex', 'hooks.json');
+  assert.ok(
+    existsSync(codexHooks) && readFileSync(codexHooks, 'utf8').includes('session nudge'),
+    `the premise: ${codexHooks} holds the kit's nudge hook (#350)`,
+  );
+  assert.ok(running(backgroundPid), `the premise: the background receiver's sleep, pid ${backgroundPid}, is still running before the sends`);
 
   // The sender. Everything it does is in its start prompt.
   const sender = bringUp(CODEX.name, 'sender');
@@ -678,8 +801,15 @@ test('mail from a Codex session in its sandbox nudges an idle Claude receiver, a
         `the loop finished before the mail was sent, so this shows nothing about a receiver running a command: ${screenOf(busy.terminal).slice(0, 2000)}`,
       );
     }
-    const { nudged, nudgeTrouble, blocked } = answers[send.session];
-    t.diagnostic(`${send.session}: ${JSON.stringify({ nudged, nudgeTrouble, blocked })}`);
+    if (send.session === 'background') {
+      // Likewise: a sleep still running now was running when the mail was sent.
+      assert.ok(
+        running(backgroundPid),
+        `the background receiver's sleep, pid ${backgroundPid}, ended before the mail was sent, so this shows nothing about a receiver holding a background command`,
+      );
+    }
+    const { nudged, nudgeTrouble, nudgeLeft, blocked } = answers[send.session];
+    t.diagnostic(`${send.session}: ${JSON.stringify({ nudged, nudgeTrouble, nudgeLeft, blocked })}`);
   }
 
   for (const send of SENDS) {
@@ -689,20 +819,25 @@ test('mail from a Codex session in its sandbox nudges an idle Claude receiver, a
     assert.equal(answer.address, `run:${mailbox}`, `${send.session}: the kit's own answer, sent to the Run the book holds, got: ${JSON.stringify(answer)}`);
   }
   assert.equal(answers.idle.nudged, true, `the idle receiver should have been nudged, got: ${JSON.stringify(answers.idle)}`);
-  // Orca's runtime cannot see past a child with no terminal (`??`), so the kit
-  // cannot tell and types nothing. When this fails because the busy receiver
-  // was nudged, Orca has fixed it: #350 turns this back into a nudge.
-  assert.equal(answers.busy.nudged, false, `nothing is typed while Orca's runtime answers tty_boundary (#350), got: ${JSON.stringify(answers.busy)}`);
-  assert.match(
-    String(answers.busy.nudgeTrouble),
-    /could not tell whether a harness is running in it/,
-    `and the kit says it could not tell, got: ${JSON.stringify(answers.busy)}`,
-  );
-  assert.match(
-    String(answers.busy.nudgeTrouble),
-    /tty_boundary/,
-    `naming Orca's reason, tty_boundary (#350), got: ${JSON.stringify(answers.busy)}`,
-  );
+  // The busy receiver and the one holding a background command are told by
+  // one of two roads. Orca's runtime cannot see past a child with no terminal
+  // (`??`), so the send cannot tell, types nothing and leaves the nudge for the
+  // sender's hook, which decides it with `ps` outside the sandbox (#350). An
+  // Orca that has fixed its bug lets the send nudge by itself.
+  for (const session of ['busy', 'background']) {
+    const answer = answers[session];
+    if (answer.nudged === true) {
+      t.diagnostic(`${session}: nudged by the send itself; Orca's runtime named the harness, so it no longer answers tty_boundary here`);
+      continue;
+    }
+    assert.equal(answer.nudgeLeft, true, `${session}: not nudged by the send, so the nudge is left for the sender's hook (#350), got: ${JSON.stringify(answer)}`);
+    assert.match(
+      String(answer.nudgeTrouble),
+      /could not tell whether a harness is running in it/,
+      `${session}: and the send says it could not tell, got: ${JSON.stringify(answer)}`,
+    );
+    t.diagnostic(`${session}: left for the sender's hook`);
+  }
   assert.equal(answers.quit.nudged, false, `nothing is typed into a tab with its shell in front, got: ${JSON.stringify(answers.quit)}`);
   assert.equal(
     'nudgeTrouble' in answers.quit,
@@ -719,14 +854,27 @@ test('mail from a Codex session in its sandbox nudges an idle Claude receiver, a
   // 1. The idle receiver read its mail: the body's word is only in the mail.
   await showsUp(idle.terminal, sendTo('idle').body, ROUND_TRIP_MS);
 
-  // 2. The busy receiver finishes its loop, and a minute on nothing of the
-  //    mail has reached it.
+  // 2. The busy receiver finishes its loop, and then reads its mail: the line
+  //    that told it waited for the work to end (PRD 6.9).
   await showsUp(busy.terminal, TOTAL, ANSWER_MS);
-  await setTimeout(AFTER_WORK_MS);
+  await showsUp(busy.terminal, sendTo('busy').body, ROUND_TRIP_MS);
+  const afterWork = screenOf(busy.terminal);
+  if (afterWork.includes(TOTAL)) {
+    assert.ok(
+      afterWork.indexOf(TOTAL) < afterWork.indexOf(sendTo('busy').body),
+      `the busy receiver read its mail after its loop's total, not in the middle of the work: ${afterWork.slice(0, 3000)}`,
+    );
+  } else {
+    t.diagnostic('busy: the total has scrolled off the screen by the time the mail was read, so its order was not looked at');
+  }
 
-  // 2, 3 and 4. Minutes after the sends, nothing arrived in the tabs the kit
-  // could not see a harness in: neither word is on any of their screens.
-  for (const [session, entry] of [['busy', busy], ['quit', quit], ['pager', pager]]) {
+  // 3. The receiver holding a background command reads its mail.
+  await showsUp(background.terminal, sendTo('background').body, ROUND_TRIP_MS);
+
+  // 4 and 5. Minutes after the sends, nothing arrived in the tabs with no
+  // harness in front, by the send or by the hook: neither word is on either
+  // screen.
+  for (const [session, entry] of [['quit', quit], ['pager', pager]]) {
     const shown = screenOf(entry.terminal);
     const { subject, body } = sendTo(session);
     const word = subject.split(' ').at(-1);
@@ -735,9 +883,9 @@ test('mail from a Codex session in its sandbox nudges an idle Claude receiver, a
   assert.ok(screenOf(pager.terminal).includes(PAGER_WORD), `less is still showing this test's file: ${screenOf(pager.terminal).slice(0, 3000)}`);
 
   // Last, the mailboxes, by the look the header describes, so a failure of it
-  // stops nothing above. Each Run holds the one message sent to it. The idle
-  // receiver read its mail with the kit's own command, the one the nudge
-  // named, so Orca has it read; the other three's waits unread.
+  // stops nothing above. Each Run holds the one message sent to it. The idle,
+  // busy and background receivers read their mail with the kit's own command,
+  // the one the nudge named, so Orca has it read; the other two's waits unread.
   const inbox = await inboxOf(claudeHome, SENDS.map((send) => send.session));
   for (const { session, body } of SENDS) {
     const found = inbox[session];
@@ -748,12 +896,12 @@ test('mail from a Codex session in its sandbox nudges an idle Claude receiver, a
       + ` of it: ${JSON.stringify(found)}. A message missing here is not known to be read or unread, so this fails rather than guess.`,
     );
     assert.ok(String(found[0].body).includes(body), `and it is the mail that was sent: ${JSON.stringify(found[0])}`);
-    const expected = session === 'idle' ? 1 : 0;
+    const told = ['idle', 'busy', 'background'].includes(session);
     assert.equal(
       found[0].read,
-      expected,
-      session === 'idle'
-        ? `idle's message is read ${JSON.stringify(found[0].read)}, and it was read and acknowledged by obk message check (its body word is on its screen). `
+      told ? 1 : 0,
+      told
+        ? `${session}'s message is read ${JSON.stringify(found[0].read)}, and it was read and acknowledged by obk message check (its body word is on its screen). `
           + `Either the inbox's \`read\` does not mean acknowledged, or the acknowledgement did not happen: ${JSON.stringify(found[0])}`
         : `${session}'s message is read ${JSON.stringify(found[0].read)}, and nobody was told of it or ran a check for it. `
           + `Either the inbox's \`read\` does not mean acknowledged, or something read it: ${JSON.stringify(found[0])}`,

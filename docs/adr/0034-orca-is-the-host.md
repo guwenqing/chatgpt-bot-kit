@@ -1,9 +1,9 @@
-# ADR 0031: Orca is the host
+# ADR 0034: Orca is the host
 
-Date: 2026-09-28.
-Status: superseded by [ADR 0034](0034-orca-is-the-host.md).
-Decided by: the owner, in his design session of 2026-09-19, and on 2026-09-20 for the plain folder; the architect, for #232 and PR #260, for the sentences marked so; the owner on 2026-09-24 for calling Orca's runtime through Orca's own client (#224), with the architect deciding how the user is told, for the sentences marked so; the architect, for #329, for the kit's own reading of a tab's screen before it types into it, for the sentences marked so; the architect, for #298, for asking Orca's runtime who is in front of a tab where `ps` cannot read it, for the sentences marked so; the owner on 2026-09-26 for Orca's own Force Reload after a removal (#343), with the architect deciding how the menu item is found, for the sentences marked so; the architect, for #261, for recognising the harness the kit launched by its launch mark, for the sentences marked so. The owner may overrule the architect's sentences. Consulted: the coordinator, who researched Orca. A sentence marked (proposed) is not decided yet.
-Supersedes: [ADR 0025](0025-orca-is-the-host.md).
+Date: 2026-10-03.
+Status: accepted.
+Decided by: the owner, in his design session of 2026-09-19, and on 2026-09-20 for the plain folder; the architect, for #232 and PR #260, for the sentences marked so; the owner on 2026-09-24 for calling Orca's runtime through Orca's own client (#224), with the architect deciding how the user is told, for the sentences marked so; the architect, for #329, for the kit's own reading of a tab's screen before it types into it, for the sentences marked so; the architect, for #298, for asking Orca's runtime who is in front of a tab where `ps` cannot read it, for the sentences marked so; the owner on 2026-09-26 for Orca's own Force Reload after a removal (#343), with the architect deciding how the menu item is found, for the sentences marked so; the architect, for #261, for recognising the harness the kit launched by its launch mark, for the sentences marked so; the architect, for #350, for handing the nudge a Codex sender could not decide to that sender's own hook, for the sentences marked so. The owner may overrule the architect's sentences. Consulted: the coordinator, who researched Orca. A sentence marked (proposed) is not decided yet.
+Supersedes: [ADR 0031](0031-orca-is-the-host.md).
 
 ## Context
 
@@ -64,7 +64,24 @@ with no terminal makes the answer `unverifiable`, reason `tty_boundary`, with
 file, for a native Claude Code). Claude Code runs its commands in a shell
 with no terminal, so a Claude session running a command, or holding one in
 the background, gets that answer (seen live in the same run, and read in
-Orca's source; an Orca bug, #350).
+Orca's source; an Orca bug, #350). It is reported upstream as
+stablyai/orca#23245; the fix proposed there, stablyai/orca#23251, was still
+open on 2026-10-03, and Orca 1.4.219 does not have it.
+
+What Codex runs outside its sandbox is its hooks (#350). Seen with codex-cli
+0.160.0 on 2026-10-03, `codex exec` at `workspace-write` with a
+`PostToolUse` hook matched to `Bash` in the folder's `.codex/hooks.json`:
+the shell command the model ran could not start `/bin/ps` (`operation not
+permitted`), and the hook Codex ran right after that command, with the
+command and its output on stdin under `tool_name: "Bash"`, ran `/bin/ps`
+with exit 0. Both saw the same `TMPDIR`, a file the sandboxed command wrote
+there was there for the hook, and the sandbox names `$TMPDIR` among its
+writable places. The hook inherited the tab's `ORCA_TAB_ID` and
+`OBK_TAB_SHELL`, and the `additionalContext` it answered reached the model
+before its next step. Codex trusts each hook entry by its hash, and a new or
+changed one is held for review (Codex's hooks documentation, read
+2026-10-03): without the bypass switch, the same new entry did not run at
+all, and nothing said so.
 
 Orca's word on whether something on a tab's screen wants answering does not
 cover every question a harness asks (#329). Read in the Orca 1.4.212 bundle on
@@ -154,7 +171,8 @@ keeps the name rule: a native harness there is typed into as before, one under
 another name is "cannot tell". A sender inside Codex's sandbox cannot read
 another process's environment, since `ps` does not run there and Orca's
 runtime gives no pid, so from there a program under another name is "cannot
-tell" (#350), while the name rule works through the runtime as before. The
+tell", while the name rule works through the runtime as before; a Codex
+sender's hook then decides it with `ps`, as below (#350). The
 marker is proven: on macOS `ps -E` reads a same-user process's environment
 (#318), and live on Orca 1.4.215 a Claude Code 2.1.283 run as the child of a
 `node` wrapper on the kit's launch-line shape led its tab carrying the mark,
@@ -176,6 +194,20 @@ shell in front (`hasChildProcesses` false) is the shell. Anything else, and
 anything that goes wrong with the call, is "cannot tell". Where `ps` reads the
 tab, Orca's runtime is not asked. The call is given at most 3 seconds and is
 never retried. (The architect, #298; the owner may overrule.)
+
+Where a send from a Codex session, in that session's own tab, cannot tell
+and `ps` could not read the receiver's tab, as inside Codex's sandbox, the
+send types nothing, says so, and leaves the nudge for the session's own
+hook. The kit puts a `PostToolUse` hook for
+Codex's shell tool in a Codex bot's `.codex/hooks.json`, beside its
+SessionStart hook (ADR 0022). Codex runs it outside its sandbox right after
+the command that made the send, and the hook decides the nudge with `ps`, by
+every rule above, and types it, or types nothing and says why. Its answer
+reaches the sender as context. The send leaves the nudge in the system temp
+folder under the tab's id, where both can reach it; each nudge left is
+decided once. Nothing else changes: where the send could decide, it decides,
+and a receiver the hook cannot tell about still gets nothing typed.
+(The architect, #350; the owner may overrule.)
 
 Before the kit types a line into a tab with a harness running in it, it also
 reads the tab's rendered screen with `terminal read --screen`. When the
@@ -250,12 +282,21 @@ architect, #224 and #343; the owner may overrule.)
 - **Opening Codex's sandbox further, or changing the user's Codex config.**
   Out: ADR 0015 already opens the network for Orca, and any further opening is
   the owner's call (#298).
-- **Reading the tab from the harness's hook**, which Codex runs outside its
-  sandbox (tech notes, section 3). Not now: the nudge is typed by the
-  sender's own `obk message send`, which runs where the sender's commands run,
-  and handing it to a hook needs a hook event beside SessionStart and a queue.
-  It is the road for a busy receiver if Orca has not fixed `tty_boundary`
-  when #350 comes up.
+- **Waiting for Orca's fix to `tty_boundary`** (stablyai/orca#23245). The
+  real fix, and outside the repo. Not chosen while it has not shipped: the
+  busy receiver is the usual developer waiting for a review verdict (#350).
+  When it ships, the send decides those tabs itself and the hook finds
+  nothing left.
+- **Codex's `Stop` hook in place of `PostToolUse`.** Not chosen: it runs only
+  when the sender's turn ends, which can be long after the send.
+- **Running the hook with Codex's `async` switch.** Not chosen: its answer
+  could not reach the sender, and the kit says what became of a nudge.
+- **Leaving the nudge in the bot's folder.** Not chosen: that is inside the
+  user's bots repo, where the file would show in their git status; the
+  system temp folder is writable from the sandbox and outside the repo.
+- **Leaving every "cannot tell" for the hook, from any sender.** Not chosen:
+  where `ps` runs, the send's own answer is the one the hook would reach, and
+  only Codex runs this hook.
 - **On `tty_boundary`, taking the tab as the harness's when Orca's hook
   status says one is running there.** Not chosen: that is a guess from hooks
   where #232 asks for the process in front (#298).
@@ -342,15 +383,28 @@ architect, #224 and #343; the owner may overrule.)
   `diagnostics memory` may change. A harness run under another name, such as
   `node`, is nudged when the kit's launch line started it (#261). Such a
   harness in a tab Orca restored by itself carries no mark and stays "cannot
-  tell", and so does such a harness for a sender inside Codex's sandbox, where
-  `ps` does not run and Orca's runtime gives no pid (#350). A native harness
-  in either place is typed into by the name rule, as before.
+  tell", and so does such a harness for a sender inside a sandbox, where
+  `ps` does not run and Orca's runtime gives no pid, unless that sender is a
+  Codex session whose hook decides it with `ps` (#350). A native harness in
+  either place is typed into by the name rule, as before.
 - Good: mail sent from a Codex session at the kit's `auto` level nudges an
   idle receiver, as mail from a Claude session does, and `health`, `restart`,
   the skills reload and grooming read a tab from there too (#298).
-- Bad: not a busy one. A Claude receiver running a command, or holding one in
-  the background, is "cannot tell" from inside the sandbox until Orca reads
-  `??` as no terminal, and its mail waits unannounced (#350).
+- Good: and a busy one. A Claude receiver running a command, or holding one
+  in the background, which Orca's runtime cannot see past, is nudged by the
+  sender's hook right after the send, and so is a harness under another name
+  that the kit's mark shows (#350).
+- Bad: a new hook event. A Codex bot's hooks file gains an entry, and Codex
+  holds a new entry for review: each Codex bot folder asks to review its
+  hooks once more at its next session start after `obk up` writes it, and
+  until that is answered the hook does not run and nothing says so. A
+  session started before `obk up` wrote it does not have it.
+- Bad: a nudge left for a hook that never runs, as in a session whose hooks
+  are not trusted, waits in the temp folder, and the next hook in that tab
+  types it, late. The send says it left it, and the mail waits in the mailbox
+  either way.
+- Bad: Codex runs the hook after every shell command in a Codex session, and
+  each run starts the kit once; one with nothing left does nothing else.
 - Bad: from inside a sandbox, that reading rests on what Orca does not
   publish: `terminal.inspectProcess` and the shape of its answer. If they go
   in a release, a Codex sender is back to "cannot tell" and its mail waits
@@ -403,6 +457,8 @@ architect, #224 and #343; the owner may overrule.)
 - Checked by: `test/harness-in-tab.test.js` for the reading of a tab,
   `test/node-harness-nudge.test.js` for a harness under another name,
   `test/front-without-ps.test.js` for asking Orca's runtime where `ps` cannot,
+  `test/nudge-left-for-hook.test.js` for the nudge a Codex sender leaves for
+  its hook,
   `test/question-on-screen.test.js` for the reading of its screen,
   `test/orca-window.test.js` for the window call, the Force Reload and their
   fallbacks, and the
@@ -446,7 +502,11 @@ architect, #224 and #343; the owner may overrule.)
   has Orca's window force-reload itself through Orca's menu when Orca is the
   front app, in place of the `project.update` call, and prints the reload line
   only when that was not done (#343). It replaced ADR 0024.
-- 2026-09-28, this record: a harness under another name is recognised by the
-  kit's launch mark, read with `ps`, and nudged; such a harness in a restored
-  tab, or for a sender inside Codex's sandbox, stays "cannot tell", while the
-  name rule is unchanged (#261). It replaces ADR 0025.
+- 2026-09-28, [ADR 0031](0031-orca-is-the-host.md): a harness under another
+  name is recognised by the kit's launch mark, read with `ps`, and nudged;
+  such a harness in a restored tab, or for a sender inside Codex's sandbox,
+  stays "cannot tell", while the name rule is unchanged (#261). It replaced
+  ADR 0025.
+- 2026-10-03, this record: a nudge a Codex sender cannot decide inside its
+  sandbox is left for its own `PostToolUse` hook, which decides it with `ps`
+  outside the sandbox (#350). It replaces ADR 0031.

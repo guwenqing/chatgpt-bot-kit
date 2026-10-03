@@ -15,7 +15,8 @@
 // one line into the receiver's tab. Both harnesses queue a typed line while
 // they are busy, which is what PRD 6.9 means by queued and not interrupting.
 
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import { MAILBOX_WAIT_MS, readBook, takeMailboxTurn } from './book.js';
@@ -172,7 +173,7 @@ export function sendMessage(bots, { to: target, from: sender, tab, subject, text
     id: message.id,
     thread: message.thread_id ?? thread,
     file: written.file,
-    ...nudge(to, from, subject),
+    ...nudge(to, from, subject, tab),
   };
 }
 
@@ -452,14 +453,14 @@ const stamp = () => new Date().toISOString().replaceAll(':', '-').replace('.', '
  * it is nobody sending to a session before its first screens are answered,
  * which is the caller's work either way.
  */
-function nudge(to, from, subject) {
+function nudge(to, from, subject, tab) {
   if (to.tab === undefined) return { nudged: false };
 
   try {
     const found = lookAt(to);
     if (found.blocked !== undefined) return { nudged: false, blocked: found.blocked };
     // A line that lands in a shell is run there, with the sender's subject in it.
-    if (found.unsure !== undefined) return { nudged: false, nudgeTrouble: found.unsure };
+    if (found.unsure !== undefined) return { nudged: false, nudgeTrouble: found.unsure, ...(found.psUnread ? leftForHook(to, from, subject, tab) : {}) };
     if (found.handle === undefined) return { nudged: false };
 
     const sent = typeIntoTab(
@@ -483,6 +484,82 @@ function nudge(to, from, subject) {
     // different thing from "Orca would not say".
     return { nudged: false, nudgeTrouble: error.message };
   }
+}
+
+/**
+ * The nudge a Codex sender could not decide, left for its own hook (#350, ADR
+ * 0034): `{ nudgeLeft: true }`, or nothing when it is not left.
+ *
+ * Inside Codex's sandbox `ps` does not start, and for a Claude receiver busy
+ * with a command Orca's runtime cannot see past it either. Codex runs its
+ * hooks outside the sandbox, and the kit's `PostToolUse` hook runs right after
+ * the command that made this send, in the same tab, where `ps` runs. So the
+ * send leaves the nudge where that hook looks, the system temp folder under the
+ * tab's id, which the sandbox lets it write and the hook reads. Only for a
+ * Codex session sending from its own tab, and only where `ps` could not read
+ * the receiver's tab: anywhere else no hook would see it, or would see no more
+ * than the send did.
+ */
+function leftForHook(to, from, subject, tab) {
+  if (tab === undefined || from.tab !== tab || from.harness !== 'codex') return {};
+  try {
+    const dir = leftDir(tab);
+    mkdirSync(dir, { recursive: true });
+    const left = { bots: to.bots, to: `${to.bot}/${to.session}`, from: `${from.bot}/${from.session}`, subject };
+    // Written under a name the hook does not take, then put in place whole: a
+    // hook running beside this send never takes a file still being written.
+    const name = path.join(dir, `${stamp()}.${process.pid}`);
+    writeFileSync(`${name}.writing`, `${JSON.stringify(left)}\n`);
+    renameSync(`${name}.writing`, `${name}.json`);
+    return { nudgeLeft: true };
+  } catch {
+    return {};
+  }
+}
+
+/** Where the nudges left from one tab wait for its hook. */
+const leftDir = (tab) => path.join(os.tmpdir(), 'obk-nudges', encodeURIComponent(tab));
+
+/**
+ * What the kit's Codex hook does after each shell command (#350): decide every
+ * nudge a send in this tab left, oldest first, with the gate the send uses, and
+ * type it or not. Each is taken out before it is looked at, so it is decided
+ * once, by one hook. Returns `{ to, subject, ...what the nudge came to }` for
+ * each, as the send's own answer says it.
+ */
+export function decideLeftNudges(tab) {
+  if (tab === undefined) return [];
+  const dir = leftDir(tab);
+  let names;
+  try {
+    names = readdirSync(dir).filter((name) => name.endsWith('.json')).sort();
+  } catch {
+    return [];
+  }
+  return names.flatMap((name) => {
+    const taking = path.join(dir, `${name}.taking`);
+    // Another hook took it first: it is that hook's to decide, and to remove.
+    try {
+      renameSync(path.join(dir, name), taking);
+    } catch {
+      return [];
+    }
+    let left;
+    try {
+      left = JSON.parse(readFileSync(taking, 'utf8'));
+    } catch {
+      return [];
+    } finally {
+      rmSync(taking, { force: true });
+    }
+    try {
+      const to = findSession(left.bots, left.to);
+      const from = findSession(left.bots, left.from);
+      return [{ to: left.to, subject: left.subject, ...nudge(to, from, left.subject) }];
+    } catch (error) {
+      return [{ to: left.to, subject: left.subject, nudged: false, nudgeTrouble: error.message }];
+    }
+  });
 }
 
 /** Orca's words about a line it did not see start a turn, or what its receipt says when it gives none. */

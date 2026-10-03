@@ -279,7 +279,8 @@ test('I1 up writes the PostToolUse SendMessage hook into a Claude bot\'s setting
   assert.ok(Array.isArray(claude.hooks.SessionStart) && claude.hooks.SessionStart.length > 0, 'beside the SessionStart hook, which stays');
   const codex = await hooksIn(bots, 'web-bot', 'codex');
   assert.ok(codex !== undefined, 'the premise: the Codex bot has its hooks file');
-  assert.ok(!JSON.stringify(codex).includes('session sent') && !('PostToolUse' in (codex.hooks ?? {})), `Codex has no SendMessage, so nothing of it there: ${JSON.stringify(codex)}`);
+  // Codex does get a PostToolUse hook of the kit's, on Bash (#350): not this one.
+  assert.ok(!JSON.stringify(codex).includes('session sent') && sendMessageGroups(codex).length === 0, `Codex has no SendMessage, so nothing of it there: ${JSON.stringify(codex)}`);
 });
 
 test('I1 the installed hook, run as Claude Code runs it, warns about a send outside the books and says nothing about one inside', async (t) => {
