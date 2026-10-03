@@ -14,7 +14,7 @@ work from a later slice into an earlier one.
 
 AssuredLoop keeps this project's requests and spec: before work that changes a promise, read <dir>/skills/assuredloop/SKILL.md and run `al context`.
 
-`<dir>` is a clone of https://github.com/guwenqing/assuredloop at `1ad06f7`. The
+`<dir>` is a clone of https://github.com/guwenqing/assuredloop at `056d24c`. The
 baseline is `docs/prd/` (`.assuredloop`); the decision records are `docs/adr/`.
 Every PR states its tier, in its commit message (`al check` reads it there) and the PR:
 
