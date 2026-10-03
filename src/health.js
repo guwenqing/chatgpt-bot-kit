@@ -322,13 +322,10 @@ function runningOn(bots, home, bot, book, handles, sessions) {
 
     if (rules.state === 'older') {
       const agents = path.join(home, 'AGENTS.md');
-      // A clear on Claude Code reads the instructions again, as a start does
-      // (tech notes, section 2); whether a new conversation on Codex does is
-      // not established, so a start is all that is offered there.
-      const how = harness === 'claude'
-        ? `A Claude Code session reads it again at a /clear in its tab, or when it starts: ${restart}`
-        : `A Codex session reads it when it starts: ${restart}`;
-      found.push(finding('session', agents, `${bot.name}'s session ${session.name} is running on older rules: ${agents} has changed since the kit noted which version this session read. ${how}`, bot.name));
+      // A clear reads the instructions again, as a start does, on both
+      // harnesses (tech notes, sections 2 and 3; #391).
+      const clear = `${shellWord(ownCli())} session clear --bots ${shellWord(bots)} --bot ${bot.name} --session ${session.name}`;
+      found.push(finding('session', agents, `${bot.name}'s session ${session.name} is running on older rules: ${agents} has changed since the kit noted which version this session read. A session reads it again when it is cleared: ${clear}, or when it starts: ${restart}`, bot.name));
     }
   }
   return found;

@@ -364,6 +364,22 @@ conversation it was having, rather than starting a new one. Clear a session —
 keeps the old one, and gives the session its start prompt again, because that
 prompt is what tells one session's duty from another's.
 
+Ask the kit to clear or compact a session, rather than typing into its tab:
+
+```sh
+obk session clear   --bots /path/to/my-bots --bot api-bot --session daily
+obk session compact --bots /path/to/my-bots --bot api-bot --session daily
+```
+
+Each waits up to 30 s for the session to be idle, and types nothing into one
+that is busy or has a question on its screen. It types the harness's own
+command, checks the screen before it presses return, and then confirms the
+result: for a clear, the new conversation in the book; for a compact, the
+compaction in the harness's own record, within 5 minutes, or it says it is not
+confirmed yet. A harness that does not offer `/compact` is told so, and nothing
+is entered. A cleared session reads its `AGENTS.md` again, so a clear also
+brings it onto changed rules.
+
 A session paused before its first turn can have an id in the book and no
 conversation behind it: the harness has nothing on record for that id. There is
 nothing to resume, so it starts again with its duty, and the book moves the id

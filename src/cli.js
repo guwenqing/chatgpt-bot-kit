@@ -23,6 +23,7 @@ import { allowCommand, allowIn, beyondDefaults, refuseBroad, refuseNoCodexForm, 
 import { pauseSessions, unpauseSessions } from './pause.js';
 import { recordSession, SHELL_ENV, TAB_ENV } from './record.js';
 import { restartSessions } from './restart.js';
+import { clearSession, compactSession } from './clear.js';
 import { retireBot, retireSession } from './retire.js';
 import { sentWarning } from './sent.js';
 import { readRoster } from './roster.js';
@@ -204,6 +205,18 @@ Usage:
                             one command that closes a tab, it closes only the
                             tabs your book names, and it will not close one
                             whose conversation the book cannot name.
+  obk session clear --bots <path> --bot <bot> --session <name>
+                            Start the session on a new conversation: /clear on
+                            Claude Code, /new on Codex. It waits up to 30 s for
+                            the session to be idle, types nothing into a busy
+                            one or one with a question on its screen, and
+                            answers once the book holds the new conversation.
+                            The kit's hook gives it its start prompt again.
+  obk session compact --bots <path> --bot <bot> --session <name>
+                            Compact the session's conversation with /compact,
+                            as safely as session clear, and answer once the
+                            harness's record shows it, or after 5 minutes that
+                            it is not confirmed yet.
   obk health --bots <path> [--bot <bot>]
                             Say what is wrong with your setup: configuration
                             that will not work, a skill that is not where its
@@ -296,6 +309,8 @@ const COMMANDS = {
   'source add': ['bots', 'name', 'repo', 'ref'],
   'session add': ['bots', 'bot', 'name'],
   'session change': ['bots', 'bot', 'session'],
+  'session clear': ['bots', 'bot', 'session'],
+  'session compact': ['bots', 'bot', 'session'],
   'message to': ['bots', 'to'],
   'message send': ['bots', 'to', 'subject'],
   'message check': ['bots'],
@@ -1134,6 +1149,28 @@ const commands = {
         ...foundLines(found),
         `A running session takes this when it next starts:  ${restart}`,
       ],
+    };
+  },
+
+  async 'session clear'(bots, values) {
+    refuseWhenOrcaIsDown();
+    const cleared = await clearSession(bots, { bot: values.bot, session: values.session });
+    const after = cleared.was === null ? '' : `, in place of ${cleared.was}`;
+    return {
+      answer: { bots, cleared },
+      lines: [`cleared    ${cleared.bot} ${cleared.session}: the book holds its new conversation ${cleared.now}${after}.`],
+    };
+  },
+
+  async 'session compact'(bots, values) {
+    refuseWhenOrcaIsDown();
+    const compacted = await compactSession(bots, { bot: values.bot, session: values.session });
+    const what = `${compacted.bot} ${compacted.session}`;
+    return {
+      answer: { bots, compacted },
+      lines: [compacted.confirmed
+        ? `compacted  ${what}: the harness's record of its conversation ${compacted.conversation} shows the compaction.`
+        : `asked      ${what} to compact: /compact went in, and after 5 minutes the harness's record shows no compaction, so it is not confirmed yet. Look at its tab.`],
     };
   },
 };

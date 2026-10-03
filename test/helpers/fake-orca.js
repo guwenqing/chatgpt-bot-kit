@@ -12,6 +12,10 @@
 //                the ORCA_TERMINAL_HANDLE of the process that made the call,
 //                the terminal Orca attests it as, and is left out for a call
 //                from a plain shell outside Orca, which has none.
+//   clock.log    one JSON line per call, in the same order: { args, at }, `at`
+//                the time the call reached the fake, in ms since the epoch
+//                (#391: how far apart the kit's keys were sent). Apart from
+//                calls.log so that nothing reading that one sees a new key.
 //
 // state.json, all optional except the lists:
 //   setups      [{ id, projectId, hostId, repoId, path, displayName, kind, ... }]
@@ -112,6 +116,30 @@
 //               a key answers it. That send puts it in place as the terminal's
 //               own `screen` and clears it, so a send after that changes
 //               nothing. Left out, a send leaves the screen as it was.
+//   nextScreens  on one terminal only: a list of screens, one for each of the
+//               next sends, in order: the first `terminal send` puts the first
+//               in place as the terminal's own `screen`, the second send the
+//               second, and so on, each taken off the list as it is used. A
+//               send after the list has run out changes nothing. A screen that
+//               moves on with every key, as a harness's input line and its
+//               menus do while a command is typed, entered and answered (#391).
+//               When a terminal carries both, `screenAfterSend` is used first.
+//               An entry may be `{ screen, tuiIdle }` in place of the rows: it
+//               puts up `screen` and sets the terminal's own `tuiIdle` to what
+//               it says, or takes it away when it says nothing. With `then`,
+//               and `reads` (1 if left out), the screen moves on by itself:
+//               `screen` answers the next `reads` reads of that tab, and
+//               `then` every read after them, until a send moves it on again.
+//               A screen that draws late, after the key that caused it has
+//               gone in (#391: a menu drawn with an at-work row the read
+//               before did not show).
+//   tuiIdle     on one terminal only: what `terminal wait --for tui-idle`
+//               finds in that tab, one of the `waitIdle` words below, in
+//               place of `waitIdle`, which goes on deciding everything else
+//               (who `ps` finds in front, what a send's receipt says). A
+//               screen Orca's tui-idle reads apart from the harness's state:
+//               an open slash popup, worked out on live run 3 of #391 to stop
+//               tui-idle answering ok (not seen). Orca never lists it.
 //   agentIdentity  what `terminal show` and `terminal list` give as every
 //               tab's `agentIdentity`, when the key is there (null included).
 //               Left out, a tab carries its own: null when it is made, and the
@@ -229,7 +257,18 @@
 //               command takes effect at once, in the world the fake keeps,
 //               and only its answer is held back: an Orca that did what it was
 //               asked and then went quiet, so a caller that gave up cannot
-//               know whether it happened.
+//               know whether it happened. With `since: "<other command>"` the
+//               command answers at once until that other command has been
+//               called more than `sinceFrom` times (0 if left out) in all, and
+//               is held back every time after: an Orca that goes quiet once
+//               something has been typed, say, and not before (#391).
+//               `sinceFrom` counts the calls made before the hang was set, so
+//               the ones a test's own setup made do not count.
+//               With `after: n` the first n calls of the command answer at
+//               once, and with `times: n` only n calls are held back, the
+//               first n after those: one late answer among prompt ones. Both
+//               count from `from`, the calls of the command made before the
+//               hang was set (0 if left out).
 //   crash       { command, exitCode, stdout, stderr } — no JSON, a bad exit code
 //   garbage     { command, text } — output that is not JSON at all
 //   runs        [{ id, objective, coordinator_handle, consumer_generation,
@@ -354,6 +393,7 @@ appendFileSync(
   path.join(dir, 'calls.log'),
   `${JSON.stringify({ args, cwd: process.cwd(), caller: process.env.ORCA_TERMINAL_HANDLE })}\n`,
 );
+appendFileSync(path.join(dir, 'clock.log'), `${JSON.stringify({ args, at: Date.now() })}\n`);
 
 let state = JSON.parse(readFileSync(stateFile, 'utf8'));
 // Saved whole or not at all: written beside the file under a name of this
@@ -388,7 +428,7 @@ function write(answer) {
 
 function ok(result) {
   // Whatever the command did is saved by now; only the answer is held back.
-  if (aimedHere(state.hang) && state.hang.applied === true) hangFor(state.hang.ms);
+  if (hangsNow() && state.hang.applied === true) hangFor(state.hang.ms);
   write({ id: `fake-${answered + 1}`, ok: true, result, _meta: { durationMs: 1 } });
   process.exit(0);
 }
@@ -399,6 +439,15 @@ function fail(code, message, data = {}) {
 }
 
 const aimedHere = (spec) => spec != null && (spec.command === undefined || spec.command === '*' || spec.command === command);
+
+/** Whether the `hang` is on for this call: aimed at it, and past its `since`. */
+const hangsNow = () => {
+  if (!aimedHere(state.hang)) return false;
+  if (state.hang.since !== undefined && callsSoFar(state.hang.since) <= (state.hang.sinceFrom ?? 0)) return false;
+  const nth = callsSoFar() - (state.hang.from ?? 0);
+  const after = state.hang.after ?? 0;
+  return nth > after && (state.hang.times === undefined || nth <= after + state.hang.times);
+};
 
 // Real Orca prints human text without --json, and the kit must never read that.
 if (!args.includes('--json')) {
@@ -422,7 +471,7 @@ const hangFor = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0
 
 // An Orca slow to answer: the call waits, then goes on as it would have, on
 // whatever the world holds by then. One that applies first waits in `ok`.
-if (aimedHere(state.hang) && state.hang.applied !== true) {
+if (hangsNow() && state.hang.applied !== true) {
   hangFor(state.hang.ms);
   state = JSON.parse(readFileSync(stateFile, 'utf8'));
 }
@@ -601,7 +650,7 @@ if (command === 'project setup-delete') {
  * a test gave it, which only `terminal read` shows, and what a send into it is
  * seen to do, which only `terminal send` answers.
  */
-const asReported = ({ typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, submit: _submit, refuseClose: _refuseClose, ...rest }) => (rest.orphaned === true
+const asReported = ({ typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, nextScreens: _nextScreens, tuiIdle: _tuiIdle, thenScreen: _thenScreen, readsBeforeThen: _readsBeforeThen, submit: _submit, refuseClose: _refuseClose, ...rest }) => (rest.orphaned === true
   ? { ...rest, ...identity(), tabId: `pty:${rest.ptyId}`, leafId: `pty:${rest.ptyId}`, orphaned: true }
   : { ...rest, ...identity(), orphaned: false });
 
@@ -734,7 +783,7 @@ if (command === 'terminal close') {
 if (command === 'terminal show') {
   const terminal = (state.terminals ?? []).find((entry) => entry.handle === flag('--terminal'));
   if (!terminal) fail('terminal_not_found', `no terminal with handle ${flag('--terminal')}`);
-  const { typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, submit: _submit, refuseClose: _refuseClose, ...rest } = terminal;
+  const { typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, nextScreens: _nextScreens, tuiIdle: _tuiIdle, thenScreen: _thenScreen, readsBeforeThen: _readsBeforeThen, submit: _submit, refuseClose: _refuseClose, ...rest } = terminal;
   ok({ terminal: { ...rest, ...identity(), orphaned: terminal.orphaned === true } });
 }
 
@@ -748,6 +797,16 @@ if (command === 'terminal read') {
   if (!terminal) fail('terminal_not_found', `no terminal with handle ${flag('--terminal')}`);
 
   const tail = terminal.screen ?? state.screen ?? (launchedIn(terminal) === 'codex' ? CODEX_IDLE : CLAUDE_IDLE);
+  // A screen that draws late moves on once its reads are used (`then`, under `nextScreens`).
+  if (terminal.thenScreen !== undefined) {
+    terminal.readsBeforeThen -= 1;
+    if (terminal.readsBeforeThen <= 0) {
+      terminal.screen = terminal.thenScreen;
+      delete terminal.thenScreen;
+      delete terminal.readsBeforeThen;
+    }
+    save();
+  }
   const source = args.includes('--screen') ? (terminal.screenSource ?? state.screenSource ?? 'screen') : 'stream';
   ok({
     terminal: {
@@ -781,9 +840,11 @@ if (command === 'terminal wait') {
 
   // One answer per call when a test gave a list, so a tab can hold a TUI on
   // one look and none on the next; the last entry stands for every call after.
-  const idle = Array.isArray(state.waitIdle)
-    ? state.waitIdle[Math.min(Math.max(callsSoFar() - 1 - (state.waitIdleFrom ?? 0), 0), state.waitIdle.length - 1)]
-    : state.waitIdle;
+  const idle = terminal.tuiIdle !== undefined
+    ? terminal.tuiIdle
+    : Array.isArray(state.waitIdle)
+      ? state.waitIdle[Math.min(Math.max(callsSoFar() - 1 - (state.waitIdleFrom ?? 0), 0), state.waitIdle.length - 1)]
+      : state.waitIdle;
 
   // `tui-idle` asks about a TUI, not about a shell. Seen live: a tab with no
   // TUI in it — a clean zsh prompt — is refused with `timeout`, however long
@@ -841,6 +902,21 @@ if (command === 'terminal send') {
   if (terminal.screenAfterSend !== undefined) {
     terminal.screen = terminal.screenAfterSend;
     delete terminal.screenAfterSend;
+  } else if (Array.isArray(terminal.nextScreens) && terminal.nextScreens.length > 0) {
+    const next = terminal.nextScreens.shift();
+    delete terminal.thenScreen;
+    delete terminal.readsBeforeThen;
+    if (Array.isArray(next)) {
+      terminal.screen = next;
+    } else {
+      terminal.screen = next.screen;
+      if (next.tuiIdle === undefined) delete terminal.tuiIdle;
+      else terminal.tuiIdle = next.tuiIdle;
+      if (next.then !== undefined) {
+        terminal.thenScreen = next.then;
+        terminal.readsBeforeThen = next.reads ?? 1;
+      }
+    }
   }
   // Orca learns which agent is in a tab once it runs there. The fake gives it
   // at once; a test that wants it late says so with `agentIdentity`.

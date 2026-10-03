@@ -210,6 +210,31 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
   input line whenever that is up, and counts a question only when that row is a numbered choice with
   another numbered choice lined up beside it (ADR 0034). Claude Code's trust list does not count; what
   keeps the nudge out of it is Orca naming no agent in that tab. **verified** (live, 2026-09-26)
+  **A slash command typed, and a harness at work (#391).** Seen live on 2026-10-03 in
+  `test/system/session-clear.test.js`, runs 2 to 5 (Claude Code 2.1.288, Codex 0.160.0):
+  - Codex 0.160.0 draws its slash menu above its input line: the selected row starts with `›`
+    (`› /new  start a new chat during a conversation`), the other matches under it, a blank row, then
+    the input line, as its own snapshot tests draw it (`codex-rs/tui/src/bottom_pane/snapshots/`,
+    `*slash_popup_*.snap`, rust-v0.160.0). Orca's `terminal read --screen` shows that input line bare,
+    `›`, while the menu is open: with the command sent whole, a character at a time 100 ms apart, or
+    `/` alone. The snapshots draw the typed text there. Why Orca's read misses it is **not known**. So
+    the kit takes a bare line on Codex only where the session's rollout says `cli_version` `0.160.0`
+    (its `session_meta` line), with the input line empty or its placeholder before the first
+    character, and the menu holding one command row, selected, naming the command; Return with the
+    menu open runs the selected command (`chat_composer.rs`, rust-v0.160.0). Run 5 cleared and
+    compacted a Codex session that way, each confirmed by its record (the architect's ruling on #391).
+  - Orca's `tui-idle` timed out with Codex's menu open, and still after a backspace had closed it. On
+    Claude Code it stayed satisfied with the menu open.
+  - Claude Code 2.1.288 puts a non-breaking space (U+00A0) after its `❯` when the line holds text:
+    `❯\u00a0/clear`. Its slash menu sits above the input box's top rule, a row per command with its
+    description wrapped onto rows set far in, and no pointer marks a selection; with `/clear` typed,
+    `/clear` was its one row.
+  - At work, Codex shows `• Working (5s • esc to interrupt)` or `• Executing requested command (36s •
+    esc to interrupt)`. Claude Code 2.1.288 never showed "esc to interrupt": its row is a spinner
+    glyph, a word ending in `…`, then the time (`✶ Unfurling… (36s · ↓ 131 tokens)`); a finished turn's
+    row has no `…` (`✻ Cooked for 1m 19s · done 3:48 PM`). While a 75 s foreground command ran,
+    `tui-idle` timed out on both harnesses (runs 3 to 5).
+  **verified** (live), but for the cause of the bare line.
   **A handle just listed can be refused as `terminal_handle_stale`, for a moment.** Seen five times
   between 2026-09-24 20:30Z and 2026-09-25 06:40Z (Orca 1.4.209), every time `obk message send`'s
   `terminal wait --for tui-idle` on a Codex review tab (four on `kit-dev/reviewer`, one on
@@ -711,7 +736,7 @@ Proved live on 2026-09-21 (Orca 1.4.205), in throwaway workspaces since removed:
 - `codex queue --thread <id|name> --message <text>` (since 0.149): no official docs page, seems to reach only sessions on a shared app-server daemon, no delivery receipt, no sender identity; a queued row from 12 Sep was still undelivered a week later on this machine. Not trusted; retest. **verified as untrusted**
 - Transcripts: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`, grouped by date, not by project. Lines are `{timestamp,type,payload}`. `session_meta` (id, cwd, context_window); `turn_context` (model, effort, approval_policy); `event_msg/token_count` (`info.last_token_usage`, `info.total_token_usage`, `info.model_context_window`); top-level `compacted` records; `event_msg/turn_aborted` with `reason="interrupted"`; `thread_settings_applied`. There is no `/clear`; a new conversation is a new rollout file. **verified** locally
 - **What a session really runs with, in its rollout.** The latest `turn_context` carries `model`, `effort`, `approval_policy`, `approvals_reviewer` and `sandbox_policy.type`, and the latest `token_count` carries `info.model_context_window`. Seen live on 2026-09-24 (0.156.1, `codex exec` in a throwaway folder): `--approve-for-me`, the kit's `auto`, records `on-request`, `auto_review` and `workspace-write`; `-c model_context_window=200000` records 190000. `-c approval_policy=on-request`, the setting the kit's `-a on-request` gives (from `codex --help`; `codex exec` has no `-a`), records `on-request` with this machine's own `approvals_reviewer = "auto_review"` and `sandbox_mode = "danger-full-access"` from `~/.codex/config.toml`. So on this machine an `ask` session's approvals go to Codex's automatic reviewer, not to the user: the user's defaults leak in, and health reports it. **verified** (live). That `--dangerously-bypass-approvals-and-sandbox` records `never` and `danger-full-access` is **unverified**: its help says it skips every prompt and the sandbox, and the pair is on this machine's rollouts, but no run tied them (a throwaway run was refused, as in section 2).
-- **Whether a new conversation (`/new`) reads `AGENTS.md` again is not established.** Nothing like Claude Code's `instructions` attachment has been checked for it. Until it is, only a start (`obk restart`) is said to bring a Codex session onto changed rules. **unverified**
+- **A new conversation (`/new`) reads `AGENTS.md` again.** On 0.157.1 the new rollout's first turn carried an `AGENTS.md instructions` message holding text added before the `/new` (assuredloop/reviewer, 2026-09-27, in #391's thread). On 0.160.0, `obk session clear` on a Codex session after a charter change gave a new rollout whose `AGENTS.md instructions` message held the added line (#391, live run 5, 2026-10-03). So the kit stamps the rules when its hook hears a Codex clear, a new id in the same tab, as it does for Claude Code's `/clear`, and `obk health` offers `obk session clear` for a session on older rules. **verified** (live, 0.157.1 and 0.160.0)
 - **Neither summing `last_token_usage` nor taking the final `total_token_usage` is right.** `total_token_usage` is a running total, so adding it up across events double counts: a conversation that used 80,565 came to 200,901 that way. But the two obvious repairs each fail on real data, and both failures were found in a review of this note's first version, which claimed summing the lasts was safe:
   - **A record can be repeated.** Two adjacent events can carry an identical positive `last_token_usage` while `total_token_usage` does not move; the second is the same call written down again. 128 such pairs in 250 rollouts on this machine. Summing the lasts counts those twice.
   - **The running total can reset.** Mid-conversation it can drop back and start again, a new window; 26 such resets in the same 250. Taking the final `total_token_usage` then reports only the last window. One conversation's true total was 2,854,977 across two windows and its final cumulative said 1,489,245.
@@ -741,6 +766,6 @@ Agent Skills spec: `name` is 1–64 chars, lowercase letters, digits and hyphens
 6. `codex queue` retest.
 7. ~~An Orca tab id is still the same after Orca restarts.~~ **verified by observation** (2026-09-22 reboot, see section 1); a deliberate restart test is still owed if the owner wants one (#176).
 8. That `dangerously-skip` records `bypassPermissions` on Claude Code and `never` with `danger-full-access` on Codex (sections 2 and 3, #271).
-9. Whether Codex reads `AGENTS.md` again at `/new` (section 3, #271).
+9. ~~Whether Codex reads `AGENTS.md` again at `/new` (section 3, #271).~~ **done** (2026-10-03, #391): it does, on 0.157.1 and 0.160.0; see section 3.
 10. ~~That `claude --resume <id> -n <other name>` gives the conversation the new name.~~ **done** (2026-09-25, by the owner, #319): it does; see section 2.
 11. ~~Grooming on Claude Code's scheduler (#237), in `test/system/groom.test.js`.~~ **done** (2026-09-26, run 5 passed end to end): see section 2. Still owed: that Orca's own cold restore runs a bare `claude --resume <id>`.

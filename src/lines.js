@@ -25,18 +25,21 @@ const LONGEST = 64 * 1024 * 1024;
 /**
  * Each line of `file`, in order, to `onLine`: its text, or `undefined` for a
  * line too long to hold. A line `onLine` answers `true` to is the last one
- * read. Throws what the file system throws when the file cannot be opened or
- * read.
+ * read. With `from`, reading starts at that byte, for a caller that wants only
+ * what was written after it (#391). Throws what the file system throws when
+ * the file cannot be opened or read.
  */
-export function eachLine(file, onLine) {
+export function eachLine(file, onLine, { from = 0 } = {}) {
   const fd = openSync(file, 'r');
   try {
     const decoder = new StringDecoder('utf8');
     const buffer = Buffer.allocUnsafe(CHUNK);
     let pending = '';
     let tooLong = false;
+    let position = from;
     for (;;) {
-      const read = readSync(fd, buffer, 0, CHUNK, null);
+      const read = readSync(fd, buffer, 0, CHUNK, position);
+      position += read;
       const text = read === 0 ? decoder.end() : decoder.write(buffer.subarray(0, read));
       let start = 0;
       for (let at = text.indexOf('\n'); at !== -1; at = text.indexOf('\n', start)) {

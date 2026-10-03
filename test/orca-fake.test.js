@@ -640,6 +640,96 @@ test('the fake can be slow to answer one command, and then answers it as it woul
   assert.equal(slow.result.runtime.reachable, true);
 });
 
+test('a screen the fake puts up at a send can draw late: it answers that many reads, then moves on by itself (#391)', async (t) => {
+  const box = await createSandbox(t);
+  await twoTabs(box);
+  const early = ['❯ /clear'];
+  const late = ['  /clear  Start a new session', '❯ /clear'];
+  const next = ['❯'];
+  await box.orca.set({
+    terminals: (await box.orca.terminals()).map((terminal) => (terminal.handle === 'term_a'
+      ? { ...terminal, nextScreens: [{ screen: early, then: late, reads: 2 }, next] }
+      : terminal)),
+  });
+  const read = (on) => answer(ask(box, ['terminal', 'read', '--terminal', on, '--screen', '--json'])).result.terminal.tail;
+
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_a', '--text', 'r', '--json']));
+  const listed = answer(ask(box, ['terminal', 'list', '--json'])).result.terminals.find((one) => one.handle === 'term_a');
+  assert.equal('thenScreen' in listed || 'readsBeforeThen' in listed, false, 'Orca never lists the screen to come');
+  assert.deepEqual(read('term_b'), CLAUDE_IDLE, 'a read of another tab uses none of its reads');
+  assert.deepEqual([read('term_a'), read('term_a')], [early, early], 'the first two reads find the screen as it was put up');
+  assert.deepEqual([read('term_a'), read('term_a')], [late, late], 'every read after them finds it drawn');
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_a', '--text', '\r', '--json']));
+  assert.deepEqual(read('term_a'), next, 'and a send moves it on as ever');
+});
+
+test('a screen the fake puts up at a send can carry what tui-idle finds in that tab, until a screen that says nothing takes it away (#391)', async (t) => {
+  // An open slash popup that stops Orca's tui-idle answering ok, worked out
+  // on live run 3 of #391: the screen and the answer move on together.
+  const box = await createSandbox(t);
+  await twoTabs(box);
+  const popup = ['› /new  start a new chat during a conversation', '', '› /'];
+  const closed = ['› Ask Codex to do anything'];
+  await box.orca.set({
+    terminals: (await box.orca.terminals()).map((terminal) => (terminal.handle === 'term_a'
+      ? { ...terminal, nextScreens: [{ screen: popup, tuiIdle: 'busy' }, { screen: closed }] }
+      : terminal)),
+  });
+  const wait = (on) => JSON.parse(ask(box, ['terminal', 'wait', '--terminal', on, '--for', 'tui-idle', '--json']).stdout);
+  const read = (on) => answer(ask(box, ['terminal', 'read', '--terminal', on, '--screen', '--json'])).result.terminal.tail;
+
+  assert.equal(wait('term_a').ok, true, 'idle before any key');
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_a', '--text', '/', '--json']));
+  assert.deepEqual(read('term_a'), popup, 'the first key puts up the popup');
+  assert.equal(wait('term_a').error?.code, 'timeout', 'and tui-idle no longer answers ok there');
+  assert.equal(wait('term_b').ok, true, 'while the other tab answers as ever');
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_a', '--text', '\x7f', '--json']));
+  assert.deepEqual(read('term_a'), closed, 'the next key closes it');
+  assert.equal(wait('term_a').ok, true, 'and tui-idle answers ok again');
+  const listed = answer(ask(box, ['terminal', 'list', '--json'])).result.terminals.find((one) => one.handle === 'term_a');
+  assert.equal('tuiIdle' in listed, false, 'Orca never lists it');
+});
+
+test('the fake can be slow to answer one command only once another has been called, counting from when it was told (#391)', async (t) => {
+  // A screen that reads at once until a key is sent, and hangs after.
+  const box = await createSandbox(t);
+  await twoTabs(box);
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_a', '--text', 'before', '--json']));
+  await box.orca.set({ hang: { command: 'terminal read', ms: 5000, since: 'terminal send', sinceFrom: 1 } });
+  const timedRead = () => {
+    const started = Date.now();
+    const read = answer(ask(box, ['terminal', 'read', '--terminal', 'term_a', '--screen', '--json']));
+    return { took: Date.now() - started, read };
+  };
+
+  const quick = timedRead();
+  assert.ok(quick.took < 5000, `a send made before the hang was set does not count, took ${quick.took} ms`);
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_a', '--text', 'after', '--json']));
+  const slow = timedRead();
+  assert.ok(slow.took >= 5000, `once a send is made, the read waits, took ${slow.took} ms`);
+  assert.equal(slow.read.ok, true, 'and then answers as ever');
+  const status = Date.now();
+  answer(ask(box, ['status', '--json']));
+  assert.ok(Date.now() - status < 5000, 'and another command is not held');
+});
+
+test('the fake can hold back one answer of a command among prompt ones: the nth, counting from when it was told (#391)', async (t) => {
+  const box = await createSandbox(t);
+  await twoTabs(box);
+  answer(ask(box, ['terminal', 'read', '--terminal', 'term_a', '--screen', '--json']));
+  await box.orca.set({ hang: { command: 'terminal read', ms: 5000, after: 1, times: 1, from: 1 } });
+  const took = () => {
+    const started = Date.now();
+    assert.equal(answer(ask(box, ['terminal', 'read', '--terminal', 'term_a', '--screen', '--json'])).ok, true);
+    return Date.now() - started;
+  };
+
+  const [first, second, third] = [took(), took(), took()];
+  assert.ok(first < 5000, `the first read since it was told is not held, took ${first} ms`);
+  assert.ok(second >= 5000, `the second is, took ${second} ms`);
+  assert.ok(third < 5000, `and the third is not, took ${third} ms`);
+});
+
 test('the fake can do what a command asks and then hold its answer back', async (t) => {
   // The case a caller that gives up on Orca cannot see into: the Run is made,
   // and nobody is told so.
@@ -673,6 +763,21 @@ test('the fake records every call, in order, with what it was asked', async (t) 
     { args: ['status', '--json'], cwd: box.cwd },
     { args: ['project', 'setups', '--json'], cwd: box.cwd },
   ]);
+});
+
+test('the fake writes down when each call reached it, in the same order, apart from the calls themselves (#391)', async (t) => {
+  const box = await createSandbox(t);
+
+  const before = Date.now();
+  ask(box, ['status', '--json']);
+  await new Promise((resolve) => { setTimeout(resolve, 300); });
+  ask(box, ['project', 'setups', '--json']);
+  const after = Date.now();
+
+  const clock = await box.orca.clock();
+  assert.deepEqual(clock.map((one) => one.args), (await box.orca.calls()).map((one) => one.args), 'one entry per call, in the order of the calls');
+  assert.ok(clock[0].at >= before && clock[1].at <= after, `each time is when the call was made: ${JSON.stringify(clock)}`);
+  assert.ok(clock[1].at - clock[0].at >= 300, `and the two are as far apart as the calls were: ${JSON.stringify(clock)}`);
 });
 
 // The mailbox's binding rules, as Orca 1.4.209 was seen to keep them (issue
@@ -1136,6 +1241,41 @@ test('the fake can move one tab\'s screen on at the next key sent into it, and a
   const showed = answer(ask(box, ['terminal', 'show', '--terminal', 'term_a', '--json'])).result.terminal;
   for (const [what, entry] of [['list', listed], ['show', showed]]) {
     assert.equal('screenAfterSend' in entry, false, `Orca shows a screen only through read, not in ${what}`);
+  }
+});
+
+test('the fake can move one tab\'s screen on at each of the next keys sent into it, in order, and then no more (#391)', async (t) => {
+  // A command typed, checked on screen, entered and its menu answered: the
+  // screen moves on at every send, and the kit reads it between them.
+  const box = await createSandbox(t);
+  await twoTabs(box);
+  const before = ['› Ask Codex to do anything'];
+  const typed = ['› /new', '  /new  start a new chat'];
+  const menu = ['  Where should the new conversation run?', '› 1. Current checkout', '  2. New worktree'];
+  const fresh = ['› Ask Codex to do anything', '  a new conversation'];
+  await box.orca.set({
+    terminals: (await box.orca.terminals()).map((terminal) => (terminal.handle === 'term_a' ? { ...terminal, screen: before, nextScreens: [typed, menu, fresh] } : terminal)),
+  });
+  const read = (on) => answer(ask(box, ['terminal', 'read', '--terminal', on, '--screen', '--json'])).result.terminal.tail;
+
+  assert.deepEqual(read('term_a'), before, 'until a key is sent, the screen it has');
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_b', '--text', 'x', '--json']));
+  assert.deepEqual(read('term_a'), before, 'a key sent into another tab moves nothing here');
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_a', '--text', '/new', '--json']));
+  assert.deepEqual(read('term_a'), typed, 'the first key sent into it puts up the first screen');
+  assert.deepEqual(read('term_a'), typed, 'and a second read without a send shows the same');
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_a', '--text', '\r', '--json']));
+  assert.deepEqual(read('term_a'), menu, 'the second key, the second screen');
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_a', '--text', '\r', '--json']));
+  assert.deepEqual(read('term_a'), fresh, 'the third key, the third');
+  answer(ask(box, ['terminal', 'send', '--terminal', 'term_a', '--text', 'y', '--json']));
+  assert.deepEqual(read('term_a'), fresh, 'and once the list has run out, it stays there');
+  assert.deepEqual(read('term_b'), CLAUDE_IDLE, 'the other tab kept its own screen throughout');
+
+  const listed = answer(ask(box, ['terminal', 'list', '--json'])).result.terminals.find((one) => one.handle === 'term_a');
+  const showed = answer(ask(box, ['terminal', 'show', '--terminal', 'term_a', '--json'])).result.terminal;
+  for (const [what, entry] of [['list', listed], ['show', showed]]) {
+    assert.equal('nextScreens' in entry, false, `Orca shows a screen only through read, not in ${what}`);
   }
 });
 

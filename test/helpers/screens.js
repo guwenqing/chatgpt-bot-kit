@@ -397,6 +397,303 @@ export const FORM_IN_HISTORY = [
   ...CLAUDE_INPUT_LINE,
 ];
 
+// A harness's own command typed into its input line and not entered yet, and
+// a harness at work (#391). Where a screen is a live capture it says so; the
+// rest are reconstructions on the captured CLAUDE_ANSWERED or CODEX_ANSWERED,
+// with the rows around the command made up here on the layout live run 4
+// showed.
+
+/** Claude Code's screen down to its input box: CLAUDE_ANSWERED's header, its answered turn. */
+const CLAUDE_ABOVE_INPUT = CLAUDE_ANSWERED.slice(0, 7);
+
+// Claude Code 2.1.288, as live run 4 of #391 showed it: the input line puts a
+// non-breaking space (U+00A0) after its pointer, `❯\u00a0/clear`; the slash
+// menu is drawn ABOVE the input box's top rule, one command a row, a long
+// description wrapped onto a row of its own lined up under the description,
+// and no pointer marks a selection. With "/" alone typed, the menu showed only
+// part of the list. Orca's tui-idle stayed ok with the menu open. The rules
+// were relayed shortened ("──────…──"); here they are drawn full width, as in
+// the captures above.
+
+/** The top rule of the live run's Claude bot's input box, carrying its session's name. */
+const CLAUDE_LIVE_RULE = `${'─'.repeat(92)} clear-claude.daily.drqpadex ─`;
+
+/** Its bottom rule. */
+const CLAUDE_RULE = '─'.repeat(120);
+
+/** Its foot row, as live run 4 showed it. */
+const CLAUDE_LIVE_FOOT = '  ⏵⏵ auto mode on (shift+tab to cycle)';
+
+/** Claude Code 2.1.288 with `menu` drawn above its input box and `input` as its input line. */
+const claudeMenuAbove = (menu, input) => [...CLAUDE_ABOVE_INPUT, ...menu, CLAUDE_LIVE_RULE, input, CLAUDE_RULE, CLAUDE_LIVE_FOOT];
+
+/** Claude Code's input line reading `text`, with the non-breaking space after its pointer, as 2.1.288 draws it. */
+const claudeInput = (text) => `❯\u00a0${text}`;
+
+/** Claude Code's menu rows for `/clear`, word for word as live run 4 showed them: the command, its description wrapped. */
+const CLAUDE_CLEAR_ROWS = [
+  '  /clear                                          Start a new session with empty context; previous session stays on',
+  '                                                  disk (resumable with /resume)',
+];
+
+/** Claude Code's menu row for `/compact`, laid out as /clear's; the words are made up. */
+const CLAUDE_COMPACT_ROWS = ['  /compact                                        Clear conversation history but keep a summary in context'];
+
+/** Claude Code's menu rows for "/" alone, part of the list as live run 4 showed it; the descriptions are made up. */
+const CLAUDE_SLASH_ROWS = [
+  '  /systematic-validation                          Validate code or docs against explicit design docs, requirements,',
+  '                                                  test specs, CLAUDE.md, or AGENTS.md standards',
+  '  /claude-api                                     Reference for the Claude API / Anthropic SDK: model ids, pricing,',
+  '                                                  params, streaming, tool use',
+];
+
+/**
+ * `/clear` typed into Claude Code 2.1.288's empty input line, its menu above
+ * the box with `/clear` its first and only command row. From the menu down, a
+ * live capture (live run 4 of #391), the rules drawn full width; the header
+ * above is CLAUDE_ANSWERED's.
+ */
+export const CLAUDE_CLEAR_TYPED = claudeMenuAbove(CLAUDE_CLEAR_ROWS, claudeInput('/clear'));
+
+/**
+ * `/clear` typed after a draft that was already in the input line, so the line
+ * reads the draft and the command together; the menu above is drawn as for the
+ * command alone, so only the input line is wrong. A reconstruction.
+ */
+export const CLAUDE_CLEAR_AFTER_DRAFT = claudeMenuAbove(CLAUDE_CLEAR_ROWS, claudeInput('fix the flaky test/clear'));
+
+/**
+ * `/clear` typed, and the menu's first command row above the box a command
+ * whose name only starts with it, `/clear` itself second. A reconstruction: no
+ * such command was seen.
+ */
+export const CLAUDE_CLEAR_OTHER_FIRST = claudeMenuAbove([
+  '  /clear-history                                  Remove the prompt history',
+  ...CLAUDE_CLEAR_ROWS,
+], claudeInput('/clear'));
+
+/** `/clear` typed, and no menu at all above the input box: its foot row under it as when idle. A reconstruction. */
+export const CLAUDE_CLEAR_NO_MENU = claudeMenuAbove([], claudeInput('/clear'));
+
+/**
+ * `/clear` typed, and the menu drawn UNDER the input box, none above it: the
+ * layout the kit read before live run 4, which Claude Code 2.1.288 does not
+ * draw. A reconstruction.
+ */
+export const CLAUDE_CLEAR_MENU_BELOW = [...CLAUDE_ABOVE_INPUT, CLAUDE_LIVE_RULE, claudeInput('/clear'), CLAUDE_RULE, ...CLAUDE_CLEAR_ROWS];
+
+/** `/compact` typed into Claude Code's empty input line, its menu above with `/compact` first. A reconstruction on the live layout. */
+export const CLAUDE_COMPACT_TYPED = claudeMenuAbove(CLAUDE_COMPACT_ROWS, claudeInput('/compact'));
+
+/**
+ * Claude Code at work on a turn, its empty input line below: the row above the
+ * box says how to interrupt it, here with a capital E, as either harness may
+ * write it. Orca's `tui-idle` can call a harness like this idle (tech notes,
+ * section 1). A reconstruction.
+ */
+export const CLAUDE_WORKING = [
+  ...CLAUDE_ABOVE_INPUT.slice(0, 5),
+  '✻ Thinking… (12s · ↓ 300 tokens · Esc to interrupt)',
+  ...CLAUDE_INPUT_LINE,
+];
+
+/** Codex's screen down to its input line: CODEX_ANSWERED's box, its answered turn and the tip. */
+const CODEX_ABOVE_INPUT = CODEX_ANSWERED.slice(0, 12);
+
+/** Codex's status rows under its input line, as captured in CODEX_ANSWERED. */
+const CODEX_STATUS = CODEX_ANSWERED.slice(13);
+
+/** Codex with `input` as its input line and `below` under it. */
+const codexWith = (input, below) => [...CODEX_ABOVE_INPUT, input, ...below];
+
+/**
+ * Codex 0.160.0 at its idle input line with nothing in it, not even its
+ * placeholder: CODEX_IDLE with the input line a bare `›`. A reconstruction.
+ */
+export const CODEX_IDLE_EMPTY = CODEX_IDLE.map((row) => (row === '› Ask Codex to do anything' ? '›' : row));
+
+// Codex 0.160.0, as live run 4 of #391 showed it: the slash popup is drawn
+// ABOVE the input line, its selected row with Codex's pointer, and Orca's
+// screen read never shows the composer's text while the popup is open, even
+// with only "/" typed: the input line reads `›` alone. With "/new" typed, the
+// popup is filtered down to `/new`'s row. Orca's tui-idle times out with the
+// popup open, and stayed out after a backspace. Codex's own snapshot test at
+// tag rust-v0.160.0 (codex-rs/tui/src/bottom_pane/snapshots/
+// codex_tui__bottom_pane__chat_composer__tests__slash_popup_res.snap) draws the
+// popup above a line that does show the text: "› /resume  resume a saved
+// chat", "", "› /res", "", "  100% context left". Where a screen below is a
+// live capture it says so; above the popup it is CODEX_ANSWERED's box and
+// answered turn, a reconstruction.
+
+/** Codex's screen above a popup: CODEX_ANSWERED's box and its answered turn. */
+const CODEX_ABOVE_POPUP = CODEX_ANSWERED.slice(0, 11);
+
+/** Codex's status row as live run 4 showed it, the folder as Codex shortened it. */
+const CODEX_LIVE_STATUS = '  GPT-6-Luna medium · /private/var/folders/…/bots/clear…';
+
+/** Codex's popup row for each command the kit types, selected, word for word as seen live for /new. */
+const CODEX_ROWS = {
+  '/new': '› /new  start a new chat during a conversation',
+  '/compact': '› /compact  summarize conversation to prevent hitting the context limit',
+};
+
+/** Codex with `popup` above its input line, a blank row between, and `input` as the line, as live run 4 showed it. */
+const codexPopup = (popup, input = '›') => [...CODEX_ABOVE_POPUP, ...popup, '', input, CODEX_LIVE_STATUS];
+
+/**
+ * "/" alone typed into Codex 0.160.0: the popup lists every command, `/model`
+ * selected, and the input line reads `›` alone. From the popup down, a live
+ * capture (live run 4), partial: the rows between `/fast` and `/approve` were
+ * not relayed, nor `/approve`'s description, nor whether a blank row came
+ * before the input line.
+ */
+export const CODEX_SLASH_TYPED = [
+  ...CODEX_ABOVE_POPUP,
+  '› /model         choose what model and reasoning effort to use',
+  '  /fast          1.5x speed',
+  '  /approve …',
+  '›',
+  CODEX_LIVE_STATUS,
+];
+
+/**
+ * `/new` typed into Codex 0.160.0: the popup filtered down to `/new`'s row,
+ * selected, a blank row, and the input line `›` alone. From the popup down, a
+ * live capture (live run 4).
+ */
+export const CODEX_NEW_TYPED = codexPopup([CODEX_ROWS['/new']]);
+
+/**
+ * `/new` typed, the popup as in CODEX_NEW_TYPED, and the input line showing
+ * the text, `› /new`, as Codex's own snapshot draws it. A reconstruction.
+ */
+export const CODEX_NEW_TYPED_SHOWN = codexPopup([CODEX_ROWS['/new']], '› /new');
+
+/**
+ * `/new` typed, and the input line left bare: the popup above it shows `/new`
+ * selected, and the line itself reads `›` alone. A live capture (live run 2 of
+ * #391, Codex 0.160.0), partial: the rows the kit's refusal printed, its last
+ * rows with the blank ones dropped, the folder as Codex shortened it. The line
+ * stayed bare for 3 s. The same layout as CODEX_NEW_TYPED but for the blank row.
+ */
+export const CODEX_NEW_BARE_INPUT = [
+  '• DONE',
+  '  Worked for 1m 18s • 10:33 AM',
+  '› /new  start a new chat during a conversation',
+  '›',
+  '  GPT-6-Luna medium · /private/var/folders/…/bots/clear…',
+];
+
+/**
+ * `/new` typed, and the popup's selected row another command. A reconstruction
+ * made up to test the rule: no such screen was seen.
+ */
+export const CODEX_NEW_OTHER_SELECTED = codexPopup(['› /model         choose what model and reasoning effort to use']);
+
+/**
+ * `/new` typed, and the popup not filtered down to it: a second command row
+ * above `/new`'s, which is selected and sits nearest the input line. A
+ * reconstruction made up to test the rule.
+ */
+export const CODEX_NEW_TWO_ROWS = codexPopup(['  /model         choose what model and reasoning effort to use', CODEX_ROWS['/new']]);
+
+/** The same popup over an input line that shows the text, `› /new`. A reconstruction made up to test the rule. */
+export const CODEX_NEW_TWO_ROWS_SHOWN = codexPopup(['  /model         choose what model and reasoning effort to use', CODEX_ROWS['/new']], '› /new');
+
+/**
+ * `/new` typed, and no popup at all: Codex's status rows under the line as
+ * when idle, and above it only the echo of the last turn. A reconstruction.
+ */
+export const CODEX_NEW_NO_MENU = codexWith('› /new', CODEX_STATUS);
+
+/**
+ * Codex's `/new` menu with its selection moved down to `2. New worktree`:
+ * CODEX_NEW_MENU with the pointer moved, a reconstruction.
+ */
+export const CODEX_NEW_MENU_ON_TWO = CODEX_NEW_MENU.map((row) => {
+  if (row.startsWith('› 1. Current checkout')) return `  ${row.slice(2)}`;
+  if (row.startsWith('  2. New worktree')) return `› ${row.slice(2)}`;
+  return row;
+});
+
+/** `/compact` typed into Codex 0.160.0, its popup filtered to `/compact`, selected, the input line bare. A reconstruction on the live layout. */
+export const CODEX_COMPACT_TYPED = codexPopup([CODEX_ROWS['/compact']]);
+
+/**
+ * `/compact` typed into a Codex that has no such command: its popup finds
+ * nothing to offer, so no row of it is selected. A reconstruction.
+ */
+export const CODEX_COMPACT_NOT_OFFERED = codexPopup(['  no matches']);
+
+/** Claude Code's menu rows for each command the kit types. */
+const CLAUDE_ROWS = { '/clear': CLAUDE_CLEAR_ROWS, '/compact': CLAUDE_COMPACT_ROWS };
+
+/**
+ * What the harness shows after each character of `command` but the last, as
+ * the kit types it one character a send (#391), on the layout live run 4
+ * showed. Claude Code: the typed part in the input line, after its
+ * non-breaking space, and above the box the part of the list "/" shows, then
+ * the command's own rows. Codex: the input line `›` alone, and above it the
+ * whole list for "/", then the command's own row. One screen per send, for the
+ * fake Orca's `nextScreens`; the screen after the last character is the test's
+ * to give. Reconstructions, but for "/" on Codex, which is CODEX_SLASH_TYPED.
+ */
+export function whileTyping(harness, command) {
+  return [...command].slice(0, -1).map((_, at) => {
+    const typed = command.slice(0, at + 1);
+    if (harness === 'codex') return typed === '/' ? CODEX_SLASH_TYPED : codexPopup([CODEX_ROWS[command]]);
+    return claudeMenuAbove(typed === '/' ? CLAUDE_SLASH_ROWS : CLAUDE_ROWS[command], claudeInput(typed));
+  });
+}
+
+/**
+ * Codex at work on a turn, its empty input line below: the row above it says
+ * how to interrupt it, in lower case. Orca's `tui-idle` called Codex busy like
+ * this idle (tech notes, section 1). A reconstruction.
+ */
+export const CODEX_WORKING = [
+  ...CODEX_ABOVE_INPUT.slice(0, 9),
+  '• Working (12s • esc to interrupt)',
+  '',
+  '› Ask Codex to do anything',
+  ...CODEX_STATUS,
+];
+
+// The harness's own at-work marker, as seen live (#391, the architect's
+// ruling after live run 3). Codex: a row with "esc to interrupt", here as live
+// run 3 showed it, "• Working (8s • esc to interrupt)". Claude Code 2.1.288:
+// its spinner status row, a glyph, a word ending in "…", then "(" and a time,
+// as live run 2 showed it, "✳ Nucleating… (1m 8s · ↓ 131 tokens)"; it shows
+// no "esc to interrupt". A finished row, such as CLAUDE_ANSWERED's "✻ Cooked
+// for 1s · done 4:14 AM", is no marker. The words of both rows are live; the
+// screens around them are reconstructions on the captures above.
+
+/** Claude Code 2.1.288's spinner row while it works, word for word as seen on live run 2. */
+const CLAUDE_SPINNER_ROW = '✳ Nucleating… (1m 8s · ↓ 131 tokens)';
+
+/** Codex's at-work row, word for word as seen on live run 3. */
+const CODEX_WORKING_ROW = '• Working (8s • esc to interrupt)';
+
+/**
+ * Claude Code 2.1.288 at work, its empty input line below: its spinner row and
+ * nothing that says "esc to interrupt". Orca's tui-idle may still answer ok. A
+ * reconstruction on the live row.
+ */
+export const CLAUDE_AT_WORK = [...CLAUDE_ABOVE_INPUT.slice(0, 5), CLAUDE_SPINNER_ROW, ...CLAUDE_INPUT_LINE];
+
+/**
+ * The harness at work, with `typed` (part or all of `command`) typed, on the
+ * layout live run 4 showed: what the screen shows when the harness starts
+ * working partway through the kit's typing, or just before its return, every
+ * row but the at-work one as it would be with the harness idle. A
+ * reconstruction on the live rows.
+ */
+export function atWork(harness, typed, command) {
+  return harness === 'codex'
+    ? [...CODEX_ABOVE_POPUP.slice(0, 9), CODEX_WORKING_ROW, '', CODEX_ROWS[command], '', '›', CODEX_LIVE_STATUS]
+    : [...CLAUDE_ABOVE_INPUT.slice(0, 5), CLAUDE_SPINNER_ROW, ...(typed === '/' ? CLAUDE_SLASH_ROWS : CLAUDE_ROWS[command]), CLAUDE_LIVE_RULE, claudeInput(typed), CLAUDE_RULE, CLAUDE_LIVE_FOOT];
+}
+
 /** A row the pointer starts, whatever follows it: a choice, the input line, or an echoed turn. */
 const POINTER_ROW = /^ *[›❯]/;
 
@@ -465,6 +762,37 @@ export function waitingOn(orca, handle) {
   return question === undefined
     ? undefined
     : ` The tab is waiting on a question of its harness's own, and this test answers none:\n    ${question.join('\n    ')}`;
+}
+
+/** The title of Claude Code's "Teach auto mode" form (#416). */
+const TEACH_TITLE = 'Teach auto mode about your environment?';
+
+/** A form row with its pointer, wherever it sits, taken out: `❯ Continue` reads as `Continue`. */
+const unpointed = (row) => row.replace('❯', ' ').trim();
+
+/**
+ * Whether Claude Code's "Teach auto mode about your environment?" form on a
+ * tab's rendered `rows` is the captured one and nothing else, the one a system
+ * test may answer with Esc in its own throwaway tab (the architect's ruling
+ * on #391 after live run 3): undefined when it may, or why not. Every
+ * non-blank row from the form's title down is a row of CLAUDE_TEACH_FORM from
+ * its title down, the pointer `❯` on exactly one of them, on whichever row
+ * it sits; nothing is missing and nothing is added. A row not on that list is
+ * refused by name. See test/teach-form.test.js.
+ */
+export function onlyTeachFormOf(rows) {
+  const from = rows.findIndex((row) => row.trim() === TEACH_TITLE);
+  if (from < 0) return `it has no "${TEACH_TITLE}" row, so it is not the form captured as CLAUDE_TEACH_FORM`;
+  const seen = rows.slice(from).filter((row) => row.trim() !== '');
+  const captured = CLAUDE_TEACH_FORM.slice(CLAUDE_TEACH_FORM.findIndex((row) => row.trim() === TEACH_TITLE)).filter((row) => row.trim() !== '');
+  const pointers = seen.filter((row) => row.includes('❯')).length;
+  if (pointers !== 1) return `it has ${pointers} rows with the pointer ❯, where the captured form has one`;
+  const odd = seen.find((row) => !captured.map(unpointed).includes(unpointed(row)));
+  if (odd !== undefined) return `it carries a row the captured form does not, which this test has no ruling for: ${odd.trim()}`;
+  const missing = captured.find((row) => !seen.map(unpointed).includes(unpointed(row)));
+  if (missing !== undefined) return `it lacks a row the captured form has: ${missing.trim()}`;
+  if (seen.length !== captured.length) return `it has ${seen.length} rows from its title down, where the captured form has ${captured.length}`;
+  return undefined;
 }
 
 /**

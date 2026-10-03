@@ -368,8 +368,9 @@ already up even when a skill change would, and a session's model, effort or
 approval only changes when it is started again (`obk restart`, on the user's
 word, and then read its tabs as above). Say which you changed, and what that
 means for the sessions running now. `obk health` names each running session
-still on the older rules or on other settings, and what brings it up to date: on
-Claude Code a `/clear` reads the rules again, and a start does on both harnesses.
+still on the older rules or on other settings, and what brings it up to date: a
+clear reads the rules again (`obk session clear`), and so does a start, on both
+harnesses.
 Where everything needs restarting, remind
 them to do it from Bot Father's ops tab.
 
