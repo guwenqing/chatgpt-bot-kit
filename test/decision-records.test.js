@@ -293,6 +293,19 @@ test('every record in force has the header lines and the sections of the obk-arc
   assert.deepEqual(problems, [], problems.join('\n'));
 });
 
+// AssuredLoop reads a record's status only from a line that starts with
+// `Status:` (#474), as obk-arch's format writes it. That holds for every
+// record, superseded ones included.
+test('every record has its `Status:` at the start of a line', async () => {
+  const all = await records();
+  assert.ok(all.length >= OLD_RECORDS.length, `docs/adr/ should hold at least the ${OLD_RECORDS.length} records there were, got ${all.length}`);
+
+  const problems = all
+    .filter((record) => !/^Status: \S/m.test(record.header))
+    .map((record) => `${record.rel}:${lineAt(record.text, record.text.indexOf('Status:'))}: \`Status:\` is not at the start of a line`);
+  assert.deepEqual(problems, [], problems.join('\n'));
+});
+
 test('no record in force has an amendment, or a line marked as changed in place', async () => {
   const current = (await records()).filter(isCurrent);
   assert.ok(current.length > 0, 'there should be at least one record in force');
