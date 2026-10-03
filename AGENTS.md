@@ -10,6 +10,20 @@ confirmed by the owner. A fact marked unverified in the tech notes is proven liv
 before code relies on it. Issues are vertical slices, worked in order; do not pull
 work from a later slice into an earlier one.
 
+## AssuredLoop
+
+AssuredLoop keeps this project's requests and spec: before work that changes a promise, read <dir>/skills/assuredloop/SKILL.md and run `al context`.
+
+`<dir>` is a clone of https://github.com/guwenqing/assuredloop at `1ad06f7`. The
+baseline is `docs/prd/` (`.assuredloop`); the decision records are `docs/adr/`.
+Every PR states its tier, in its commit message (`al check` reads it there) and the PR:
+
+- No promise in the baseline changes: tier 0. Write no record. `Tier: 0 — <what it restores>`.
+- A small change to a promise: tier 1. `al new <name> --tier 1`, the owner's sign-off
+  recorded, the baseline section edited, and `al conclude <name>`, all in the PR.
+  `Tier: 1 — <claim>`. The owner signs, not you.
+- Tier 2, 3 and S keep their records in the PR the same way; the skill says how.
+
 ## How code is made here
 
 The owner's bots build the kit with its own skills and rule units: `obk-tdd`,
