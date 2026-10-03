@@ -1834,8 +1834,9 @@ describe('test-system', { concurrency: true }, () => {
 // in either spelling of a macOS temp path, whose folder directly under the temp
 // folder is named `obk-system-*` (for a hooks.state key, the path is the part
 // before the hooks file's `:<event>:…`). Such a Codex key fails the run, but
-// for one under an `obk-system-codex-screens-*` folder (#240) or an
-// `obk-system-codex-groom-*` one (#238), the two tests known to write them,
+// for one under an `obk-system-codex-screens-*` folder (#240), an
+// `obk-system-codex-groom-*` one (#238) or an `obk-system-temp-of-temp-*` one
+// (#464), the three tests known to write them,
 // which is named and does not change the exit code. Such a
 // Claude key is named and never changes the exit code, pending the owner. A key
 // that was there before, or one that is not the run's, is never named: the
@@ -2292,6 +2293,33 @@ describe('test-system: what a run leaves in the harness configs (#240)', { concu
     assertNoSecrets(result);
   });
 
+  test('a Codex key under an obk-system-temp-of-temp folder made mid-run is that test\'s known write (#464): named, removed, and the exit code stays the tests\'', async (t) => {
+    // temp-of-temp's Codex session is started with its folder trusted at launch
+    // and its hooks review left to its maker, a temporary Claude session, which
+    // answers it with Trust all and continue: Codex writes the hooks' trust for
+    // its folder (#464).
+    let hooksFile;
+    let key;
+    const built = await withConfigs(t, ({ dir }) => {
+      const mine = `${dir}/obk-system-temp-of-temp-Tt64`;
+      hooksFile = `${mine}/bots/bots/nest-bot/.codex/hooks.json`;
+      key = `${hooksFile}:session_start:0:0`;
+      return {
+        before: { codex: codexConfig({}) },
+        during: { makes: [mine], codex: codexConfig({ hooks: [key] }) },
+      };
+    });
+
+    const result = await built.fixture.confirmed({ env: built.env });
+
+    assert.equal(result.code, 0, `temp-of-temp's known write does not fail a run whose tests passed:\n${everything(result)}`);
+    assertNamed(result, hooksFile, 'a temp-of-temp hooks.state key');
+    assert.match(unwrapped(afterTheRun(result)), /#464/, `it should say this is that test's known write (#464), got:\n${afterTheRun(result)}`);
+    assert.equal(await readFile(built.files.codex, 'utf8'), codexConfig({}), 'and the key is removed again');
+    assertRemovedIn(result, built.files.codex, [key]);
+    assertNoSecrets(result);
+  });
+
   test('a codex-groom key under a folder that was there before the run is not named as the run\'s known writes', async (t) => {
     let key;
     const { fixture, env } = await withConfigs(t, ({ dir }) => {
@@ -2306,7 +2334,7 @@ describe('test-system: what a run leaves in the harness configs (#240)', { concu
     assertNotNamed(result, key, 'another session\'s codex-groom key');
   });
 
-  test('a Codex key under another codex test\'s folder made mid-run still fails the run: only codex-screens and codex-groom are known writers', async (t) => {
+  test('a Codex key under another codex test\'s folder made mid-run still fails the run: only codex-screens, codex-groom and temp-of-temp are known writers', async (t) => {
     // codex-sleep's Codex is given its trust at launch, so a key of its is a
     // write no test is allowed.
     let key;

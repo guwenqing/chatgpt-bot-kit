@@ -25,6 +25,7 @@ import path from 'node:path';
 import { readBook, tabIdsIn, updateBook } from './book.js';
 import { botDir, dropSession, readBot } from './bot.js';
 import { deleteProject, findProject, projects, reloadWindow, tabs } from './orca.js';
+import { shellWord } from './launch.js';
 import { fleetMember } from './pause.js';
 import { closeTabs, commandLine, tabsToClose } from './restart.js';
 import { unlinkSkills } from './skills.js';
@@ -34,26 +35,57 @@ import { promptPath, sessionsOf } from './up.js';
 export const retiredDir = (bots) => path.join(bots, 'retired');
 
 /**
- * Retire the session `session` of the bot `bot`. Returns `{ bot, session,
- * closed }`, and `promptsLeft` when its prompt file could not be removed.
+ * Retire the session `session` of the bot `bot`, and first the temporary
+ * sessions it made, and theirs (#464, ADR 0033). Returns `{ bot, session,
+ * closed, retiredWith }`, and `promptsLeft` when its prompt file could not be
+ * removed. `retiredWith` holds one `{ bot, session, maker, closed }` for each
+ * session that went with it, deepest first, with its own `promptsLeft`.
  */
 export async function retireSession(bots, { bot, session }) {
   const home = fleetMember(bots, bot, 'retire', session);
-  const sessions = sessionsOf(readBot(home, bot), session);
+  const known = readBot(home, bot);
+  const sessions = sessionsOf(known, session);
 
-  const closed = await closeTabs(home, tabsToClose(bots, bot, home, sessions, { keepless: true }), bots, bot, commandLine('retire', bots, bot, session));
-  dropSession(bots, bot, session);
+  const retiredWith = [];
+  const book = readBook(home);
+  const made = known.sessions.filter((one) => book.sessions[one.name]?.temporary?.maker === session);
+  let closed;
+  try {
+    for (const { name } of made) {
+      const { retiredWith: theirs, ...gone } = await retireSession(bots, { bot, session: name });
+      retiredWith.push(...theirs, { ...gone, maker: session });
+    }
 
-  const at = new Date().toISOString();
-  await updateBook(home, (book) => {
-    const entry = book.sessions[session];
-    if (entry === undefined) return;
-    delete book.sessions[session];
-    book.retired = [...(Array.isArray(book.retired) ? book.retired : []), { name: session, ...entry, retired: at }];
-  });
+    closed = await closeTabs(home, tabsToClose(bots, bot, home, sessions, { keepless: true }), bots, bot, commandLine('retire', bots, bot, session));
+    dropSession(bots, bot, session);
+
+    const at = new Date().toISOString();
+    await updateBook(home, (book) => {
+      const entry = book.sessions[session];
+      if (entry === undefined) return;
+      delete book.sessions[session];
+      book.retired = [...(Array.isArray(book.retired) ? book.retired : []), { name: session, ...entry, retired: at }];
+    });
+  } catch (error) {
+    // What already went stays gone, and is named: a retire run again finds
+    // nothing of it left to name (#464).
+    if (retiredWith.length > 0) error.message = `${error.message} ${goneBefore(session, retiredWith)}`;
+    throw error;
+  }
   const left = removePrompts([promptPath(bots, bot, session)]);
 
-  return { bot, session, closed, ...left };
+  return { bot, session, closed, retiredWith, ...left };
+}
+
+/**
+ * The sessions retired along with `session` before its own retire failed, in
+ * words, with any prompt file of theirs left and how to remove it.
+ */
+function goneBefore(session, retiredWith) {
+  const names = retiredWith.map((gone) => `${gone.bot}/${gone.session}, a temporary session of ${gone.maker}'s`);
+  const left = retiredWith.flatMap((gone) => gone.promptsLeft ?? [])
+    .map(({ file, reason }) => ` ${file} could not be removed (${reason}), and nothing reads it. Remove it with  rm ${shellWord(file)}`);
+  return `Retired along with ${session} before that, and still retired: ${names.join('; ')}.${left.join('')}`;
 }
 
 /**

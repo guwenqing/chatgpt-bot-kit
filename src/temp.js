@@ -4,7 +4,8 @@
 //
 // Any long-lived session can make a temporary session of its own bot for a
 // piece of work, and retire it when the work is done, without Bot Father, who
-// stays the manager of long-lived sessions. A temporary session is an ordinary
+// stays the manager of long-lived sessions. A temporary session can make one
+// of its own, one level deep and one at a time (#464, ADR 0033). A temporary session is an ordinary
 // session in every other way: in bot.yaml, brought up with a tab and a mailbox,
 // its conversations kept in the book. What makes it temporary is one field of
 // its book entry, `temporary: { maker, made }`, and the book is the one place
@@ -44,9 +45,9 @@ const INHERITED = ['model', 'effort', 'context', 'approval'];
  */
 export async function makeTemp(bots, { tab, ...given }) {
   const caller = callerIn(bots, tab, 'make');
-  if (caller.temporary !== undefined) {
-    throw new Error(`${caller.bot}/${caller.session} is a temporary session, and only a long-lived session makes one. Nothing was made.`);
-  }
+  // Checked here, before anything is written, and again under the book's lock
+  // below, where two makes at once cannot both pass it.
+  refuseNested(bots, caller, readBook(caller.home));
   // The name is a folder under work/ and a file beside the bots folder, so it
   // is held to the rule a bot's name is: one plain name, never a path.
   if (!NAME.test(given.name)) {
@@ -77,38 +78,44 @@ export async function makeTemp(bots, { tab, ...given }) {
   settings.work_dir = `work/${given.name}`;
 
   const written = bot.sessions.some((session) => session.name === given.name) ? undefined : writePromptFirst(bots, caller, settings);
-  // Refuses a name the bot already has, and a setting that will not work,
-  // before it writes anything; the prompt written first goes with a refusal.
+  // bot.yaml and the book are written under the book's lock, so that a second
+  // make from the same maker waits, and then sees this one (#464). addSession
+  // refuses a name the bot already has, and a setting that will not work,
+  // before it writes anything.
+  const made = new Date().toISOString();
+  let locked = false;
   let added;
   try {
-    added = addSession(bots, caller.bot, settings);
-  } catch (error) {
-    if (written !== undefined) rmSync(written, { force: true });
-    throw error;
-  }
-  const made = new Date().toISOString();
-  try {
     await updateBook(caller.home, (book) => {
+      locked = true;
+      refuseNested(bots, caller, book);
+      added = addSession(bots, caller.bot, settings);
       book.sessions[given.name] = { ...book.sessions[given.name], temporary: { maker: caller.session, made } };
     });
   } catch (error) {
+    // A refusal under the lock has written nothing but the prompt file.
+    const refused = locked && added === undefined;
+    const failed = `${caller.bot}/${given.name} could not be recorded in the book as temporary (${error.message})`;
     // A session in bot.yaml that the book does not call temporary would be a
     // long-lived one to everything that reads it, its maker's retire included,
     // so it is taken back off rather than left that way.
-    const failed = `${caller.bot}/${given.name} could not be recorded in the book as temporary (${error.message})`;
-    try {
-      dropSession(bots, caller.bot, given.name);
-    } catch (undo) {
-      throw new Error(`${failed}, and taking it back off bot.yaml failed too (${undo.message}). It is in bot.yaml as a session the book does not call temporary. Take it off with  ${shellWord(ownCli())} retire --bots ${shellWord(bots)} --bot ${caller.bot} --session ${given.name}`);
+    if (added !== undefined) {
+      try {
+        dropSession(bots, caller.bot, given.name);
+      } catch (undo) {
+        throw new Error(`${failed}, and taking it back off bot.yaml failed too (${undo.message}). It is in bot.yaml as a session the book does not call temporary. Take it off with  ${shellWord(ownCli())} retire --bots ${shellWord(bots)} --bot ${caller.bot} --session ${given.name}`);
+      }
     }
     // Off bot.yaml, nothing is made; a prompt file that stays is only a file,
     // and nothing reads it (#393).
+    const why = refused ? error.message.replace(/ ?Nothing was made\.$/, '') : `${failed}${added === undefined ? '.' : ', so it was taken back off bot.yaml.'}`;
     try {
       if (written !== undefined) rmSync(written, { force: true });
     } catch (left) {
-      throw new Error(`${failed}, so it was taken back off bot.yaml and nothing was made. Its start prompt ${written} could not be removed (${left.message}), and nothing reads it. Remove it with  rm ${shellWord(written)}`);
+      throw new Error(`${why} Nothing was made. Its start prompt ${written} could not be removed (${left.message}), and nothing reads it. Remove it with  rm ${shellWord(written)}`);
     }
-    throw new Error(`${failed}, so it was taken back off bot.yaml and nothing was made. Run this again once the book can be written.`);
+    if (refused) throw error;
+    throw new Error(`${why} Nothing was made. Run this again once the book can be written.`);
   }
 
   let up;
@@ -119,6 +126,23 @@ export async function makeTemp(bots, { tab, ...given }) {
     throw new Error(`${caller.bot}/${given.name} is made, in bot.yaml and in the book as temporary with its maker ${caller.session}, and could not be brought up: ${error.message} Bring it up with  ${cli} up --bots ${shellWord(bots)} --bot ${caller.bot} --session ${given.name}  or retire it with  ${cli} temp retire --bots ${shellWord(bots)} --name ${given.name}`);
   }
   return { bot: caller.bot, session: given.name, maker: caller.session, settings: added.session, up };
+}
+
+/**
+ * Refuse a make by a temporary session that may not make one now, against
+ * `book`: one made by a temporary session makes none, and a temporary session
+ * has one of its own open at a time (#464, ADR 0033).
+ */
+function refuseNested(bots, caller, book) {
+  if (caller.temporary === undefined) return;
+  const maker = caller.temporary.maker;
+  if (book.sessions[maker]?.temporary !== undefined) {
+    throw new Error(`${caller.bot}/${caller.session} is a temporary session ${maker} made, and ${maker} is temporary itself, so it makes none of its own: temporary sessions go one level deep. Nothing was made.`);
+  }
+  const open = Object.keys(book.sessions).filter((name) => book.sessions[name]?.temporary?.maker === caller.session);
+  if (open.length > 0) {
+    throw new Error(`${caller.bot}/${caller.session} is a temporary session, and it already has ${open.join(', ')} open; a temporary session has one of its own at a time. Retire it first with  ${shellWord(ownCli())} temp retire --bots ${shellWord(bots)} --name ${open[0]}  Nothing was made.`);
+  }
 }
 
 /**
