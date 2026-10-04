@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 
 import { parse, parseDocument, stringify } from 'yaml';
 
-import { bookFile, readBook } from './book.js';
+import { bookFile, readBook, takeLineTurn, TYPING_HELD, TYPING_WAIT_MS } from './book.js';
 import { botDir, botNames, changesExactly, leadsOutside, readBot, YAML_OUT } from './bot.js';
 import { harnessOf, ownCli, shellWord } from './launch.js';
 import { orcaCli, orcaTrouble, tabToTypeInto, typeIntoTab } from './orca.js';
@@ -473,7 +473,14 @@ function tellSessions(home, bot, linked) {
     const tab = typeof book[session.name]?.tab === 'string' ? book[session.name].tab : undefined;
     if (tab === undefined) return { ...told, state: 'not-up' };
     if (down !== undefined) return { ...told, state: 'unknown', trouble: `Orca is not answering at ${orcaCli()}, so the kit could not look at its tab, and nothing was typed` };
+    let turn;
     try {
+      // The session's turn for a line (#482), for the look and its line. Codex
+      // is typed nothing here, so it waits for none.
+      if (harness !== 'codex') {
+        turn = takeLineTurn(real, session.name, TYPING_WAIT_MS);
+        if (turn === undefined) return { ...told, state: 'unknown', trouble: TYPING_HELD };
+      }
       const found = tabToTypeInto(real, tab, LOOK_MS);
       if (found.blocked !== undefined) return { ...told, state: 'blocked', blocked: found.blocked };
       if (found.unsure !== undefined) return { ...told, state: 'unknown', trouble: found.unsure };
@@ -495,6 +502,8 @@ function tellSessions(home, bot, linked) {
       // The links are made whatever Orca says, so this is reported, not
       // thrown: the build did what it was asked, and the session was not told.
       return { ...told, state: 'unknown', trouble: error.message };
+    } finally {
+      turn?.release();
     }
   });
 }

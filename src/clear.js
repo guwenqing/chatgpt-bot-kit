@@ -14,7 +14,7 @@
 import { realpathSync, statSync } from 'node:fs';
 import { setTimeout as pause } from 'node:timers/promises';
 
-import { readBook } from './book.js';
+import { readBook, takeTypingTurn, TYPING_HELD, TYPING_WAIT_MS } from './book.js';
 import { botDir, readBot } from './bot.js';
 import { claudeTranscript, codexRollout } from './conversations.js';
 import { harnessOf, ownCli, shellWord } from './launch.js';
@@ -102,14 +102,20 @@ const AT_WORK = [/esc to interrupt/i, /^\s*\S\s+\S+…\s+\(\d/];
 export async function clearSession(bots, { bot, session }) {
   const it = sessionToType(bots, bot, session);
   const was = readBook(it.home).sessions[session]?.session ?? null;
-  const { command, handle } = await enter(it, 'clear');
+  const { command, handle, typing } = await enter(it, 'clear');
 
-  if (it.harness === 'codex') {
-    await answerWhereToRun(it, handle, command);
-    const line = await typeListLine(it.home, it.tabId, RECORD_LINE);
-    if (!line.typed) {
-      throw new Error(`${it.name}: ${command} went in, but the line that starts the new conversation's first turn was not typed (${line.why}), and Codex reports a new conversation only at its first turn. The book still holds ${was ?? 'no conversation'}. Look at its tab.`);
+  // Codex's question and the line after it are part of the clear, typed in
+  // the typing turn it took for the command.
+  try {
+    if (it.harness === 'codex') {
+      await answerWhereToRun(it, handle, command);
+      const line = await typeListLine(it.home, it.session, it.tabId, { line: RECORD_LINE, held: true });
+      if (!line.typed) {
+        throw new Error(`${it.name}: ${command} went in, but the line that starts the new conversation's first turn was not typed (${line.why}), and Codex reports a new conversation only at its first turn. The book still holds ${was ?? 'no conversation'}. Look at its tab.`);
+      }
     }
+  } finally {
+    typing.release();
   }
 
   const until = Date.now() + CLEAR_MS;
@@ -135,9 +141,10 @@ export async function compactSession(bots, { bot, session }) {
   // that ends while the kit waits for the session to be idle is the one
   // before it (review of PR #466). So only what is written after counts.
   let record;
-  const { typedAt } = await enter(it, 'compact', () => {
+  const { typedAt, typing } = await enter(it, 'compact', () => {
     record = recordAt(it.harness, it.home, readBook(it.home).sessions[session]?.session ?? null);
   });
+  typing.release();
 
   const until = typedAt + COMPACT_MS;
   for (;;) {
@@ -181,13 +188,26 @@ export function sessionToType(bots, bot, session) {
  * Type the harness's command for `verb` into the session's tab and press
  * return, once it is idle and the screen shows the command typed and nothing
  * else. `before` runs just before the command is typed. Returns the command,
- * the handle it went into, and when it was typed.
+ * the handle it went into, when it was typed, and the session's typing turn
+ * (#482), taken once it is idle, as the naming takes it, and held for the
+ * caller to release.
  */
-function enter(it, verb, before = () => {}) {
-  return typeCommand(it, COMMANDS[verb][it.harness], {
-    before,
-    cannot: (wrong) => (verb === 'compact' && wrong.menu ? ` ${harnessName(it.harness)} here cannot compact: its menu does not offer ${COMMANDS[verb][it.harness]}.` : ''),
-  });
+async function enter(it, verb, before = () => {}) {
+  let typing;
+  try {
+    const typed = await typeCommand(it, COMMANDS[verb][it.harness], {
+      before: () => {
+        typing = takeTypingTurn(it.home, it.session, TYPING_WAIT_MS);
+        if (typing === undefined) throw new Error(`${it.name}: ${TYPING_HELD}. Run this again in a moment.`);
+        before();
+      },
+      cannot: (wrong) => (verb === 'compact' && wrong.menu ? ` ${harnessName(it.harness)} here cannot compact: its menu does not offer ${COMMANDS[verb][it.harness]}.` : ''),
+    });
+    return { ...typed, typing };
+  } catch (error) {
+    typing?.release();
+    throw error;
+  }
 }
 
 /**
