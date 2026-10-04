@@ -150,7 +150,7 @@ export async function compactSession(bots, { bot, session }) {
  * The session as something to type into, once everything that refuses before
  * Orca is asked to type has been asked: `{ name, home, session, harness, tabId }`.
  */
-function sessionToType(bots, bot, session) {
+export function sessionToType(bots, bot, session) {
   botsNamed(bots, bot);
   const home = realpathSync(botDir(bots, bot));
   const known = readBot(home, bot);
@@ -176,8 +176,23 @@ function sessionToType(bots, bot, session) {
  * else. `before` runs just before the command is typed. Returns the command,
  * the handle it went into, and when it was typed.
  */
-async function enter(it, verb, before = () => {}) {
-  const command = COMMANDS[verb][it.harness];
+function enter(it, verb, before = () => {}) {
+  return typeCommand(it, COMMANDS[verb][it.harness], {
+    before,
+    cannot: (wrong) => (verb === 'compact' && wrong.menu ? ` ${harnessName(it.harness)} here cannot compact: its menu does not offer ${COMMANDS[verb][it.harness]}.` : ''),
+  });
+}
+
+/**
+ * Type `command` into the session's tab, `it` as `sessionToType` gives it, and
+ * press return, once it is idle and `check` finds nothing wrong with the
+ * screen: by default the slash menu's check, which a command with words after
+ * it does not pass, since Codex closes its menu at the space (#480). `before`
+ * runs just before the command is typed; `cannot` adds to a refusal what a
+ * wrong screen means. Returns the command, the handle it went into, and when
+ * it was typed.
+ */
+export async function typeCommand(it, command, { before = () => {}, check = menuWrong, cannot = () => '' } = {}) {
   const { handle, rows } = await idleTab(it);
   // On Codex, what is typed cannot be read back once its menu is open, so
   // nothing may be in its input line before: no draft for the command to join.
@@ -211,12 +226,11 @@ async function enter(it, verb, before = () => {}) {
     typed += 1;
   }
   await lookAgain();
-  const wrong = await typedWrong(handle, it.harness, command, version);
+  const wrong = await typedWrong(handle, it.harness, command, version, check);
   if (wrong !== undefined) {
     // Taken back, one backspace a character, so the input line is as it was.
     send(handle, '\x7f'.repeat(command.length));
-    const cannot = verb === 'compact' && wrong.menu ? ` ${harnessName(it.harness)} here cannot compact: its menu does not offer ${command}.` : '';
-    throw new Error(`${it.name}: ${command} was typed but not entered, and was taken back, because ${wrong.why}.${cannot}${shownEnd(wrong.rows)}`);
+    throw new Error(`${it.name}: ${command} was typed but not entered, and was taken back, because ${wrong.why}.${cannot(wrong)}${shownEnd(wrong.rows)}`);
   }
   // A return of its own, not `--enter`: Orca's gate can refuse a line sent
   // with `--enter` while it names a reason, and on Codex a return inside the
@@ -274,13 +288,14 @@ function lookAt(it, { idle = true } = {}) {
 
 /**
  * Why the screen does not show `command` typed and ready, or undefined when it
- * does: the input line, the lowest row the harness's pointer starts, reads the
- * pointer and the command and nothing else, and the slash menu's selected row
- * names the command. `menu` is set when the input line was right and the menu
- * was not. Read again for SCREEN_MS while it is not so: a screen
+ * does, as `check` reads it: for a slash command alone, the input line, the
+ * lowest row the harness's pointer starts, reads the pointer and the command
+ * and nothing else, and the slash menu's selected row names the command.
+ * `menu` is set when the input line was right and the menu was not. Read
+ * again for SCREEN_MS while it is not so: a screen
  * takes a moment to draw what was typed.
  */
-async function typedWrong(handle, harness, command, version) {
+async function typedWrong(handle, harness, command, version, check) {
   const until = Date.now() + SCREEN_MS;
   for (;;) {
     const seen = screenRows(handle, READ_MS);
@@ -288,7 +303,7 @@ async function typedWrong(handle, harness, command, version) {
     // a question that shows on it stops it at once (review of c1e5ba4).
     const signal = seen.rows === undefined ? undefined : signalIn(seen.rows);
     if (signal !== undefined) return { why: signal, rows: seen.rows };
-    const wrong = seen.rows === undefined ? { why: `its screen could not be read (${seen.unreadable})` } : menuWrong(seen.rows, harness, command, version);
+    const wrong = seen.rows === undefined ? { why: `its screen could not be read (${seen.unreadable})` } : check(seen.rows, harness, command, version);
     if (wrong === undefined || Date.now() >= until) return wrong && { ...wrong, rows: seen.rows };
     await pause(ASK_MS);
   }

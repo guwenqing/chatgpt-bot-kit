@@ -234,6 +234,20 @@ export function takeMailboxTurn(home, session) {
 }
 
 /**
+ * A session's turn to have its Codex thread named (#480), beside its mailbox
+ * turn: `{ release }`, or undefined at once when another naming holds it, so
+ * that two turn ends close together type the name once.
+ */
+export function takeNameTurn(home, session) {
+  try {
+    return lockOn(mailboxLockFile(home, session).replace(/\.mailbox\.lock$/, '.name.lock'), 0);
+  } catch (error) {
+    if (error.errcode === SQLITE_BUSY) return undefined;
+    throw error;
+  }
+}
+
+/**
  * How long a step, a check or an `up` waits for a session's turn. Longer than a
  * step can hold it — three Orca calls of twenty seconds each at most — and short
  * enough that a harness behind a stuck one still starts.

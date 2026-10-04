@@ -723,6 +723,30 @@ Proved live on 2026-09-21 (Orca 1.4.205), in throwaway workspaces since removed:
   other, trusted hooks and not the new entry, and printed nothing about it (0.160.0, 2026-10-03). So
   a hook entry the kit adds to a Codex bot's file brings up `Hooks need review` there once more.
   **verified** (live, for the entry not running; the review screen for an added entry not seen)
+- **A Codex tab shows the thread's name, and only `/rename` gives a thread one (#480).** Codex
+  titles its terminal from `tui.terminal_title`, by default `activity`, `thread-name` and
+  `project-name`; no item is fixed text, and `orca terminal rename` is overwritten at the next turn
+  (the reporter, 0.160.0). No flag or `-c` key names a thread at launch (`codex --help`, and the
+  source at rust-v0.160.0). `/rename <name>` calls the app server's `thread_set_name`, cancels the
+  title Codex would make up, and appends `{ id, thread_name, updated_at }` to
+  `~/.codex/session_index.jsonl`, the newest line for an id winning
+  (`codex-rs/rollout/src/session_index.rs`). With a space after the command name Codex closes its
+  slash menu (`chat_composer.rs` `sync_command_popup`), so the input line shows the whole command.
+  A `Stop` hook gets `{ session_id, turn_id, transcript_path, cwd, hook_event_name: "Stop", model,
+  permission_mode, stop_hook_active, last_assistant_message }`, and an entry with `"async": true`
+  runs in the background without holding the turn (`hooks/src/engine/discovery.rs`, every event
+  but `SessionEnd`). So the kit names a session's thread `<bot>.<session>` from an async `Stop` hook,
+  once the session is idle, through the safe typing path of `obk session clear` (the architect's
+  ruling on #480). The name survives `codex resume` (the reporter). **verified** (live, once) in
+  `test/system/codex-thread-name.test.js` (2026-10-04, codex-cli 0.160.0): Codex wrote its own
+  title for the throwaway thread into `session_index.jsonl` as the first turn ended ("Acknowledge
+  system test", 17:55:28Z); the kit's hook typed `/rename name-codex.main` and Codex wrote that
+  line at 17:56:41Z; the tab's title read `name-codex.main | <folder>`; after `obk restart` it read
+  the same with nothing typed, since the index already named the thread. The one hook run took
+  about 73 s: each character waits on a look through Orca's gate, up to 2 s while the slash menu is
+  open, so the hook's timeout is 300 s. Codex prints nothing for a rename and draws typed text a
+  cell at a time, so the tab's output does not show the command whole; `session_index.jsonl` is
+  the record of it. The screen with the whole command typed was not captured.
 - **Trusting a hooks file does not replay what it missed.** A conversation that was already running when the file was still untrusted is never reported: no SessionStart arrives for it after `t`, and nothing else says the kit missed one. The next conversation reports normally. So "no id recorded" cannot be read as "there was no conversation". **verified** (live, in the PR #88 review)
 - **Codex records no pid anywhere a reader can use.** `~/.codex/thread-writer-locks/<thread>.lock` is an empty lock file; `~/.codex/session_index.jsonl` holds `{ id, thread_name, updated_at }`; a rollout's `session_meta` carries the id, the folder and the time and no pid. So there is no Codex equivalent of Claude Code's live-session registry. **verified** (read on this machine, 0.155.1)
 - **Neither harness links a new conversation to the one the same process had before.** A `/clear` or a `/new` leaves nothing behind saying "this replaced that". With the point above, that means **a conversation that has ended cannot be tied to the session that had it** by anything either harness writes down — which is why the kit never assigns an unrecorded conversation to a session and says what it found instead. **verified** (live, and by reading both harnesses' own files)

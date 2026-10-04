@@ -16,6 +16,7 @@ import { addSession, allowedNow, allowRules, botDir, changeBot, changeSession, c
 import { addCommand, groomCommand, grooming, upCommand } from './groom.js';
 import { checkHealth, orcaSettingFindings } from './health.js';
 import { initBots } from './init.js';
+import { nameSession } from './name.js';
 import { APPROVALS, HARNESSES, ownCli, shellWord, workDirOf } from './launch.js';
 import { checkMail, decideLeftNudges, lookUp, noMailboxYet, sendMessage, sessionInTab } from './message.js';
 import { orcaCli, orcaTrouble, RELOAD_LINE, TERMINAL_ENV } from './orca.js';
@@ -274,6 +275,11 @@ Usage:
                             nudges a send there left because it could not
                             tell from inside Codex's sandbox, and types each
                             one or says why not.
+  obk session name --bots <path> --bot <bot>
+                            For the kit's own hook, not for typing: after a
+                            Codex session's turn, it names the session's thread
+                            <bot>.<session> with Codex's /rename, once the
+                            session is idle, so its tab says which it is.
   obk session mailbox --bots <path> --bot <bot> --session <name>
                             For the kit's own launch line, not for typing: run
                             in the session's own tab, it gives the session its
@@ -317,6 +323,7 @@ const COMMANDS = {
   'session record': ['bots', 'bot'],
   'session sent': ['bots', 'bot'],
   'session nudge': ['bots', 'bot'],
+  'session name': ['bots', 'bot'],
   'session mailbox': ['bots', 'bot', 'session'],
   'temp make': ['bots', 'name'],
   'temp roles': ['bots'],
@@ -449,6 +456,7 @@ async function run(argv) {
   // there included, so it goes before anything that can complain (ADR 0032).
   if (command === SENT) return sent(path.resolve(values.bots));
   if (command === NUDGE) return nudgeLeft();
+  if (command === NAME) return nameThread(path.resolve(values.bots), values.bot);
 
   // One fleet, one identity, whatever spelling of its path was given (#164).
   const bots = command === 'init' ? path.resolve(values.bots) : sameFleet(path.resolve(values.bots));
@@ -517,6 +525,7 @@ const ANSWER_IT = [
 const RECORD = 'session record';
 const SENT = 'session sent';
 const NUDGE = 'session nudge';
+const NAME = 'session name';
 
 /**
  * What the kit's send hook says after a native message: a warning the session
@@ -550,6 +559,21 @@ function nudgeLeft() {
       const words = decided.map((one) => `Your mail "${one.subject}" to ${one.to}: ${one.nudged ? "the kit's hook nudged its tab, from outside Codex's sandbox:" : "the kit's hook looked at its tab from outside Codex's sandbox, and"} ${nudgeLine(one, one.to).trim()}`);
       process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: words.join('\n') } })}\n`);
     }
+  } catch {
+    // Nothing: a hook does not disturb the session it runs in.
+  }
+  return 0;
+}
+
+/**
+ * What the kit's Codex Stop hook does at a turn end: name the session's thread
+ * after its bot and session, once it is idle (#480). Silent, never a decision,
+ * and never anything but exit 0: what it could not type now waits for the next
+ * turn end.
+ */
+async function nameThread(bots, bot) {
+  try {
+    await nameSession(bots, bot, JSON.parse(readFileSync(0, 'utf8')), process.env[TAB_ENV]);
   } catch {
     // Nothing: a hook does not disturb the session it runs in.
   }
