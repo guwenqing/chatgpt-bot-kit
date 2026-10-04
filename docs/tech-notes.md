@@ -744,7 +744,10 @@ Proved live on 2026-09-21 (Orca 1.4.205), in throwaway workspaces since removed:
   line at 17:56:41Z; the tab's title read `name-codex.main | <folder>`; after `obk restart` it read
   the same with nothing typed, since the index already named the thread. The one hook run took
   about 73 s: each character waits on a look through Orca's gate, up to 2 s while the slash menu is
-  open, so the hook's timeout is 300 s. Codex prints nothing for a rename and draws typed text a
+  open, so the hook's timeout is 300 s. With the looks between keys cut to 250 ms (#480 review), a
+  second live run (2026-10-04, PR #481 at b5c2425) went from the turn's end (19:59:46Z) to the name
+  in the index (20:00:15Z) in 29 s, the hook's start, the wait for idle and the typing turn
+  included; how much of that the turn was held was not measured. Codex prints nothing for a rename and draws typed text a
   cell at a time, so the tab's output does not show the command whole; `session_index.jsonl` is
   the record of it. The screen with the whole command typed was not captured.
   Read in the same source (`hooks/src/engine/command_runner.rs`), not seen live: Codex starts each
