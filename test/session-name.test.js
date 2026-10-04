@@ -925,6 +925,54 @@ test('a nudge\'s line on its way into the tab that finishes after about 2 s: the
   assert.deepEqual(await sendsInto(box, tab.tabId), renamed(), 'then the command and its return');
 });
 
+// From the review of 34a9caa: once the naming holds the typing turn (which
+// can wait up to 10 s for a line in flight), it looks once more, with no
+// further wait, before its first key: the book's tab and thread, idle with no
+// question and no at-work row, and the input line empty or its placeholder.
+// If any of these no longer holds, it types nothing and exits 0 quietly.
+// Each case below holds the line turn, waits until the naming holds the typing
+// turn (so it is waiting for the line), changes one thing, then lets the line
+// turn go. The contrast is the test above, where nothing changes.
+
+for (const { what, change } of [
+  {
+    what: 'a /new reports a new thread in the same tab',
+    change: async (box, bots, tab) => {
+      const heard = await recordSession(box, { bots, bot: BOT, tab: tab.tabId, session: NEW_THREAD });
+      assert.equal(heard.code, 0, `the premise: the new thread's report: ${heard.stderr}`);
+      assert.equal((await sessionIn(bots, BOT, 'daily')).session, NEW_THREAD, 'the premise: the book holds the new thread for daily');
+    },
+  },
+  { what: 'a draft comes into the input line', change: (box, bots, tab) => changeTab(box, tab.tabId, { screen: CODEX_DRAFT }) },
+  { what: 'Codex starts work, its at-work row on screen', change: (box, bots, tab) => changeTab(box, tab.tabId, { screen: CODEX_WORKING }) },
+  { what: 'a question of Codex\'s own comes up', change: (box, bots, tab) => changeTab(box, tab.tabId, { screen: CODEX_UPDATE_OFFER }) },
+]) {
+  test(`${what} while the naming holds the typing turn and waits for a line in flight: nothing typed, and it exits 0 quietly`, async (t) => {
+    const box = await createSandbox(t);
+    const bots = await running(box);
+    const tab = await liveTab(box, bots);
+    await changeTab(box, tab.tabId, { nextScreens: screensFor(RENAME, RENAME_TYPED, CODEX_IDLE) });
+    const stop = codexRenames(box, tab.tabId);
+
+    const { result, reached } = await withLinesTurnHeld(bots, BOT, 'daily', async (release) => {
+      let done;
+      const run = nameHook(box, bots, tab);
+      run.then((answer) => { done = answer; });
+      const until = Date.now() + 20_000;
+      while (done === undefined && !typingTurnHeld(bots, BOT, 'daily') && Date.now() < until) await sleep(25);
+      const held = done === undefined && typingTurnHeld(bots, BOT, 'daily');
+      if (held) await change(box, bots, tab);
+      release();
+      return { result: await run, reached: held };
+    });
+    await stop();
+
+    assert.ok(reached, `the premise: the naming took the typing turn and waited for the line, got: ${JSON.stringify(result)}`);
+    assertQuiet(result, what);
+    assert.deepEqual(await sendsInto(box, tab.tabId), [], `${what}: nothing typed, not even a key taken back`);
+  });
+}
+
 test('each look between the characters asks Orca\'s tui-idle wait for 250 ms or less', async (t) => {
   const box = await createSandbox(t);
   const bots = await running(box);
@@ -1008,6 +1056,34 @@ test('Orca refuses the third character\'s send and the take-back after it: no re
     sends.slice(2).filter((one) => !/^\x7f+$/.test(one.text)),
     [],
     `after the error, nothing but backspaces: no more characters and no return, got: ${JSON.stringify(sends)}`,
+  );
+});
+
+test('Orca takes the third key but does not answer its send in time: the take-back counts it, three backspaces in one send, no return, and it exits 0 quietly', async (t) => {
+  // From the review of 34a9caa: a send Orca does not answer in time may still
+  // have gone in, so the take-back counts its key; one Orca refused does not
+  // count (the test above). The input line was empty before the first key, so
+  // a backspace too many does no harm. Here Orca applies the third key, `e`,
+  // and holds its answer for 90 s.
+  const box = await createSandbox(t);
+  const bots = await running(box);
+  const tab = await liveTab(box, bots);
+  await changeTab(box, tab.tabId, { nextScreens: screensFor(RENAME, RENAME_TYPED, CODEX_IDLE) });
+  const sendsSoFar = orcaCallsOf(await box.orca.calls(), 'terminal send').length;
+  await box.orca.set({ hang: { command: 'terminal send', ms: 90_000, applied: true, from: sendsSoFar, after: 2, times: 1 } });
+  const stop = codexRenames(box, tab.tabId);
+
+  const started = Date.now();
+  const result = await nameHook(box, bots, tab);
+  const took = Date.now() - started;
+  await stop();
+
+  assertQuiet(result, 'a send not answered in time');
+  assert.ok(took < 60_000, `the late answer does not hold the hook; it took ${took} ms`);
+  assert.deepEqual(
+    await sendsInto(box, tab.tabId),
+    [...typed('/re'), { text: backspaces('/re'), enter: false }],
+    'the three keys that went in, the late one among them, then three backspaces in one send, and nothing more',
   );
 });
 

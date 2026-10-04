@@ -1214,6 +1214,33 @@ describe('the review of PR #466: Orca slow or quiet, side by side', { concurrenc
     assert.ok(took < 60_000, `a quiet Orca does not hold the command; it took ${took} ms`);
     assert.equal((await sessionIn(bots, BOT, 'daily')).session, 'sess-daily', 'the book is as it was');
   });
+
+  it('Claude Code with a draft in its input line, and the third key\'s send not answered in time and never applied: the take-back is the two keys Orca answered for, not one more, so the draft keeps every character', async (t) => {
+    // From the review of #480: a send Orca does not answer in time may have
+    // gone in, and the naming counts its key when it takes back, because a
+    // Codex input line was empty before its first key. Claude Code's may hold
+    // a draft (the tests above), so here a key Orca did not answer for is not
+    // counted: a backspace too many would eat the draft's last character. The
+    // third key, `l`, is held 90 s and not applied.
+    const box = await createSandbox(t);
+    const bots = await running(box);
+    const draft = CLAUDE_IDLE.map((row) => (row.startsWith('❯ ') ? '❯\u00a0fix the flaky test' : row));
+    await changeTab(box, (await liveTab(box, bots)).tabId, { screen: draft, nextScreens: screensFor('claude', '/clear', CLAUDE_CLEAR_AFTER_DRAFT, CLAUDE_IDLE) });
+    await box.orca.set({ hang: { command: 'terminal send', ms: 90_000, from: await callsOf(box, 'terminal send'), after: 2, times: 1 } });
+
+    const started = Date.now();
+    const result = await sessionCommand(box, 'clear');
+    const took = Date.now() - started;
+
+    assertRefused(result);
+    assert.ok(took < 60_000, `the late answer does not hold the command; it took ${took} ms`);
+    assert.deepEqual(
+      await sendsInto(box, bots),
+      [...typed('/c'), { text: backspaces('/c'), enter: false }],
+      'the two keys Orca answered for, then exactly two backspaces in one send: none for the key it did not answer for',
+    );
+    assert.equal((await sessionIn(bots, BOT, 'daily')).session, 'sess-daily', 'the book is as it was');
+  });
 });
 
 test('a compaction written while the kit still waits for the session to go idle does not confirm the compact; the one after the return does', async (t) => {

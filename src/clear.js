@@ -19,7 +19,7 @@ import { botDir, readBot } from './bot.js';
 import { claudeTranscript, codexRollout } from './conversations.js';
 import { harnessOf, ownCli, shellWord } from './launch.js';
 import { eachLine, firstLine } from './lines.js';
-import { findProject, orca, QUESTION_ON_SCREEN, questionIn, screenRows, tabs, tabToTypeInto } from './orca.js';
+import { findProject, orca, QUESTION_ON_SCREEN, questionIn, screenRows, tabs, tabToTypeInto, TIMED_OUT } from './orca.js';
 import { botsNamed, sessionsOf, typeListLine } from './up.js';
 
 /** The harness's own command for each, as typed into its input line. Codex's clear is `/new` (tech notes, section 3). */
@@ -201,18 +201,25 @@ function enter(it, verb, before = () => {}) {
  * when it was typed.
  */
 export async function typeCommand(it, command, { before = () => {}, check = menuWrong, cannot = () => '', deadline = Infinity } = {}) {
-  const { handle, rows } = await idleTab(it);
   // On Codex, what is typed cannot be read back once its menu is open, so
   // nothing may be in its input line before: no draft for the command to join.
-  if (it.harness === 'codex') {
+  const emptyLine = (rows) => {
+    if (it.harness !== 'codex') return;
     const line = rows.findLast((row) => /^ *›/.test(row))?.trim();
     if (!CODEX_EMPTY.includes(line)) {
       throw new Error(`${it.name}: nothing was typed, because its input line is not empty: it reads "${line ?? 'nothing'}".${shownEnd(rows)}`);
     }
-  }
+  };
+  emptyLine((await idleTab(it)).rows);
   const version = it.harness === 'codex' ? codexVersion(readBook(it.home).sessions[it.session]?.session) : undefined;
 
   before();
+  // What `before` waited for can have changed the session: one more look,
+  // with no wait, before the first key (#480 review).
+  const ready = lookAt(it);
+  if (ready.why !== undefined) throw new Error(`${it.name}: nothing was typed, because ${ready.why}.`);
+  emptyLine(ready.rows);
+  const { handle } = ready;
   const typedAt = Date.now();
   // One character a send, each after a look through the gate, so nothing goes
   // in as one burst and nothing goes in once something asks a question
@@ -250,7 +257,15 @@ export async function typeCommand(it, command, { before = () => {}, check = menu
   try {
     for (const char of command) {
       if (typed > 0) await lookAgain();
-      send(handle, char);
+      try {
+        send(handle, char);
+      } catch (error) {
+        // A send Orca did not answer in time may have gone in all the same.
+        // Counted only where the line was empty before the first key, so the
+        // one backspace too many can take nothing of the user's (#480 review).
+        if (error.code === TIMED_OUT && it.harness === 'codex') typed += 1;
+        throw error;
+      }
       typed += 1;
     }
     await lookAgain();
