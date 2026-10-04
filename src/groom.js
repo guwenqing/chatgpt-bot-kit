@@ -42,7 +42,7 @@ import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { botDir, readBot, requireBotsFolder } from './bot.js';
-import { readBook } from './book.js';
+import { readBook, takeLineTurn, TYPING_HELD, TYPING_WAIT_MS } from './book.js';
 import { claudeTranscript } from './conversations.js';
 import { harnessOf, ownCli, shellWord } from './launch.js';
 import { tabs, tabToTypeInto, typeIntoTab } from './orca.js';
@@ -189,21 +189,28 @@ function refuseRun(run, ask) {
 /**
  * Type `line` into the grooming tab, through the kit's one gate for typing into
  * a running session: nothing goes into a tab with something on screen waiting
- * for an answer, or with anything but Claude Code in front of it.
+ * for an answer, or with anything but Claude Code in front of it. In the
+ * session's turn for a line, so it never lands in what the kit is typing (#482).
  */
 function typeInto(bots, home, session, tab, line) {
   if (!session.up) {
     throw new Error(`${BOT_FATHER}'s ${GROOMING} session is not up, so nothing was typed. Bring it up with ${upCommand(bots)}, then run this again.`);
   }
-  const found = tabToTypeInto(home, tab, LOOK_MS);
-  if (found.blocked !== undefined) {
-    throw new Error(`the ${GROOMING} tab is waiting for an answer (${found.blocked}), so nothing was typed. Answer it in the tab, then run this again.`);
+  const turn = takeLineTurn(home, GROOMING, TYPING_WAIT_MS);
+  if (turn === undefined) throw new Error(`the ${GROOMING} tab: ${TYPING_HELD}. Run this again in a moment.`);
+  try {
+    const found = tabToTypeInto(home, tab, LOOK_MS);
+    if (found.blocked !== undefined) {
+      throw new Error(`the ${GROOMING} tab is waiting for an answer (${found.blocked}), so nothing was typed. Answer it in the tab, then run this again.`);
+    }
+    if (found.unsure !== undefined) throw new Error(`the ${GROOMING} tab: ${found.unsure}.`);
+    if (found.handle === undefined || found.agent !== 'claude') {
+      throw new Error(`the ${GROOMING} tab has no Claude Code in front of it, so nothing was typed. Bring it back with ${restartCommand(bots)}, then run this again.`);
+    }
+    typeIntoTab(found.handle, line);
+  } finally {
+    turn.release();
   }
-  if (found.unsure !== undefined) throw new Error(`the ${GROOMING} tab: ${found.unsure}.`);
-  if (found.handle === undefined || found.agent !== 'claude') {
-    throw new Error(`the ${GROOMING} tab has no Claude Code in front of it, so nothing was typed. Bring it back with ${restartCommand(bots)}, then run this again.`);
-  }
-  typeIntoTab(found.handle, line);
 }
 
 /**

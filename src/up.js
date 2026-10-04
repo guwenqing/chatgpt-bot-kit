@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { setTimeout as pause } from 'node:timers/promises';
 
-import { forgetClaimed, forgetSession, MAILBOX_WAIT_MS, readBook, sessionIdsIn, tabIdsIn, takeMailboxTurn, updateBook, withUnclaimed } from './book.js';
+import { forgetClaimed, forgetSession, MAILBOX_WAIT_MS, readBook, sessionIdsIn, tabIdsIn, takeLineTurn, takeMailboxTurn, TYPING_HELD, TYPING_WAIT_MS, updateBook, withUnclaimed } from './book.js';
 import { botDir, botNames, displayName, projectName, readBot } from './bot.js';
 import { conversationsIn, hasConversation, heldAsUserTurn, transcriptsIn } from './conversations.js';
 import { installHook } from './hooks.js';
@@ -374,7 +374,7 @@ async function bringUpSession(bots, home, live, session, bot, title) {
   // 0.157.1 (#226). So it is given one line, through the same gate as a mail
   // notice, which the owner allowed. A fresh start's first turn is its prompt.
   const list = harness === 'codex' && launch.resume !== undefined && tui.running === true
-    ? await typeListLine(home, made.tabId)
+    ? await typeListLine(home, session.name, made.tabId)
     : undefined;
 
   return entry(made, {
@@ -408,41 +408,63 @@ const LIST_LOOK_MS = 2000;
 const LIST_ASK_MS = 500;
 
 /**
- * Type `line`, LIST_LINE unless told otherwise, into the tab `tabId` once the
- * gate every typed line goes through lets it: `{ typed: true }`, or
- * `{ typed: false, why }` with the gate's last reason once LIST_WAIT_MS is up.
- * Nothing goes into a question, a form or a menu (#329, #416), nor into a tab
- * the kit cannot tell about.
+ * Type `line`, LIST_LINE unless told otherwise, into the tab `tabId` of
+ * `session` once the gate every typed line goes through lets it:
+ * `{ typed: true }`, or `{ typed: false, why }` with the gate's last reason
+ * once LIST_WAIT_MS is up. Nothing goes into a question, a form or a menu
+ * (#329, #416), nor into a tab the kit cannot tell about. Each look and its
+ * line are taken in the session's turn for a line (#482), unless the caller
+ * says it holds the session's typing turn already (`held`).
  */
-export async function typeListLine(home, tabId, line = LIST_LINE) {
+export async function typeListLine(home, session, tabId, { line = LIST_LINE, held = false } = {}) {
   const until = Date.now() + LIST_WAIT_MS;
   for (;;) {
-    let found;
-    try {
-      // Each look waits no longer than what is left of the wait.
-      found = tabToTypeInto(home, tabId, Math.max(1, Math.min(LIST_LOOK_MS, until - Date.now())));
-    } catch (error) {
-      return { typed: false, why: `Orca would not say whether it may be typed into: ${error.message}` };
-    }
-    // A yes that comes after the wait is too late: the wait is a cutoff, not a
-    // count of looks (review of PR #421).
-    if (found.handle !== undefined && Date.now() > until) {
-      return { typed: false, why: `the ${LIST_WAIT_MS / 1000} s wait for it ran out before the kit could tell it may be typed into` };
-    }
-    if (found.handle !== undefined) {
+    let turn;
+    if (!held) {
       try {
-        typeIntoTab(found.handle, line);
-        return { typed: true };
+        turn = takeLineTurn(home, session, TYPING_WAIT_MS);
       } catch (error) {
-        return { typed: false, why: `Orca refused the line: ${error.message}` };
+        return { typed: false, why: error.message };
       }
+      if (turn === undefined) return { typed: false, why: TYPING_HELD };
     }
-    if (Date.now() >= until) {
-      const last = found.blocked !== undefined ? `it is waiting on ${found.blocked}` : found.unsure ?? 'no harness is running in it';
-      return { typed: false, why: `the ${LIST_WAIT_MS / 1000} s wait for it ran out: ${last}` };
+    try {
+      const done = lookAndType(home, tabId, line, until);
+      if (done !== undefined) return done;
+    } finally {
+      turn?.release();
     }
     await pause(LIST_ASK_MS);
   }
+}
+
+/** One look of typeListLine's, and its line when the gate lets it: what it returns, or undefined to look again. */
+function lookAndType(home, tabId, line, until) {
+  let found;
+  try {
+    // Each look waits no longer than what is left of the wait.
+    found = tabToTypeInto(home, tabId, Math.max(1, Math.min(LIST_LOOK_MS, until - Date.now())));
+  } catch (error) {
+    return { typed: false, why: `Orca would not say whether it may be typed into: ${error.message}` };
+  }
+  // A yes that comes after the wait is too late: the wait is a cutoff, not a
+  // count of looks (review of PR #421).
+  if (found.handle !== undefined && Date.now() > until) {
+    return { typed: false, why: `the ${LIST_WAIT_MS / 1000} s wait for it ran out before the kit could tell it may be typed into` };
+  }
+  if (found.handle !== undefined) {
+    try {
+      typeIntoTab(found.handle, line);
+      return { typed: true };
+    } catch (error) {
+      return { typed: false, why: `Orca refused the line: ${error.message}` };
+    }
+  }
+  if (Date.now() >= until) {
+    const last = found.blocked !== undefined ? `it is waiting on ${found.blocked}` : found.unsure ?? 'no harness is running in it';
+    return { typed: false, why: `the ${LIST_WAIT_MS / 1000} s wait for it ran out: ${last}` };
+  }
+  return undefined;
 }
 
 /**

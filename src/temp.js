@@ -28,7 +28,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { setTimeout as pause } from 'node:timers/promises';
 
-import { readBook, updateBook } from './book.js';
+import { readBook, takeLineTurn, TYPING_HELD, TYPING_WAIT_MS, updateBook } from './book.js';
 import { addSession, dropSession, NAME, readBot, tempRoles } from './bot.js';
 import { DEFAULT_APPROVAL, harnessOf, isShortPrompt, ownCli, shellWord, startPrompt, workDirOf } from './launch.js';
 import { sessionInTab } from './message.js';
@@ -353,16 +353,23 @@ export async function trustHooks(bots, { tab, name }) {
   if (handle === undefined) {
     throw new Error(`${run} has no tab open in Orca, so there is no review of its to answer. ${nothing}`);
   }
-  const seen = screenRows(handle);
-  if (seen.rows === undefined) {
-    throw new Error(`${run}'s screen could not be read (${seen.unreadable}), so the kit cannot tell whether its hooks review is there. ${nothing}`);
+  // The session's turn for a line (#482), for the look and the keys.
+  const turn = takeLineTurn(caller.home, name, TYPING_WAIT_MS);
+  if (turn === undefined) throw new Error(`${run}: ${TYPING_HELD}.`);
+  try {
+    const seen = screenRows(handle);
+    if (seen.rows === undefined) {
+      throw new Error(`${run}'s screen could not be read (${seen.unreadable}), so the kit cannot tell whether its hooks review is there. ${nothing}`);
+    }
+    const keys = keysToTrustAll(seen.rows);
+    if (keys === undefined) {
+      throw new Error(`${run}'s screen shows no "${HOOKS_REVIEW}" with its choices, so there is nothing for this to answer. It shows: ${shown(seen.rows)}. ${nothing}`);
+    }
+    // The return is inside the text: `--enter` would be a second key.
+    orca(['terminal', 'send', '--terminal', handle, '--text', keys]);
+  } finally {
+    turn.release();
   }
-  const keys = keysToTrustAll(seen.rows);
-  if (keys === undefined) {
-    throw new Error(`${run}'s screen shows no "${HOOKS_REVIEW}" with its choices, so there is nothing for this to answer. It shows: ${shown(seen.rows)}. ${nothing}`);
-  }
-  // The return is inside the text: `--enter` would be a second key.
-  orca(['terminal', 'send', '--terminal', handle, '--text', keys]);
   for (let waited = 0; ; waited += 500) {
     const after = screenRows(handle);
     if (after.rows !== undefined && !after.rows.some((row) => row.includes(HOOKS_REVIEW))) break;
