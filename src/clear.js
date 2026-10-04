@@ -19,7 +19,7 @@ import { botDir, readBot } from './bot.js';
 import { claudeTranscript, codexRollout } from './conversations.js';
 import { harnessOf, ownCli, shellWord } from './launch.js';
 import { eachLine, firstLine } from './lines.js';
-import { findProject, orca, QUESTION_ON_SCREEN, questionIn, screenRows, tabs, tabToTypeInto } from './orca.js';
+import { findProject, orca, QUESTION_ON_SCREEN, questionIn, screenRows, tabs, tabToTypeInto, TIMED_OUT } from './orca.js';
 import { botsNamed, sessionsOf, typeListLine } from './up.js';
 
 /** The harness's own command for each, as typed into its input line. Codex's clear is `/new` (tech notes, section 3). */
@@ -58,6 +58,13 @@ const CODEX_BARE_LINE = '0.160.0';
 /** How long the session is given to be idle before nothing is typed, and how long each look waits on it. */
 const IDLE_WAIT_MS = 30_000;
 const LOOK_MS = 2000;
+/**
+ * How long each look between two characters waits on Orca's tui-idle, whose
+ * answer it does not use: an open slash menu keeps it from answering ok (live
+ * run 3 of #391). Short, so a naming holds the session's typing turn for
+ * seconds (#480).
+ */
+const CHAR_LOOK_MS = 250;
 /** How long the screen is given to show the command typed, or Codex's question after `/new`. */
 const SCREEN_MS = 3000;
 /** How long the book is given to hold the new conversation, and a harness to record a compaction (the architect: up to 5 minutes). */
@@ -150,7 +157,7 @@ export async function compactSession(bots, { bot, session }) {
  * The session as something to type into, once everything that refuses before
  * Orca is asked to type has been asked: `{ name, home, session, harness, tabId }`.
  */
-function sessionToType(bots, bot, session) {
+export function sessionToType(bots, bot, session) {
   botsNamed(bots, bot);
   const home = realpathSync(botDir(bots, bot));
   const known = readBot(home, bot);
@@ -176,20 +183,43 @@ function sessionToType(bots, bot, session) {
  * else. `before` runs just before the command is typed. Returns the command,
  * the handle it went into, and when it was typed.
  */
-async function enter(it, verb, before = () => {}) {
-  const command = COMMANDS[verb][it.harness];
-  const { handle, rows } = await idleTab(it);
+function enter(it, verb, before = () => {}) {
+  return typeCommand(it, COMMANDS[verb][it.harness], {
+    before,
+    cannot: (wrong) => (verb === 'compact' && wrong.menu ? ` ${harnessName(it.harness)} here cannot compact: its menu does not offer ${COMMANDS[verb][it.harness]}.` : ''),
+  });
+}
+
+/**
+ * Type `command` into the session's tab, `it` as `sessionToType` gives it, and
+ * press return, once it is idle and `check` finds nothing wrong with the
+ * screen: by default the slash menu's check, which a command with words after
+ * it does not pass, since Codex closes its menu at the space (#480). `before`
+ * runs just before the command is typed; `cannot` adds to a refusal what a
+ * wrong screen means; past `deadline`, a time, what was typed is taken back
+ * and nothing is entered. Returns the command, the handle it went into, and
+ * when it was typed.
+ */
+export async function typeCommand(it, command, { before = () => {}, check = menuWrong, cannot = () => '', deadline = Infinity } = {}) {
   // On Codex, what is typed cannot be read back once its menu is open, so
   // nothing may be in its input line before: no draft for the command to join.
-  if (it.harness === 'codex') {
+  const emptyLine = (rows) => {
+    if (it.harness !== 'codex') return;
     const line = rows.findLast((row) => /^ *›/.test(row))?.trim();
     if (!CODEX_EMPTY.includes(line)) {
       throw new Error(`${it.name}: nothing was typed, because its input line is not empty: it reads "${line ?? 'nothing'}".${shownEnd(rows)}`);
     }
-  }
+  };
+  emptyLine((await idleTab(it)).rows);
   const version = it.harness === 'codex' ? codexVersion(readBook(it.home).sessions[it.session]?.session) : undefined;
 
   before();
+  // What `before` waited for can have changed the session: one more look,
+  // with no wait, before the first key (#480 review).
+  const ready = lookAt(it);
+  if (ready.why !== undefined) throw new Error(`${it.name}: nothing was typed, because ${ready.why}.`);
+  emptyLine(ready.rows);
+  const { handle } = ready;
   const typedAt = Date.now();
   // One character a send, each after a look through the gate, so nothing goes
   // in as one burst and nothing goes in once something asks a question
@@ -197,31 +227,63 @@ async function enter(it, verb, before = () => {}) {
   // Between characters, and once more before the return, the look is the gate
   // and the harness's own at-work row, not Orca's tui-idle: an open slash menu
   // can stop it answering ok (live run 3).
+  // The characters Orca took, and so what is in the input line of ours.
   let typed = 0;
+  // Taken back, one backspace a character, in one send, so the input line is
+  // as it was. Whatever stops the typing takes them back, a send Orca refused
+  // or a look that threw included (#480 review); a take-back Orca refuses
+  // too leaves nothing more the kit can do.
+  const takeBack = () => {
+    const keys = '\x7f'.repeat(typed);
+    typed = 0;
+    if (keys === '') return;
+    try {
+      send(handle, keys);
+    } catch {
+      // Said by the error that stopped the typing.
+    }
+  };
   const lookAgain = async () => {
     await pause(CHAR_GAP_MS);
     const look = lookAt(it, { idle: false });
+    // Past the caller's deadline nothing more goes in: a hook stopped partway
+    // would leave the text in the input line (#480 review).
+    if (look.why === undefined && Date.now() > deadline) look.why = 'its time ran out';
     if (look.why === undefined) return;
-    send(handle, '\x7f'.repeat(typed));
-    throw new Error(`${it.name}: ${command} was being typed, and after ${command.slice(0, typed)} ${look.why}, so what was typed was taken back and nothing was entered.`);
+    const sofar = command.slice(0, typed);
+    takeBack();
+    throw new Error(`${it.name}: ${command} was being typed, and after ${sofar} ${look.why}, so what was typed was taken back and nothing was entered.`);
   };
-  for (const char of command) {
-    if (typed > 0) await lookAgain();
-    send(handle, char);
-    typed += 1;
+  try {
+    for (const char of command) {
+      if (typed > 0) await lookAgain();
+      try {
+        send(handle, char);
+      } catch (error) {
+        // A send Orca did not answer in time may have gone in all the same.
+        // Counted only where the line was empty before the first key, so the
+        // one backspace too many can take nothing of the user's (#480 review).
+        if (error.code === TIMED_OUT && it.harness === 'codex') typed += 1;
+        throw error;
+      }
+      typed += 1;
+    }
+    await lookAgain();
+    let wrong = await typedWrong(handle, it.harness, command, version, check);
+    if (wrong === undefined && Date.now() > deadline) wrong = { why: 'its time ran out' };
+    if (wrong !== undefined) {
+      takeBack();
+      throw new Error(`${it.name}: ${command} was typed but not entered, and was taken back, because ${wrong.why}.${cannot(wrong)}${shownEnd(wrong.rows)}`);
+    }
+    // A return of its own, not `--enter`: Orca's gate can refuse a line sent
+    // with `--enter` while it names a reason, and on Codex a return inside the
+    // text lands in the draft (helpers in the system tests, #329).
+    send(handle, '\r');
+    typed = 0;
+  } catch (error) {
+    takeBack();
+    throw error;
   }
-  await lookAgain();
-  const wrong = await typedWrong(handle, it.harness, command, version);
-  if (wrong !== undefined) {
-    // Taken back, one backspace a character, so the input line is as it was.
-    send(handle, '\x7f'.repeat(command.length));
-    const cannot = verb === 'compact' && wrong.menu ? ` ${harnessName(it.harness)} here cannot compact: its menu does not offer ${command}.` : '';
-    throw new Error(`${it.name}: ${command} was typed but not entered, and was taken back, because ${wrong.why}.${cannot}${shownEnd(wrong.rows)}`);
-  }
-  // A return of its own, not `--enter`: Orca's gate can refuse a line sent
-  // with `--enter` while it names a reason, and on Codex a return inside the
-  // text lands in the draft (helpers in the system tests, #329).
-  send(handle, '\r');
   return { command, handle, typedAt };
 }
 
@@ -235,6 +297,7 @@ async function idleTab(it) {
   const until = Date.now() + IDLE_WAIT_MS;
   for (;;) {
     const look = lookAt(it);
+    if (look.moved) throw new Error(`${it.name}: nothing was typed, because ${look.why}.`);
     let why = look.why;
     // The wait is a cutoff, not a count of looks: a yes that comes after it
     // is too late (as for LIST_LINE, review of PR #421).
@@ -248,11 +311,23 @@ async function idleTab(it) {
 /**
  * One look through the typing gate at the session's tab: `{ handle }` when
  * nothing on its screen asks a question and nothing says it is at work, and,
- * with `idle`, Orca's tui-idle answered ok; or `{ why }`, naming the signal.
+ * with `idle`, Orca's tui-idle answered ok; or `{ why }`, naming the signal,
+ * with `moved` when the book holds another tab for the session now, or, where
+ * `it.conversation` is given, another conversation.
  * Throws when the tab holds no harness.
  */
 function lookAt(it, { idle = true } = {}) {
-  const found = tabToTypeInto(it.home, it.tabId, LOOK_MS);
+  // A restart can give the session a new tab while this waits or types, and
+  // a hook can outlive its Codex (#480): only the tab the book holds is the
+  // session's.
+  const entry = readBook(it.home).sessions[it.session];
+  if (entry?.tab !== it.tabId) return { moved: true, why: `the book no longer holds its tab ${it.tabId} for it, but ${entry?.tab ?? 'none'}` };
+  // And, for a caller typing for one conversation, a `/new` in the same tab
+  // gives the session another (#480 review).
+  if (it.conversation !== undefined && entry.session !== it.conversation) {
+    return { moved: true, why: `the book no longer holds the conversation ${it.conversation} for it, but ${entry.session ?? 'none'}` };
+  }
+  const found = tabToTypeInto(it.home, it.tabId, idle ? LOOK_MS : CHAR_LOOK_MS);
   if (found.blocked !== undefined) {
     return {
       why: found.blocked === QUESTION_ON_SCREEN
@@ -274,13 +349,14 @@ function lookAt(it, { idle = true } = {}) {
 
 /**
  * Why the screen does not show `command` typed and ready, or undefined when it
- * does: the input line, the lowest row the harness's pointer starts, reads the
- * pointer and the command and nothing else, and the slash menu's selected row
- * names the command. `menu` is set when the input line was right and the menu
- * was not. Read again for SCREEN_MS while it is not so: a screen
+ * does, as `check` reads it: for a slash command alone, the input line, the
+ * lowest row the harness's pointer starts, reads the pointer and the command
+ * and nothing else, and the slash menu's selected row names the command.
+ * `menu` is set when the input line was right and the menu was not. Read
+ * again for SCREEN_MS while it is not so: a screen
  * takes a moment to draw what was typed.
  */
-async function typedWrong(handle, harness, command, version) {
+async function typedWrong(handle, harness, command, version, check) {
   const until = Date.now() + SCREEN_MS;
   for (;;) {
     const seen = screenRows(handle, READ_MS);
@@ -288,7 +364,7 @@ async function typedWrong(handle, harness, command, version) {
     // a question that shows on it stops it at once (review of c1e5ba4).
     const signal = seen.rows === undefined ? undefined : signalIn(seen.rows);
     if (signal !== undefined) return { why: signal, rows: seen.rows };
-    const wrong = seen.rows === undefined ? { why: `its screen could not be read (${seen.unreadable})` } : menuWrong(seen.rows, harness, command, version);
+    const wrong = seen.rows === undefined ? { why: `its screen could not be read (${seen.unreadable})` } : check(seen.rows, harness, command, version);
     if (wrong === undefined || Date.now() >= until) return wrong && { ...wrong, rows: seen.rows };
     await pause(ASK_MS);
   }
@@ -449,7 +525,10 @@ function shownEnd(rows) {
 /** How many rows of the screen a refusal shows. */
 const SHOWN_ROWS = 12;
 
+/** How long Orca is given to take one send: a send it never answers must not hold the caller (#480 review). */
+const SEND_MS = 5000;
+
 /** Type `keys` into the tab as they are, with no return of Orca's. */
-const send = (handle, keys) => orca(['terminal', 'send', '--terminal', handle, '--text', keys]);
+const send = (handle, keys) => orca(['terminal', 'send', '--terminal', handle, '--text', keys], { timeoutMs: SEND_MS });
 
 const harnessName = (harness) => (harness === 'claude' ? 'Claude Code' : 'Codex');

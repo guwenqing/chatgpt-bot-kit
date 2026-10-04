@@ -75,7 +75,10 @@ const addressOfMailbox = async (bots, bot, session = 'daily') => `run:${(await s
  * the kit writes for itself out of the user's repo, so everything it writes is
  * in some `<bots>.<something>` next to it — start prompts already are, and
  * the book's locks live there too. A test asks what one send added by reading
- * this before and after.
+ * this before and after. Lock files are left out: they are the kit's own
+ * bookkeeping, and a send that nudges takes the receiver's typing turn (#480),
+ * whose lock files are made the first time it is taken. Nothing of a message
+ * is in one.
  */
 async function besideTheBotsFolder(bots) {
   const parent = path.dirname(bots);
@@ -85,7 +88,9 @@ async function besideTheBotsFolder(bots) {
     if (!name.startsWith(`${mine}.`)) continue;
     const dir = path.join(parent, name);
     if (!(await stat(dir)).isDirectory()) continue;
-    for (const entry of await readdir(dir)) found.push(path.join(dir, entry));
+    for (const entry of await readdir(dir)) {
+      if (!/\.lock(?:-journal|-wal|-shm)?$/.test(entry)) found.push(path.join(dir, entry));
+    }
   }
   return found;
 }

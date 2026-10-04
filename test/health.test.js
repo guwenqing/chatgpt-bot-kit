@@ -741,14 +741,17 @@ test('H10 a line of the user\'s that mentions obk session record, beside the kit
 });
 
 /**
- * The kit's other Codex hooks, its PostToolUse groups (the nudge hook, #350),
- * as `obk up` wrote them into `file`: `{ PostToolUse }`, or nothing when it
- * wrote none. Kept beside a hand-written SessionStart line, so that the file
- * holds every hook of the kit's and what health says of it is about that line.
+ * The kit's other Codex hooks, its PostToolUse groups (the nudge hook, #350)
+ * and its Stop groups (the naming hook, #480), as `obk up` wrote them into
+ * `file`: `{ PostToolUse, Stop }`, each left out when it wrote none. Kept
+ * beside a hand-written SessionStart line, so that the file holds every hook
+ * of the kit's and what health says of it is about that line.
  */
-async function upsPostToolUse(file) {
+async function upsOtherHooks(file) {
   const { held } = await kitLineIn(file);
-  return held.hooks.PostToolUse === undefined ? {} : { PostToolUse: held.hooks.PostToolUse };
+  return Object.fromEntries(['PostToolUse', 'Stop']
+    .filter((event) => held.hooks[event] !== undefined)
+    .map((event) => [event, held.hooks[event]]));
 }
 
 test('H10 a hook of the kit\'s in the bare obk form an earlier kit wrote is in order', async (t) => {
@@ -761,7 +764,7 @@ test('H10 a hook of the kit\'s in the bare obk form an earlier kit wrote is in o
   await botUp(box, 'api-bot', { sessions: [['daily'], ['nightly', '--harness', 'codex']] });
   const file = hookFileOf(bots, 'api-bot', 'codex');
   const bare = `obk session record --bots ${shellWord(bots)} --bot api-bot 2>/dev/null || true`;
-  const others = await upsPostToolUse(file);
+  const others = await upsOtherHooks(file);
   await writeFile(file, `${JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: bare, timeout: 10 }] }], ...others } }, null, 2)}\n`);
 
   const answer = await found(box);
@@ -779,7 +782,7 @@ test('H10 a hook that runs the kit by its own path is the kit\'s hook, and in or
   await botUp(box, 'api-bot', { sessions: [['daily'], ['nightly', '--harness', 'codex']] });
   const file = hookFileOf(bots, 'api-bot', 'codex');
   const kit = `${shellWord(box.cli)} session record --bots ${shellWord(bots)} --bot api-bot 2>/dev/null || true`;
-  const others = await upsPostToolUse(file);
+  const others = await upsOtherHooks(file);
   await writeFile(file, `${JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: kit, timeout: 10 }] }], ...others } }, null, 2)}\n`);
 
   const answer = await found(box);
@@ -827,7 +830,7 @@ test('H10 a user\'s line that ends like the kit\'s, beside the kit\'s own hook, 
 
 /**
  * A hooks file holding one line of the kit's, in the form `obk up` writes it,
- * naming `cli`; with `others` (`upsPostToolUse`), the kit's other hooks beside it.
+ * naming `cli`; with `others` (`upsOtherHooks`), the kit's other hooks beside it.
  */
 async function kitHookNaming(file, cli, bots, others = {}) {
   const kit = `${shellWord(cli)} session record --bots ${shellWord(bots)} --bot api-bot 2>/dev/null || true`;
@@ -837,7 +840,7 @@ async function kitHookNaming(file, cli, bots, others = {}) {
 /** `others` with every command that `obk up` started with the CLI `from` run by `to` instead, and nothing else changed. */
 function runBy(others, from, to) {
   const swapped = structuredClone(others);
-  for (const group of swapped.PostToolUse ?? []) {
+  for (const group of Object.values(swapped).flat()) {
     for (const one of group.hooks ?? []) {
       const spelling = spellingsOf(from).find((word) => String(one.command).startsWith(`${word} `));
       if (spelling !== undefined) one.command = `${shellWord(to)}${one.command.slice(spelling.length)}`;
@@ -854,7 +857,7 @@ test('H10 a hook of the kit\'s naming another CLI that is there is in order', as
   const bots = await seeded(box);
   await botUp(box, 'api-bot', { sessions: [['daily'], ['nightly', '--harness', 'codex']] });
   const file = hookFileOf(bots, 'api-bot', 'codex');
-  await kitHookNaming(file, cliEntry, bots, runBy(await upsPostToolUse(file), box.cli, cliEntry));
+  await kitHookNaming(file, cliEntry, bots, runBy(await upsOtherHooks(file), box.cli, cliEntry));
 
   const answer = await found(box);
 

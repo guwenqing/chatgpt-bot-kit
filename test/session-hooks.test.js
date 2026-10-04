@@ -650,9 +650,15 @@ for (const harness of ['claude', 'codex']) {
       .flatMap((group) => (group.hooks ?? []).map((one) => one.command))
       .filter((command) => /\bsession nudge\b/.test(String(command)));
     assert.equal(nudges.length, harness === 'codex' ? 1 : 0, `the kit's nudge hook, on Codex only, got:\n${await readFile(file, 'utf8')}`);
+    // On Codex the kit also writes its naming hook, under Stop (#480); Claude
+    // gets none.
+    const names = (held.hooks?.Stop ?? [])
+      .flatMap((group) => (group.hooks ?? []).map((one) => one.command))
+      .filter((command) => /\bsession name\b/.test(String(command)));
+    assert.equal(names.length, harness === 'codex' ? 1 : 0, `the kit's naming hook, on Codex only, got:\n${await readFile(file, 'utf8')}`);
     assert.equal(
       allCommands(held).length,
-      Object.keys(alikes).length + 1 + sends.length + nudges.length,
+      Object.keys(alikes).length + 1 + sends.length + nudges.length + names.length,
       `their hooks and the kit's, and nothing else, got:\n${await readFile(file, 'utf8')}`,
     );
   });
