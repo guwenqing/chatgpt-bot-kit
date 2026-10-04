@@ -15,7 +15,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as pause } from 'node:timers/promises';
 
-import { readBook, takeNameTurn } from './book.js';
+import { readBook, takeNameTurn, takeTypingTurn } from './book.js';
 import { botDir, readBot } from './bot.js';
 import { sessionToType, typeCommand } from './clear.js';
 import { harnessOf } from './launch.js';
@@ -28,6 +28,14 @@ import { sessionsOf } from './up.js';
  */
 const sessionIndex = () => path.join(homedir(), '.codex', 'session_index.jsonl');
 
+/**
+ * When a naming stops typing, counted from its start: well inside the hook's
+ * 300 s (src/hooks.js), at which Codex kills the hook's whole process group
+ * (codex-rs/hooks/src/engine/command_runner.rs), so that what was typed is
+ * taken back first.
+ */
+const DEADLINE_MS = 240_000;
+
 /** How long Codex is given to write the name down after the return. */
 const CONFIRM_MS = 10_000;
 const ASK_MS = 500;
@@ -39,6 +47,7 @@ const ASK_MS = 500;
  * or undefined when there was nothing to do. Throws when it could not type.
  */
 export async function nameSession(bots, bot, said, tabId) {
+  const deadline = Date.now() + DEADLINE_MS;
   if (said?.hook_event_name !== 'Stop') return undefined;
   if (typeof tabId !== 'string' || tabId === '') return undefined;
 
@@ -59,10 +68,28 @@ export async function nameSession(bots, bot, said, tabId) {
 
   const turn = takeNameTurn(home, session);
   if (turn === undefined) return undefined;
+  let typing;
   try {
     // Another naming may have finished while this one waited for its turn.
     if (nameOf(thread) === name) return undefined;
-    await typeCommand(sessionToType(bots, bot, session), `/rename ${name}`, { check: renameWrong });
+    // Only into the tab the hook ran in: one whose Codex was killed hard can
+    // leave its hook running (Codex starts each hook in a session of its own,
+    // codex-rs/hooks/src/engine/command_runner.rs), and the tab the book holds
+    // now shows another process.
+    const it = { ...sessionToType(bots, bot, session), conversation: thread };
+    if (it.tabId !== tabId) return undefined;
+    // The session's typing turn, taken once it is idle and not before, so a
+    // mail nudge waits seconds for it and not the whole wait for idle. Held by
+    // anything else: nothing is typed, and the next turn end tries again.
+    const before = () => {
+      typing = takeTypingTurn(home, session, 0);
+      if (typing === undefined) throw new Error(`${it.name}: nothing was typed, because the kit is typing into its tab already.`);
+    };
+    try {
+      await typeCommand(it, `/rename ${name}`, { check: renameWrong, deadline, before });
+    } finally {
+      typing?.release();
+    }
     const until = Date.now() + CONFIRM_MS;
     while (nameOf(thread) !== name && Date.now() < until) await pause(ASK_MS);
     return nameOf(thread) === name;

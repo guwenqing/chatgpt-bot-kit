@@ -67,6 +67,7 @@ import {
   spellingsOf,
 } from './helpers/cli.js';
 import { CLAUDE_TEACH_AUTO } from './helpers/screens.js';
+import { withTypingTurnHeld } from './helpers/typing-turn.js';
 
 // --------------------------------------------------- what the runtime says
 
@@ -400,6 +401,21 @@ test('A3 by the time the hook looks, Orca\'s blockedReason on the receiver\'s ta
   assert.ok(text.includes('developer/daily'), `it names the receiver: ${text}`);
   assert.match(text, /\b(waiting|question|answer|answered|blocked)\b/i, `got: ${text}`);
   await assertUntyped(box, 'blocked');
+});
+
+test('A3 by the time the hook looks, the receiver\'s typing turn is held for longer than 5 s (#480): nothing is typed, and it says the kit is typing into the tab', async (t) => {
+  // The architect's ruling on #480: the nudge takes the receiver's typing
+  // turn before it types, waiting up to 5 s; the hook types through the same
+  // nudge as the send.
+  const { box, bots } = await leftNudge(t);
+  await psRuns(box);
+
+  const ran = await withTypingTurnHeld(bots, 'developer', 'daily', async () => hook(box, await inTab(box, bots, 'reviewer'), afterBash(bots)));
+
+  const text = assertSaid(ran, 'the typing turn held');
+  assert.ok(text.includes('developer/daily'), `it names the receiver: ${text}`);
+  assert.match(text, /the kit is typing into it/, `got: ${text}`);
+  await assertUntyped(box, 'the typing turn held');
 });
 
 // ---------------------------------------------------------------------------

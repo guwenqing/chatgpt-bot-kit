@@ -152,8 +152,13 @@ function takeLock(home) {
   }
 }
 
-/** The lock on `file`, waited for `waitMs` at most: see `takeLock` for why it is this one. */
-function lockOn(file, waitMs) {
+/**
+ * The lock on `file`, waited for `waitMs` at most: see `takeLock` for why it is
+ * this one. `how` is SQLite's: `IMMEDIATE`, one holder at a time; `SHARED`,
+ * any number at once, none while an `EXCLUSIVE` is held or waited for; and
+ * `EXCLUSIVE`, alone, once every `SHARED` holder has let go.
+ */
+function lockOn(file, waitMs, how = 'IMMEDIATE') {
   mkdirSync(path.dirname(file), { recursive: true });
 
   const db = new DatabaseSync(file);
@@ -161,7 +166,13 @@ function lockOn(file, waitMs) {
     // A writer that arrives while another is working waits for it rather than
     // failing at once, and gives up saying so rather than waiting for ever.
     db.exec(`PRAGMA busy_timeout = ${waitMs}`);
-    db.exec('BEGIN IMMEDIATE');
+    if (how === 'SHARED') {
+      // A reading transaction holds its shared lock from its first read.
+      db.exec('BEGIN');
+      db.prepare('SELECT count(*) FROM sqlite_master').get();
+    } else {
+      db.exec(`BEGIN ${how}`);
+    }
   } catch (error) {
     db.close();
     throw error;
@@ -238,9 +249,65 @@ export function takeMailboxTurn(home, session) {
  * turn: `{ release }`, or undefined at once when another naming holds it, so
  * that two turn ends close together type the name once.
  */
-export function takeNameTurn(home, session) {
+export const takeNameTurn = (home, session) => turnOn(home, session, 'name', 0);
+
+/**
+ * A session's typing turn (#480, the architect's ruling), for what the kit
+ * types into the session's tab one key at a time: no line of the kit's may
+ * land in between and send what is there with its own return. Two locks
+ * beside its mailbox turn: `typing`, the gate, held for the whole typing, and
+ * `lines`, taken alone once the lines already on their way have gone in.
+ * Returns `{ release }`, or undefined when it did not come within `waitMs`,
+ * or the lines in flight did not finish within LINES_WAIT_MS.
+ */
+export function takeTypingTurn(home, session, waitMs) {
+  const gate = turnOn(home, session, 'typing', waitMs);
+  if (gate === undefined) return undefined;
+  let lines;
   try {
-    return lockOn(mailboxLockFile(home, session).replace(/\.mailbox\.lock$/, '.name.lock'), 0);
+    lines = turnOn(home, session, 'lines', LINES_WAIT_MS, 'EXCLUSIVE');
+  } finally {
+    if (lines === undefined) gate.release();
+  }
+  if (lines === undefined) return undefined;
+  return {
+    release() {
+      try {
+        lines.release();
+      } finally {
+        gate.release();
+      }
+    },
+  };
+}
+
+/**
+ * A session's turn for one whole line, sent with its return in one go, as the
+ * mail nudge is: through the typing turn's gate, waited for `waitMs` at most,
+ * and then held beside any other line, so whole lines never wait on each
+ * other, only on typing one key at a time. Returns `{ release }`, or undefined
+ * when the gate did not come within `waitMs`. The kit's other lines are #482.
+ */
+export function takeLineTurn(home, session, waitMs) {
+  const gate = turnOn(home, session, 'typing', waitMs);
+  if (gate === undefined) return undefined;
+  try {
+    return turnOn(home, session, 'lines', 0, 'SHARED');
+  } finally {
+    gate.release();
+  }
+}
+
+/**
+ * How long a typing turn waits for the lines already on their way: a nudge
+ * holds its line's turn while Orca waits up to 5 s to see it start a turn.
+ */
+const LINES_WAIT_MS = 10_000;
+
+/** A turn of the kit's own for one session, on a file beside its mailbox turn's. */
+function turnOn(home, session, kind, waitMs, how) {
+  try {
+    return lockOn(mailboxLockFile(home, session).replace(/\.mailbox\.lock$/, `.${kind}.lock`), waitMs, how);
   } catch (error) {
     if (error.errcode === SQLITE_BUSY) return undefined;
     throw error;

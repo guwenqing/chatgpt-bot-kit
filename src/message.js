@@ -19,7 +19,7 @@ import { mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync,
 import os from 'node:os';
 import path from 'node:path';
 
-import { MAILBOX_WAIT_MS, readBook, takeMailboxTurn } from './book.js';
+import { MAILBOX_WAIT_MS, readBook, takeLineTurn, takeMailboxTurn } from './book.js';
 import { botDir, botNames, readBot } from './bot.js';
 import { harnessOf, isAddressOf, ownCli, reachesMail, SHELL_ENV, shellWord } from './launch.js';
 import { ackMailbox, coordinatorOf, postMessage, readMailbox, tabs, tabToTypeInto, TERMINAL_ENV, TIMED_OUT, typeIntoTab, useMailbox } from './orca.js';
@@ -456,6 +456,18 @@ const stamp = () => new Date().toISOString().replaceAll(':', '-').replace('.', '
 function nudge(to, from, subject, tab) {
   if (to.tab === undefined) return { nudged: false };
 
+  // A line typed while the kit types a command one key at a time would land
+  // in it and send it with its own return (#480): so the receiver's turn for
+  // a line first, for a bounded time, and the mail waits in its mailbox if not.
+  let turn;
+  try {
+    turn = takeLineTurn(to.home, to.session, TYPING_WAIT_MS);
+  } catch (error) {
+    return { nudged: false, nudgeTrouble: error.message };
+  }
+  if (turn === undefined) {
+    return { nudged: false, nudgeTrouble: `the kit is typing into it, and it was still at it after ${TYPING_WAIT_MS / 1000} s, so nothing was typed` };
+  }
   try {
     const found = lookAt(to);
     if (found.blocked !== undefined) return { nudged: false, blocked: found.blocked };
@@ -483,8 +495,13 @@ function nudge(to, from, subject, tab) {
     // silent `false` would read as "the session is not up", which is a
     // different thing from "Orca would not say".
     return { nudged: false, nudgeTrouble: error.message };
+  } finally {
+    turn.release();
   }
 }
+
+/** How long a nudge waits for the receiver's typing turn: a naming holds it for seconds (#480). */
+const TYPING_WAIT_MS = 5000;
 
 /**
  * The nudge a Codex sender could not decide, left for its own hook (#350, ADR

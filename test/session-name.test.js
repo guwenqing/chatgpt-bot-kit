@@ -79,20 +79,23 @@
 // keys and the record's line.
 
 import assert from 'node:assert/strict';
-import { appendFile, mkdir } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import test, { describe, it } from 'node:test';
 
 import {
+  bookOf,
   botHomeOf,
   conversationOnRecord,
   createSandbox,
+  harnessChain,
   orcaCallsOf,
   orcaCommand,
   orcaFlag,
   recordSession,
   sessionIn,
+  sessionStart,
   shellWord,
   tabsOfBot,
   throughAHarness,
@@ -106,6 +109,7 @@ import {
   CODEX_UPDATE_OFFER,
   CODEX_WORKING,
 } from './helpers/screens.js';
+import { typingTurnHeld, withLinesTurnHeld, withTypingTurnHeld } from './helpers/typing-turn.js';
 
 const BOT = 'api-bot';
 
@@ -672,6 +676,360 @@ test('a second run for the same session while the first is at work types nothing
   assert.deepEqual(await sendsInto(box, tab.tabId), renamed(), 'one command and one return, nothing of the second run among them');
 });
 
+// ------------------------------------------------- the tab the hook ran in
+//
+// Added by the developer of #480: the hook types only into the tab it ran in
+// (ORCA_TAB_ID). A Stop hook from a tab can still be waiting for idle when
+// `obk restart` opens the session's new tab and the book takes it. If, by the
+// time it would type, the book holds another tab for the session, it types
+// nothing into any tab and exits 0 quietly.
+//
+// How it is played. The hook runs in daily's tab while Orca's tui-idle calls
+// that tab busy. Orca has a second tab, a copy of daily's with its own ids,
+// its Codex launch line in it and an idle Codex screen, as a new tab after a
+// restart. Once the hook has looked at daily's tab, and before the tab turns
+// idle, the book's `tab` for daily is set to the second tab (written whole and
+// then moved into place, so the hook never reads half a book). Its
+// conversation stays the one the hook names. The contrast is the same run
+// with the book left as it was.
+
+/** Point the book's `tab` for `name` at `to`, by its text, leaving the rest of the file as it is. */
+async function bookTabMoved(bots, name, from, to) {
+  const file = bookOf(bots, BOT);
+  const text = await readFile(file, 'utf8');
+  assert.equal(text.split(`tab: ${from}\n`).length, 2, `the premise: the book holds ${from} once, for ${name}`);
+  await writeFile(`${file}.moving`, text.replace(`tab: ${from}\n`, `tab: ${to}\n`));
+  await rename(`${file}.moving`, file);
+  assert.equal((await sessionIn(bots, BOT, name)).tab, to, `the premise: the book holds ${to} for ${name} now`);
+}
+
+for (const moved of [true, false]) {
+  test(moved
+    ? 'the book takes another tab for the session while the hook waits for its own to be idle: nothing typed into either tab, and it exits 0 quietly'
+    : 'the contrast: the same run with the book left as it was types the command into the hook\'s own tab', async (t) => {
+    const box = await createSandbox(t);
+    const bots = await running(box);
+    const tab = await liveTab(box, bots);
+    const other = {
+      ...tab,
+      handle: `${tab.handle}_new`,
+      tabId: `${tab.tabId}_new`,
+      paneKey: `${tab.tabId}_new:${tab.leafId}_new`,
+      leafId: `${tab.leafId}_new`,
+      ptyId: `${tab.ptyId}_new`,
+      typed: tab.typed.slice(0, 1),
+      nextScreens: screensFor(RENAME, RENAME_TYPED, CODEX_IDLE),
+    };
+    await box.orca.set({ terminals: [...await box.orca.terminals(), other] });
+    await changeTab(box, tab.tabId, { tuiIdle: 'busy', nextScreens: screensFor(RENAME, RENAME_TYPED, CODEX_IDLE) });
+    const stop = codexRenames(box, tab.tabId);
+    const from = (await box.orca.calls()).length;
+
+    let early;
+    const run = nameHook(box, bots, tab);
+    run.then((result) => { early = result; });
+    const until = Date.now() + 20_000;
+    while (early === undefined && orcaCallsOf(await callsSince(box, from), 'terminal wait').length === 0 && Date.now() < until) await sleep(20);
+    if (early !== undefined) assertQuiet(early, 'the run, which ended before the tab went idle');
+    assert.ok(orcaCallsOf(await callsSince(box, from), 'terminal wait').length > 0, 'the premise: the hook is at work, waiting for its tab to be idle');
+    if (moved) await bookTabMoved(bots, 'daily', tab.tabId, other.tabId);
+    await changeTab(box, tab.tabId, { tuiIdle: undefined });
+    const result = await run;
+    await stop();
+
+    assertQuiet(result, moved ? 'the tab moved' : 'the tab as it was');
+    if (moved) {
+      assert.deepEqual(await sendsInto(box, tab.tabId), [], 'nothing into the tab the hook ran in: the book no longer holds it for the session');
+      assert.deepEqual(await sendsInto(box, other.tabId), [], 'and nothing into the tab the book holds now: the hook did not run there');
+    } else {
+      assert.deepEqual(await sendsInto(box, tab.tabId), renamed(), 'the command and its return, into the hook\'s own tab');
+      assert.deepEqual(await sendsInto(box, other.tabId), [], 'and nothing into the other tab');
+    }
+  });
+}
+
+// ------------------------------------------------- the thread the hook ran for
+//
+// Added from the review of #480: the thread is checked again, not only the
+// tab. If, at any look while it waits or types, the book no longer holds the
+// hook's session_id as the session's conversation (a `/new` in the same tab
+// reported a new thread through `session record`), the run stops. Before the
+// first character nothing is typed; after some, exactly those are taken back
+// in one send of backspaces, and no return goes in. Either way it exits 0
+// quietly. The contrast, the same run with the book left as it was, is the
+// moved-tab contrast above.
+
+/** The thread a `/new` in daily's tab starts, which the hook did not run for. */
+const NEW_THREAD = '0199c0de-4800-7000-8000-00000000da12';
+
+test('a /new reports a new thread in the same tab while the hook waits for idle: nothing typed, and it exits 0 quietly', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await running(box);
+  const tab = await liveTab(box, bots);
+  await changeTab(box, tab.tabId, { tuiIdle: 'busy', nextScreens: screensFor(RENAME, RENAME_TYPED, CODEX_IDLE) });
+  const stop = codexRenames(box, tab.tabId);
+  const from = (await box.orca.calls()).length;
+
+  let early;
+  const run = nameHook(box, bots, tab);
+  run.then((result) => { early = result; });
+  const until = Date.now() + 20_000;
+  while (early === undefined && orcaCallsOf(await callsSince(box, from), 'terminal wait').length === 0 && Date.now() < until) await sleep(20);
+  if (early !== undefined) assertQuiet(early, 'the run, which ended before the tab went idle');
+  assert.ok(orcaCallsOf(await callsSince(box, from), 'terminal wait').length > 0, 'the premise: the hook is at work, waiting for its tab to be idle');
+  const heard = await recordSession(box, { bots, bot: BOT, tab: tab.tabId, session: NEW_THREAD });
+  assert.equal(heard.code, 0, `the premise: the new thread's report: ${heard.stderr}`);
+  assert.equal((await sessionIn(bots, BOT, 'daily')).session, NEW_THREAD, 'the premise: the book holds the new thread for daily');
+  await changeTab(box, tab.tabId, { tuiIdle: undefined });
+  const result = await run;
+  await stop();
+
+  assertQuiet(result, 'a new thread while it waited');
+  assert.deepEqual(await sendsInto(box, tab.tabId), [], 'nothing typed: the thread the hook ran for is no longer the session\'s');
+});
+
+test('a /new reports a new thread in the same tab after three characters: those three are taken back in one send, no return, and it exits 0 quietly', async (t) => {
+  // The report runs inside Orca's answer to the third character's send, as
+  // Codex's SessionStart hook would run between two of the kit's keys, under
+  // the process chain a tab has; the third character goes in after it.
+  const box = await createSandbox(t);
+  const bots = await running(box);
+  const tab = await liveTab(box, bots);
+  await changeTab(box, tab.tabId, { nextScreens: screensFor(RENAME, RENAME_TYPED, CODEX_IDLE) });
+  const report = [box.cli, 'session', 'record', '--bots', bots, '--bot', BOT].map(shellWord).join(' ');
+  const chain = await harnessChain(box, report, { stdin: sessionStart({ session: NEW_THREAD, cwd: botHomeOf(bots, BOT) }) });
+  const sendsSoFar = orcaCallsOf(await box.orca.calls(), 'terminal send').length;
+  await box.orca.set({ runDuring: { command: 'terminal send', argv: chain.argv, env: chain.env, on: sendsSoFar + 3 } });
+  const stop = codexRenames(box, tab.tabId);
+
+  const result = await nameHook(box, bots, tab);
+  await stop();
+
+  const ran = await box.orca.ranDuring();
+  assert.equal(ran.length, 1, `the premise: the report ran during the third send, got: ${JSON.stringify(ran)}`);
+  assert.equal(ran[0].status, 0, `the premise: and without trouble: ${ran[0].stderr}`);
+  assert.equal((await sessionIn(bots, BOT, 'daily')).session, NEW_THREAD, 'the premise: the book holds the new thread for daily');
+  assertQuiet(result, 'a new thread while it typed');
+  assert.deepEqual(
+    await sendsInto(box, tab.tabId),
+    [...typed(RENAME.slice(0, 3)), { text: backspaces(RENAME.slice(0, 3)), enter: false }],
+    'the three characters typed, then exactly those three taken back, and nothing more: no return',
+  );
+});
+
+// ------------------------------------------------- the typing turn
+//
+// The architect's ruling on #480 (2026-10-04): one typing turn per session, a
+// lock beside its mailbox turn (helpers/typing-turn.js), which any kit path
+// that types into the session's tab takes. The naming takes it once it has
+// found the session idle, just before its first character, and holds it until
+// its return is sent or its text is taken back. If anything else holds it, the
+// naming types nothing and exits 0 quietly, and tries again at the next turn
+// end. Its per-character looks ask Orca's tui-idle wait for 250 ms or less, so
+// the turn is held for seconds; the look before the first character, which
+// waits for idle, keeps its own wait.
+
+test('the session\'s typing turn held by something else: the naming types nothing and exits 0 quietly; once it is free, the next turn end names the thread', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await running(box);
+  const tab = await liveTab(box, bots);
+  await changeTab(box, tab.tabId, { nextScreens: screensFor(RENAME, RENAME_TYPED, CODEX_IDLE) });
+
+  const held = await withTypingTurnHeld(bots, BOT, 'daily', () => nameHook(box, bots, tab));
+
+  assertQuiet(held, 'the turn held');
+  assert.deepEqual(await sendsInto(box, tab.tabId), [], 'nothing typed while another holds the turn');
+
+  const { result } = await nameHookPlaying(box, bots, tab);
+
+  assertQuiet(result, 'the turn free');
+  assert.deepEqual(await sendsInto(box, tab.tabId), renamed(), 'the next run names the thread');
+});
+
+test('while the naming types, it holds the session\'s typing turn; once its return is sent, the turn is free', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await running(box);
+  const tab = await liveTab(box, bots);
+  await changeTab(box, tab.tabId, { nextScreens: screensFor(RENAME, RENAME_TYPED, CODEX_IDLE) });
+  assert.equal(typingTurnHeld(bots, BOT, 'daily'), false, 'the premise: nothing holds the turn before the run');
+  const stop = codexRenames(box, tab.tabId);
+
+  let done;
+  const run = nameHook(box, bots, tab);
+  run.then((result) => { done = result; });
+  const until = Date.now() + 20_000;
+  while (done === undefined && (await sendsInto(box, tab.tabId)).length === 0 && Date.now() < until) await sleep(20);
+  if (done !== undefined) assertQuiet(done, 'the run, which ended before it typed');
+  const sofar = (await sendsInto(box, tab.tabId)).length;
+  assert.ok(sofar > 0 && sofar < RENAME.length, `the premise: the naming is partway through typing, ${sofar} send(s) in`);
+  const heldWhileTyping = typingTurnHeld(bots, BOT, 'daily');
+  const result = await run;
+  await stop();
+
+  assertQuiet(result, 'the naming');
+  assert.deepEqual(await sendsInto(box, tab.tabId), renamed(), 'the premise: the command and its return went in');
+  assert.equal(heldWhileTyping, true, 'the session\'s typing turn was held while the command was being typed');
+  assert.equal(typingTurnHeld(bots, BOT, 'daily'), false, 'and is free once the run is over');
+});
+
+test('another session\'s typing turn held does not stop the naming of this one', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await running(box);
+  const tab = await liveTab(box, bots);
+  await changeTab(box, tab.tabId, { nextScreens: screensFor(RENAME, RENAME_TYPED, CODEX_IDLE) });
+
+  const { result } = await withTypingTurnHeld(bots, BOT, 'review', () => nameHookPlaying(box, bots, tab));
+
+  assertQuiet(result, 'review\'s turn held');
+  assert.deepEqual(await sendsInto(box, tab.tabId), renamed(), 'one turn per session: daily is named');
+});
+
+// A whole line already on its way into the session's tab (a nudge holding the
+// session's line turn) goes first: the naming, about to type, waits up to 10 s
+// for it. A line that finishes in that time is followed by the naming as
+// usual; one that does not leaves the naming to type nothing, and exit 0
+// quietly, until the next turn end.
+
+test('a nudge\'s line on its way into the tab for longer than 10 s: the naming waits for it, then types nothing and exits 0 quietly', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await running(box);
+  const tab = await liveTab(box, bots);
+  await changeTab(box, tab.tabId, { nextScreens: screensFor(RENAME, RENAME_TYPED, CODEX_IDLE) });
+
+  const started = Date.now();
+  const result = await withLinesTurnHeld(bots, BOT, 'daily', () => nameHook(box, bots, tab));
+  const took = Date.now() - started;
+
+  assertQuiet(result, 'a line on its way');
+  assert.deepEqual(await sendsInto(box, tab.tabId), [], 'nothing typed while the line turn was held');
+  assert.ok(took >= 8_000, `it waited for the line, up to 10 s, before giving up; it took ${took} ms`);
+  assert.ok(took < 60_000, `and the wait is bounded; it took ${took} ms`);
+});
+
+test('a nudge\'s line on its way into the tab that finishes after about 2 s: the naming then types the command as usual', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await running(box);
+  const tab = await liveTab(box, bots);
+  await changeTab(box, tab.tabId, { nextScreens: screensFor(RENAME, RENAME_TYPED, CODEX_IDLE) });
+
+  const { result, typedWhileHeld } = await withLinesTurnHeld(bots, BOT, 'daily', async (release) => {
+    const run = nameHookPlaying(box, bots, tab);
+    await sleep(2_000);
+    const sends = await sendsInto(box, tab.tabId);
+    release();
+    return { ...(await run), typedWhileHeld: sends };
+  });
+
+  assertQuiet(result, 'a line that finished');
+  assert.deepEqual(typedWhileHeld, [], 'nothing typed while the line was on its way');
+  assert.deepEqual(await sendsInto(box, tab.tabId), renamed(), 'then the command and its return');
+});
+
+test('each look between the characters asks Orca\'s tui-idle wait for 250 ms or less', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await running(box);
+  const tab = await liveTab(box, bots);
+  await changeTab(box, tab.tabId, { nextScreens: screensFor(RENAME, RENAME_TYPED, CODEX_IDLE) });
+  const from = (await box.orca.calls()).length;
+
+  const { result } = await nameHookPlaying(box, bots, tab);
+
+  assertQuiet(result, 'the naming');
+  assert.deepEqual(await sendsInto(box, tab.tabId), renamed(), 'the premise: the command and its return went in');
+  const calls = await callsSince(box, from);
+  const sendsAt = calls.map((call, at) => ({ call, at })).filter(({ call }) => orcaCommand(call) === 'terminal send' && orcaFlag(call, '--terminal') === tab.handle).map(({ at }) => at);
+  const between = calls.slice(sendsAt[0] + 1, sendsAt[RENAME.length - 1])
+    .filter((call) => orcaCommand(call) === 'terminal wait' && orcaFlag(call, '--terminal') === tab.handle && orcaFlag(call, '--for') === 'tui-idle');
+  assert.ok(between.length >= RENAME.length - 1, `the premise: a look before each character after the first, got ${between.length}`);
+  const asked = between.map((call) => orcaFlag(call, '--timeout-ms'));
+  assert.deepEqual(
+    asked.filter((ms) => !(Number(ms) > 0 && Number(ms) <= 250)),
+    [],
+    `every look between characters gives --timeout-ms of 250 or less, got: ${JSON.stringify(asked)}`,
+  );
+});
+
+// ------------------------------------------------- an error after some characters
+//
+// From the review of #480: any error once some characters are in (a refused
+// or failed `terminal send`, or a look Orca refuses) makes the run take back
+// exactly the characters typed so far, in one send of backspaces, and stop
+// with no return. It exits 0 quietly, even when the take-back itself fails.
+
+/** The sends are some first characters of the command, then exactly those taken back in one send, and nothing more. Answers how many went in. */
+function assertTakenBack(sends, what) {
+  const keys = sends.filter((one) => !/^\x7f+$/.test(one.text));
+  const n = keys.length;
+  assert.ok(n >= 1 && n < RENAME.length, `${what}: the premise, some characters went in before the error, got: ${JSON.stringify(sends)}`);
+  assert.deepEqual(
+    sends,
+    [...typed(RENAME.slice(0, n)), { text: backspaces(RENAME.slice(0, n)), enter: false }],
+    `${what}: the ${n} character(s) typed, then exactly those taken back in one send, and no return`,
+  );
+  return n;
+}
+
+test('Orca refuses the third character\'s send and takes the ones after it: the two typed are taken back in one send, no return, and it exits 0 quietly', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await running(box);
+  const tab = await liveTab(box, bots);
+  await changeTab(box, tab.tabId, { nextScreens: screensFor(RENAME, RENAME_TYPED, CODEX_IDLE) });
+  const sendsSoFar = orcaCallsOf(await box.orca.calls(), 'terminal send').length;
+  await box.orca.set({ fail: { 'terminal send': { code: 'runtime_error', message: 'transient send failure', after: sendsSoFar + 2, times: 1 } } });
+  const stop = codexRenames(box, tab.tabId);
+
+  const result = await nameHook(box, bots, tab);
+  await stop();
+
+  assertQuiet(result, 'a refused send');
+  assert.deepEqual(
+    await sendsInto(box, tab.tabId),
+    [...typed('/r'), { text: backspaces('/r'), enter: false }],
+    'the two characters that went in, then exactly those two taken back in one send, and nothing more',
+  );
+});
+
+test('Orca refuses the third character\'s send and the take-back after it: no return, nothing more typed, and it exits 0 quietly', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await running(box);
+  const tab = await liveTab(box, bots);
+  await changeTab(box, tab.tabId, { nextScreens: screensFor(RENAME, RENAME_TYPED, CODEX_IDLE) });
+  const sendsSoFar = orcaCallsOf(await box.orca.calls(), 'terminal send').length;
+  await box.orca.set({ fail: { 'terminal send': { code: 'runtime_error', message: 'transient send failure', after: sendsSoFar + 2, times: 2 } } });
+  const stop = codexRenames(box, tab.tabId);
+
+  const result = await nameHook(box, bots, tab);
+  await stop();
+
+  assertQuiet(result, 'a refused take-back');
+  const sends = await sendsInto(box, tab.tabId);
+  assert.deepEqual(sends.slice(0, 2), typed('/r'), `the premise: two characters went in, got: ${JSON.stringify(sends)}`);
+  assert.deepEqual(
+    sends.slice(2).filter((one) => !/^\x7f+$/.test(one.text)),
+    [],
+    `after the error, nothing but backspaces: no more characters and no return, got: ${JSON.stringify(sends)}`,
+  );
+});
+
+test('Orca refuses a look once some characters are in: exactly those are taken back in one send, no return, and it exits 0 quietly', async (t) => {
+  // Orca refuses the fifth tui-idle look the run makes, once: past the look
+  // before the first character, and before the last. The refusal is set before
+  // the run, so nothing writes Orca's world while the run types into it.
+  const box = await createSandbox(t);
+  const bots = await running(box);
+  const tab = await liveTab(box, bots);
+  await changeTab(box, tab.tabId, { nextScreens: screensFor(RENAME, RENAME_TYPED, CODEX_IDLE) });
+  const waitsSoFar = orcaCallsOf(await box.orca.calls(), 'terminal wait').length;
+  await box.orca.set({ fail: { 'terminal wait': { code: 'runtime_error', message: 'transient wait failure', after: waitsSoFar + 4, times: 1 } } });
+  const stop = codexRenames(box, tab.tabId);
+
+  const result = await nameHook(box, bots, tab);
+  await stop();
+
+  assertQuiet(result, 'a refused look');
+  assertTakenBack(await sendsInto(box, tab.tabId), 'a refused look');
+});
+
 // ------------------------------------------------- the waits that run out
 //
 // Each of these costs its whole wait in real time, so they run side by side.
@@ -740,6 +1098,24 @@ describe('the waits that run out, side by side', { concurrency: true }, () => {
       assert.ok(took < 90_000, `bounded; it took ${took} ms`);
     });
   }
+
+  it('a send Orca does not answer for 90 s does not hold the hook: it exits 0 quietly within a minute', async (t) => {
+    // From the review of #480: every Orca call the hook makes has a time
+    // bound, the sends included. The first send is answered 90 s late; the
+    // rest at once.
+    const box = await createSandbox(t);
+    const bots = await running(box);
+    const tab = await liveTab(box, bots);
+    await changeTab(box, tab.tabId, { nextScreens: screensFor(RENAME, RENAME_TYPED, CODEX_IDLE) });
+    await box.orca.set({ hang: { command: 'terminal send', ms: 90_000, times: 1, from: orcaCallsOf(await box.orca.calls(), 'terminal send').length } });
+
+    const started = Date.now();
+    const result = await nameHook(box, bots, tab);
+    const took = Date.now() - started;
+
+    assertQuiet(result, 'a send Orca does not answer');
+    assert.ok(took < 60_000, `a quiet Orca does not hold the hook; it took ${took} ms`);
+  });
 
   it('a line in session_index.jsonl that is not JSON: the hook still exits 0 quietly', async (t) => {
     const box = await createSandbox(t);

@@ -747,6 +747,11 @@ Proved live on 2026-09-21 (Orca 1.4.205), in throwaway workspaces since removed:
   open, so the hook's timeout is 300 s. Codex prints nothing for a rename and draws typed text a
   cell at a time, so the tab's output does not show the command whole; `session_index.jsonl` is
   the record of it. The screen with the whole command typed was not captured.
+  Read in the same source (`hooks/src/engine/command_runner.rs`), not seen live: Codex starts each
+  command hook in a session of its own (`ProcessMode::NewSession`), and at the hook's timeout it
+  kills the hook's whole process group. A hook still running when its Codex is killed hard can
+  outlive it, and the closing terminal does not reach it. So the naming types only while the book
+  still holds the hook's tab and conversation, and stops well before the timeout.
 - **Trusting a hooks file does not replay what it missed.** A conversation that was already running when the file was still untrusted is never reported: no SessionStart arrives for it after `t`, and nothing else says the kit missed one. The next conversation reports normally. So "no id recorded" cannot be read as "there was no conversation". **verified** (live, in the PR #88 review)
 - **Codex records no pid anywhere a reader can use.** `~/.codex/thread-writer-locks/<thread>.lock` is an empty lock file; `~/.codex/session_index.jsonl` holds `{ id, thread_name, updated_at }`; a rollout's `session_meta` carries the id, the folder and the time and no pid. So there is no Codex equivalent of Claude Code's live-session registry. **verified** (read on this machine, 0.155.1)
 - **Neither harness links a new conversation to the one the same process had before.** A `/clear` or a `/new` leaves nothing behind saying "this replaced that". With the point above, that means **a conversation that has ended cannot be tied to the session that had it** by anything either harness writes down — which is why the kit never assigns an unrecorded conversation to a session and says what it found instead. **verified** (live, and by reading both harnesses' own files)
