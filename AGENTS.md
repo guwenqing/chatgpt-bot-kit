@@ -12,10 +12,12 @@ work from a later slice into an earlier one.
 
 ## AssuredLoop
 
-AssuredLoop keeps this project's requests and spec: before work that changes a promise, read <dir>/skills/assuredloop/SKILL.md and run `al context`.
+AssuredLoop keeps this project's requests and spec: before work that changes a promise, read $(npm root -g)/@assuredloop/cli/skills/assuredloop/SKILL.md and run `al context`.
 
-`<dir>` is a clone of https://github.com/guwenqing/assuredloop at `056d24c`. The
-baseline is `docs/prd/` (`.assuredloop`); the decision records are `docs/adr/`.
+`al` is the npm package `@assuredloop/cli` at exactly `0.1.0`:
+`npm install --global @assuredloop/cli@0.1.0`. CI runs `al check --strict` at that
+version on every pull request. The baseline is `docs/prd/` (`.assuredloop`); the
+decision records are `docs/adr/`.
 Every PR states its tier, in its commit message (`al check` reads it there) and the PR:
 
 - No promise in the baseline changes: tier 0. Write no record. `Tier: 0 — <what it restores>`.

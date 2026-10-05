@@ -48,6 +48,23 @@ jobs:
         env:
           SHARD: ${{ matrix.shard }}/9
 
+  # Every pull request states its tier (AGENTS.md), and AssuredLoop's `al check
+  # --strict` fails on a not ok the branch owns. It compares the branch with
+  # main, so it needs the whole history. `al` comes from npm at the exact
+  # version AGENTS.md names, the same pinned install a developer makes.
+  assuredloop:
+    name: al check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 25.8.0
+      - run: npm install --global @assuredloop/cli@0.1.0
+      - run: al check --strict
+
   # The one check to read: it passes only when every shard passed. It runs even
   # when a shard failed or was cancelled, because a job that is skipped reads as
   # passing.
