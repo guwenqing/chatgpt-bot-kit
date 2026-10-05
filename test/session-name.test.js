@@ -109,7 +109,7 @@ import {
   CODEX_UPDATE_OFFER,
   CODEX_WORKING,
 } from './helpers/screens.js';
-import { typingTurnHeld, withLinesTurnHeld, withTypingTurnHeld } from './helpers/typing-turn.js';
+import { linesTurnWanted, typingTurnHeld, withLinesTurnHeld, withTypingTurnHeld } from './helpers/typing-turn.js';
 
 const BOT = 'api-bot';
 
@@ -930,9 +930,10 @@ test('a nudge\'s line on its way into the tab that finishes after about 2 s: the
 // further wait, before its first key: the book's tab and thread, idle with no
 // question and no at-work row, and the input line empty or its placeholder.
 // If any of these no longer holds, it types nothing and exits 0 quietly.
-// Each case below holds the line turn, waits until the naming holds the typing
-// turn (so it is waiting for the line), changes one thing, then lets the line
-// turn go. The contrast is the test above, where nothing changes.
+// Each case below holds the line turn, waits until the naming wants the line
+// turn alone (so it holds the typing turn and is waiting for the line), sees
+// that it holds the typing turn, changes one thing, then lets the line turn
+// go. The contrast is the test above, where nothing changes.
 
 for (const { what, change } of [
   {
@@ -959,8 +960,11 @@ for (const { what, change } of [
       const run = nameHook(box, bots, tab);
       run.then((answer) => { done = answer; });
       const until = Date.now() + 20_000;
-      while (done === undefined && !typingTurnHeld(bots, BOT, 'daily') && Date.now() < until) await sleep(25);
-      const held = done === undefined && typingTurnHeld(bots, BOT, 'daily');
+      // Wait on the line turn alone: a look at the typing turn takes it for a
+      // moment, and the naming that comes to it then finds it held and gives up.
+      let wanted = false;
+      while (done === undefined && !(wanted = await linesTurnWanted(bots, BOT, 'daily')) && Date.now() < until) await sleep(25);
+      const held = done === undefined && wanted && typingTurnHeld(bots, BOT, 'daily');
       if (held) await change(box, bots, tab);
       release();
       return { result: await run, reached: held };
