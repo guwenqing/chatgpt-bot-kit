@@ -49,7 +49,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { access, chmod, constants, lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { access, chmod, constants, lstat, mkdir, mkdtemp, readFile, readdir, readlink, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -241,6 +241,15 @@ export async function createSandbox(t) {
   };
 
   const readState = async () => JSON.parse(await readFile(stateFile, 'utf8'));
+  // Saved whole or not at all, as the fake saves it (#438): a plain write
+  // empties the file before it fills it, and a read in between, the test's own
+  // or the fake's, finds it half written.
+  let saves = 0;
+  const saveState = async (state) => {
+    const next = `${stateFile}.${process.pid}.${saves++}.tmp`;
+    await writeFile(next, `${JSON.stringify(state, null, 2)}\n`);
+    await rename(next, stateFile);
+  };
 
   /** One of the fake osascript's logs, `{ args }` per call, oldest first. */
   const osascriptLog = async (name) => {
@@ -368,7 +377,7 @@ export async function createSandbox(t) {
         const terminal = state.terminals.find((entry) => entry.handle === handle);
         if (terminal === undefined) throw new Error(`the fake Orca has no terminal ${handle} to orphan`);
         terminal.orphaned = orphaned;
-        await writeFile(stateFile, `${JSON.stringify(state, null, 2)}\n`);
+        await saveState(state);
       },
       /**
        * Change what the fake Orca knows or how it misbehaves; see
@@ -377,7 +386,7 @@ export async function createSandbox(t) {
        */
       async set(changes) {
         const from = 'waitIdle' in changes ? { waitIdleFrom: await waitsSoFar() } : {};
-        await writeFile(stateFile, `${JSON.stringify({ ...await readState(), ...changes, ...from }, null, 2)}\n`);
+        await saveState({ ...await readState(), ...changes, ...from });
       },
       /**
        * Orca's own settings file in the sandbox home — its per-agent default

@@ -9,6 +9,7 @@
 // already on its way goes first (developer-480's design, after test A4 of
 // nudge-left-for-hook.test.js).
 
+import { execFile } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -89,4 +90,31 @@ export async function withLinesTurnHeld(bots, bot, session, body) {
   } finally {
     release();
   }
+}
+
+/**
+ * Whether a new line would be refused the session's line turn right now: a
+ * read tried without waiting is refused as busy while something holds the turn
+ * exclusive or waits to, as the naming does once it holds the typing turn. The
+ * try never touches the typing turn, so it cannot make the naming find that
+ * turn held. It runs in a process of its own, because SQLite lets a second
+ * connection of a process that already holds the turn shared (as
+ * `withLinesTurnHeld` does) share it without asking the system.
+ */
+export function linesTurnWanted(bots, bot, session) {
+  const file = linesTurnFile(bots, bot, session);
+  const tryRead = [
+    "const { DatabaseSync } = require('node:sqlite');",
+    'const db = new DatabaseSync(process.argv[1], { timeout: 0 });',
+    "try { db.exec('BEGIN'); db.prepare('SELECT count(*) FROM sqlite_master').get(); db.exec('ROLLBACK'); }",
+    "catch (error) { if (error?.errcode === 5 || /\\b(locked|busy)\\b/i.test(String(error?.message))) process.exit(3); throw error; }",
+    'finally { db.close(); }',
+  ].join('\n');
+  return new Promise((resolve, reject) => {
+    execFile(process.execPath, ['-e', tryRead, file], (error) => {
+      if (error === null) resolve(false);
+      else if (error.code === 3) resolve(true);
+      else reject(error);
+    });
+  });
 }
