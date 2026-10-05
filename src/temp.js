@@ -478,17 +478,35 @@ const NOT_NOW_CHOICE = '2. Not now';
 /** A row as a shape is compared: trimmed, with its pointer, wherever it sits, taken out. */
 const unpointed = (row) => row.replace('❯', ' ').trim();
 
+/** The full-width rule Claude Code draws right above the screen's title: `─` in 2.1.289, `▔` in 2.1.283. */
+const ABOVE_TITLE = /^(?:─+|▔+)$/;
+
 /**
  * The Teach screen on `rows`, from its title to its foot, the rows below the
  * foot (the input box) left out: `{ shape, block }` when its non-blank rows
- * are one known shape's and nothing else, the pointer on exactly one, nothing
- * missing and nothing added; otherwise `{ misfit }`, why not.
+ * are one known shape's, in its order and nothing else, with the pointer on
+ * exactly one; otherwise `{ misfit }`, why not.
+ *
+ * It counts only in the frame Claude Code drew it in, in both live captures:
+ * a full-width rule as the non-blank row right above the title, and, right
+ * below the foot, nothing or the input box's top rule. A quote of the screen
+ * in a turn, with the turn's own rows around it, is refused (the review of
+ * #490). A quote of the frame as well would still look the same: the frame
+ * narrows what passes, and is no proof that the screen is live.
  */
 function teachScreen(rows) {
   const from = rows.findIndex((row) => row.trim() === TEACH_TITLE);
   if (from < 0) return { misfit: `it shows no "${TEACH_TITLE}"` };
   const foot = rows.findIndex((row, at) => at > from && TEACH_FOOT.test(row));
   if (foot < 0) return { misfit: `it shows "${TEACH_TITLE}" with no foot row ending "Esc to cancel" under it` };
+  const above = rows.slice(0, from).findLast((row) => row.trim() !== '');
+  if (above === undefined || !ABOVE_TITLE.test(above.trim())) {
+    return { misfit: `the row right above its title is ${above === undefined ? 'nothing' : `"${above.trim()}"`}, not the full-width rule Claude Code draws there` };
+  }
+  const below = rows.slice(foot + 1).find((row) => row.trim() !== '');
+  if (below !== undefined && !below.trimStart().startsWith('─')) {
+    return { misfit: `the row right below its foot is "${below.trim()}", not the top rule of the input box` };
+  }
   const block = rows.slice(from, foot + 1).filter((row) => row.trim() !== '');
   const misfits = TEACH_SHAPES.map((shape) => {
     const pointers = block.filter((row) => row.includes('❯')).length;
@@ -498,6 +516,8 @@ function teachScreen(rows) {
     const missing = shape.rows.find((row) => !block.map(unpointed).includes(row));
     if (missing !== undefined) return `no row ${missing}, which ${shape.name} has`;
     if (block.length !== shape.rows.length) return `${block.length} rows, where ${shape.name} has ${shape.rows.length}`;
+    const moved = block.findIndex((row, at) => unpointed(row) !== shape.rows[at]);
+    if (moved >= 0) return `the row ${block[moved].trim()} where ${shape.name} has ${shape.rows[moved]}`;
     return undefined;
   });
   const fits = misfits.findIndex((misfit) => misfit === undefined);
@@ -512,8 +532,8 @@ const wholeScreen = (rows) => rows.filter((row) => row.trim() !== '').map((row) 
  * Answer the first-run screen of a temporary session the caller made (#489):
  * Claude Code's Teach auto mode screen, in one of the shapes the kit knows,
  * matched exactly. The 2.1.283 form gets Esc. The 2.1.289 list gets arrows to
- * "2. Not now", a second look that the pointer is there and the list is
- * otherwise as it was, and only then a return. Anything else is refused with
+ * "2. Not now" where needed, a second look that the pointer is there and the
+ * list is otherwise as it was, and only then a return. Anything else is refused with
  * nothing typed. Like `trustHooks`, it is one command a permission rule of its
  * own can allow. Returns `{ bot, session, maker, sent }`, `sent` saying what
  * answered it.
@@ -539,16 +559,16 @@ export async function answerTemp(bots, { tab, name }) {
       }
       const at = seen.block.findIndex((row) => row.includes('❯'));
       const moves = seen.block.findIndex((row) => unpointed(row) === NOT_NOW_CHOICE) - at;
-      if (moves !== 0) {
-        send(moves > 0 ? '\x1b[B'.repeat(moves) : '\x1b[A'.repeat(-moves));
-        // The guard: a return goes in only on "2. Not now", the list otherwise as it was.
-        const again = look();
-        const now = again.rows === undefined ? { misfit: `it could not be read again (${again.unreadable})` } : teachScreen(again.rows);
-        const on = now.block?.find((row) => row.includes('❯'));
-        if (now.shape !== seen.shape || unpointed(on) !== NOT_NOW_CHOICE) {
-          const why = now.misfit ?? `its pointer is on ${unpointed(on)}, not ${NOT_NOW_CHOICE}`;
-          throw new Error(`${run}: the arrows to "${NOT_NOW_CHOICE}" went in, but then ${why}, so no return was sent. Look at its tab.${again.rows === undefined ? '' : ` It shows:\n${wholeScreen(again.rows)}`}`);
-        }
+      if (moves !== 0) send(moves > 0 ? '\x1b[B'.repeat(moves) : '\x1b[A'.repeat(-moves));
+      // The guard, before every return, arrows or none: the list again, its
+      // rows in the same order (an exact shape), and the pointer on "2. Not now".
+      const again = look();
+      const now = again.rows === undefined ? { misfit: `it could not be read again (${again.unreadable})` } : teachScreen(again.rows);
+      const on = now.block?.find((row) => row.includes('❯'));
+      if (now.shape !== seen.shape || unpointed(on) !== NOT_NOW_CHOICE) {
+        const why = now.misfit ?? `its pointer is on ${unpointed(on)}, not ${NOT_NOW_CHOICE}`;
+        const sent = moves === 0 ? 'Nothing was typed' : `The arrows to "${NOT_NOW_CHOICE}" went in`;
+        throw new Error(`${run}: ${sent}, but then ${why}, so no return was sent. Look at its tab.${again.rows === undefined ? '' : ` It shows:\n${wholeScreen(again.rows)}`}`);
       }
       send('\r');
       return `"${NOT_NOW_CHOICE}"`;

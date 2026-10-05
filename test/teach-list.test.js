@@ -61,3 +61,48 @@ test('a screen with no title, or no foot under it, is not the list; nor is the 2
   assert.notEqual(onlyTeachListOf(CLAUDE_TEACH_LIST.filter((row) => !row.includes('Esc to cancel'))), undefined, 'no foot');
   assert.notEqual(onlyTeachListOf(CLAUDE_TEACH_FORM), undefined, 'the 2.1.283 form');
 });
+
+// The ruling on the review of PR #490: the same rows in the same order, and
+// framed as Claude Code draws the list, not as a turn quotes it.
+
+/** The captured list from its title to its foot. */
+const listBlock = CLAUDE_TEACH_LIST.slice(
+  CLAUDE_TEACH_LIST.findIndex((row) => row.includes('Teach auto mode')),
+  CLAUDE_TEACH_LIST.findIndex((row) => row.includes('Enter to confirm · Esc to cancel')) + 1,
+);
+
+test('a list with its rows in another order is not the captured one', () => {
+  const swapped = changed((row) => {
+    if (row === '  ❯ 1. Yes') return '    3. Don\'t show again';
+    if (row === '    3. Don\'t show again') return '  ❯ 1. Yes';
+    return row;
+  });
+  assert.match(onlyTeachListOf(swapped) ?? '', /order/, 'rows swapped');
+});
+
+test('a whole list quoted in history, with a line of the turn above its title or below its foot, is not drawn there', () => {
+  const input = ['─'.repeat(120), '❯ run the pending command', '─'.repeat(120), '  ⏵⏵ auto mode on'];
+  assert.notEqual(
+    onlyTeachListOf(['❯ What was the list?', '⏺ The captured list was:', ...listBlock, '  This is a quotation from the previous run.', ...input]),
+    undefined,
+    'quoted, with lines of the turn around it',
+  );
+  const foot = CLAUDE_TEACH_LIST.findIndex((row) => row.includes('Enter to confirm · Esc to cancel'));
+  const title = CLAUDE_TEACH_LIST.findIndex((row) => row.includes('Teach auto mode'));
+  assert.notEqual(
+    onlyTeachListOf([...CLAUDE_TEACH_LIST.slice(0, title), '⏺ The captured list was:', ...CLAUDE_TEACH_LIST.slice(title)]),
+    undefined,
+    'a line of the turn right above its title, under the rule',
+  );
+  assert.notEqual(
+    onlyTeachListOf([...CLAUDE_TEACH_LIST.slice(0, foot + 1), '  This is a quotation from the previous run.', ...CLAUDE_TEACH_LIST.slice(foot + 1)]),
+    undefined,
+    'a line of the turn right below its foot, above the input box',
+  );
+  assert.notEqual(onlyTeachListOf(listBlock), undefined, 'nothing at all above its title');
+});
+
+test('the list drawn under a rule of ▔, or with nothing below its foot, is drawn there', () => {
+  assert.equal(onlyTeachListOf(['▔'.repeat(120), ...listBlock]), undefined, 'under ▔, nothing below');
+  assert.equal(onlyTeachListOf(['─'.repeat(120), ...listBlock, '']), undefined, 'under ─, a blank row below');
+});

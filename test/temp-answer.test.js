@@ -43,6 +43,15 @@
 // never --enter, never Esc, never 1 or 3 (D); and the title must go after
 // (E). Tests TB, TD and TE.
 //
+// And the ruling on the review of PR #490: the rows between title and foot in
+// the known order (H); a form or list counts only framed as Claude Code draws
+// it, a rule of `─` or `▔` right above the title and, below the foot, nothing
+// or the input box's rule starting with `─`, so one quoted in a turn is
+// refused (I); the second look before the return on the list even when the
+// pointer starts on "2. Not now" (J); and the guard after the arrows finds the
+// first look's rows in the same order, only the pointer moved (K). Tests TH,
+// TI, TJ, and cases added to TD.
+//
 // Every run is in the sandbox (helpers/cli.js): the fake Orca shows each tab
 // the screen a test gives it, and moves it on at the next key when told to
 // (`screenAfterSend`, `nextScreens`).
@@ -214,10 +223,10 @@ function textsSent(sent, tab) {
   return sends.map((one) => one.text);
 }
 
-/** The kit's reads of one tab's screen and its sends into it, in the order Orca got them. */
-async function readsAndSendsOf(box, tab) {
+/** The kit's reads of one tab's screen and its sends into it, from Orca's call `from` on, in the order Orca got them. */
+async function readsAndSendsOf(box, tab, from) {
   const handle = (await box.orca.terminals()).find((terminal) => terminal.tabId === tab).handle;
-  return (await box.orca.calls())
+  return (await box.orca.calls()).slice(from)
     .filter((call) => orcaFlag(call, '--terminal') === handle)
     .map((call) => ({ command: orcaCommand(call), text: orcaFlag(call, '--text') }))
     .filter((call) => call.command === 'terminal read' || call.command === 'terminal send');
@@ -227,24 +236,53 @@ async function readsAndSendsOf(box, tab) {
  * The list answered: exit 0, keys into drafter's tab and no other, the arrows
  * `arrows` first and then a return alone as the last send, and a read of the
  * screen between the last arrow and the return, which is the guard's look.
+ * With no arrows, the second look is still there (J): two reads before the
+ * return. `from` is how many calls Orca had before the command ran.
  */
-async function assertNotNowInto(box, result, before, tab, arrows, what) {
+async function assertNotNowInto(box, result, before, tab, arrows, what, from) {
   assert.equal(result.code, 0, `${what}: it answers the list:\n${result.stdout}${result.stderr}`);
   const sent = await sentSince(box, before);
   assert.deepEqual(Object.keys(sent), [tab], `${what}: keys go into the session's tab and no other: ${JSON.stringify(sent)}`);
   const texts = textsSent(sent, tab);
   assert.equal(texts.at(-1), RETURN, `${what}: the last send is a return alone: ${JSON.stringify(texts)}`);
   assert.equal(texts.join(''), `${arrows}${RETURN}`, `${what}: the arrows to "2. Not now", then the return, and nothing else: ${JSON.stringify(texts)}`);
-  if (arrows !== '') {
-    const calls = await readsAndSendsOf(box, tab);
-    const back = calls.findLastIndex((call) => call.command === 'terminal send' && call.text === RETURN);
-    const lastArrow = calls.findLastIndex((call, at) => at < back && call.command === 'terminal send');
-    assert.ok(
-      calls.slice(lastArrow + 1, back).some((call) => call.command === 'terminal read'),
-      `${what}: the screen is read again after the arrows and before the return: ${JSON.stringify(calls)}`,
-    );
-  }
+  const calls = await readsAndSendsOf(box, tab, from);
+  const back = calls.findLastIndex((call) => call.command === 'terminal send' && call.text === RETURN);
+  const lastArrow = calls.findLastIndex((call, at) => at < back && call.command === 'terminal send');
+  const looks = calls.slice(lastArrow + 1, back).filter((call) => call.command === 'terminal read').length;
+  assert.ok(
+    looks >= (arrows === '' ? 2 : 1),
+    arrows === ''
+      ? `${what}: the screen is read twice before the return, the first look and the second: ${JSON.stringify(calls)}`
+      : `${what}: the screen is read again after the arrows and before the return: ${JSON.stringify(calls)}`,
+  );
 }
+
+/** The captured list's own rows, from its title to its foot. */
+const listBlockOf = (rows) => rows.slice(
+  rows.findIndex((row) => row.trim() === TITLE),
+  rows.findIndex((row) => row.includes('Enter to confirm · Esc to cancel')) + 1,
+);
+
+/** A turn's input box, a draft in it, as the reviewer's probes put it below a quotation. */
+const INPUT_WITH_DRAFT = ['─'.repeat(120), '❯ run the pending command', '─'.repeat(120), '  ⏵⏵ auto mode on'];
+
+/** `rows` with the rows of 1 and 3 swapped, the pointer staying with its row. */
+const oneAndThreeSwapped = (rows) => {
+  const one = rows.findIndex((row) => /1\. Yes$/.test(row));
+  const three = rows.findIndex((row) => /3\. Don't show again$/.test(row));
+  return rows.map((row, at) => (at === one ? rows[three] : at === three ? rows[one] : row));
+};
+
+/** `rows` with `line` put in right above the title, or right below the foot. */
+const lineAboveTitle = (rows, line) => {
+  const at = rows.findIndex((row) => row.trim() === TITLE);
+  return [...rows.slice(0, at), line, ...rows.slice(at)];
+};
+const lineBelowFoot = (rows, line) => {
+  const at = rows.findIndex((row) => / · Esc to cancel$/.test(row));
+  return [...rows.slice(0, at + 1), line, ...rows.slice(at + 1)];
+};
 
 /** How many of the tests below run at once: each brings up a fleet of its own in its own sandbox. */
 const AT_ONCE = { concurrency: 8 };
@@ -368,7 +406,7 @@ describe('obk temp answer', AT_ONCE, () => {
       if (row.includes('Also scan your other repos')) return row.replace('  Also', '❯ Also');
       return row;
     })],
-    ['the form\'s own rows alone, other history gone, a blank row below', [...formRows, '']],
+    ['the form\'s own rows alone under its rule, other history gone, a blank row below', ['▔'.repeat(120), ...formRows, '']],
   ]) {
     test(`TA3 ${label}: Esc alone, into the session's tab alone`, async (t) => {
       const box = await createSandbox(t);
@@ -431,8 +469,9 @@ describe('obk temp answer', AT_ONCE, () => {
       await showIn(box, bots, 'drafter', { screen, nextScreens: after });
       const drafter = (await sessionIn(bots, BOT, 'drafter')).tab;
       const before = await sendsByTab(box);
+      const from = (await box.orca.calls()).length;
 
-      await assertNotNowInto(box, await answer(box, planner, 'drafter'), before, drafter, arrows, label);
+      await assertNotNowInto(box, await answer(box, planner, 'drafter'), before, drafter, arrows, label, from);
     });
   }
 
@@ -453,6 +492,7 @@ describe('obk temp answer', AT_ONCE, () => {
   for (const [label, afterArrow, row] of [
     ['the pointer did not move', CLAUDE_TEACH_LIST, /❯ 1\. Yes/],
     ['the pointer went on to "3. Don\'t show again"', CLAUDE_TEACH_LIST_ON_THREE, /❯ 3\. Don't show again/],
+    ['the pointer is on "2. Not now" but 1 and 3 have swapped places (K)', oneAndThreeSwapped(CLAUDE_TEACH_LIST_ON_NOT_NOW), /3\. Don't show again[\s\S]*❯ 2\. Not now[\s\S]*1\. Yes/],
     ['the pointer is on "2. Not now" but another row changed', listChanged(CLAUDE_TEACH_LIST_ON_NOT_NOW, (one) => (one === '    3. Don\'t show again' ? '    3. Never ask again' : one)), /3\. Never ask again/],
   ]) {
     test(`TD the guard: after the down arrow ${label}, so no return goes in, and it says what it saw`, async (t) => {
@@ -493,6 +533,47 @@ describe('obk temp answer', AT_ONCE, () => {
       assert.match(said, row, `it prints what the screen shows, this row among it: ${said}`);
     });
   }
+
+  // H: the known rows in their order. I: framed as Claude Code draws it, a
+  // rule right above the title and, below the foot, nothing or the input box's
+  // rule; a whole form or list quoted in a turn is not drawn there (the
+  // reviewer's probes on PR #490).
+  for (const [label, screen, row] of [
+    ['H the list with "1. Yes" and "3. Don\'t show again" swapped', oneAndThreeSwapped(CLAUDE_TEACH_LIST), /3\. Don't show again[\s\S]*2\. Not now[\s\S]*❯ 1\. Yes/],
+    ['H the 2.1.283 form with its two scan rows swapped', CLAUDE_TEACH_FORM.map((one) => {
+      if (one.includes('Also scan shell history')) return '     Also scan your other repos  false';
+      if (one.includes('Also scan your other repos')) return '   ❯ Also scan shell history     true';
+      return one;
+    }), /Also scan your other repos[\s\S]*Also scan shell history/],
+    ['I the whole list quoted in a turn, a line of the turn below it, then the input box with a draft', ['❯ What was the list?', '⏺ The captured list was:', ...listBlockOf(CLAUDE_TEACH_LIST_ON_NOT_NOW), '  This is a quotation from the previous run.', ...INPUT_WITH_DRAFT], /This is a quotation from the previous run/],
+    ['I the whole 2.1.283 form quoted in a turn, a line of the turn below it, then the input box with a draft', ['❯ What was the form?', '⏺ The captured form was:', ...formRows, '  This is a quotation from the previous run.', ...INPUT_WITH_DRAFT], /This is a quotation from the previous run/],
+    ['I the list with a line of a turn right above its title, under the rule', lineAboveTitle(CLAUDE_TEACH_LIST_ON_NOT_NOW, '⏺ The captured list was:'), /The captured list was:/],
+    ['I the list with a line of a turn right below its foot, above the input box', lineBelowFoot(CLAUDE_TEACH_LIST_ON_NOT_NOW, '  This is a quotation from the previous run.'), /This is a quotation from the previous run/],
+    ['I the 2.1.283 form with a line of a turn right above its title, under the rule', lineAboveTitle(CLAUDE_TEACH_FORM, '⏺ The captured form was:'), /The captured form was:/],
+    ['I the 2.1.283 form with a line of a turn right below its foot', [...CLAUDE_TEACH_FORM, '  This is a quotation from the previous run.', ...INPUT_WITH_DRAFT], /This is a quotation from the previous run/],
+  ]) {
+    test(`T${label} is refused on the first look, says what the screen shows, and nothing is typed`, async (t) => {
+      const box = await createSandbox(t);
+      const { bots, planner } = await fleet(box);
+      await showIn(box, bots, 'drafter', { screen, nextScreens: [CLAUDE_TEACH_LIST_ON_NOT_NOW, CLAUDE_ANSWERED] });
+      const before = await sendsByTab(box);
+
+      const said = await assertRefusedUntyped(box, await answer(box, planner, 'drafter'), before, label);
+      assert.match(said, row, `it prints what the screen shows, this among it: ${said}`);
+    });
+  }
+
+  test('TJ the list on "2. Not now" at the first look and on "1. Yes" at the second: refused, and no key at all, not even the return', async (t) => {
+    // The pointer starts on 2, so no arrow is due; the second look comes all
+    // the same, finds the screen changed, and the return does not go in.
+    const box = await createSandbox(t);
+    const { bots, planner } = await fleet(box);
+    await showIn(box, bots, 'drafter', { screen: CLAUDE_TEACH_LIST_ON_NOT_NOW, thenScreen: CLAUDE_TEACH_LIST, readsBeforeThen: 1, nextScreens: [CLAUDE_ANSWERED] });
+    const before = await sendsByTab(box);
+
+    const said = await assertRefusedUntyped(box, await answer(box, planner, 'drafter'), before, 'the list changed between the two looks');
+    assert.match(said, /❯ 1\. Yes/, `it says what it saw at the second look: ${said}`);
+  });
 
   test('TE a list still on screen a few seconds after "2. Not now" is a failure, and it says so', async (t) => {
     const box = await createSandbox(t);

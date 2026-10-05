@@ -852,9 +852,13 @@ const TEACH_FOOT = /^ *(?:.* · )?Enter to \S.* · Esc to cancel *$/;
  * The rows that count run from the title row to the first foot row under it,
  * `Enter to … · Esc to cancel`; the input box below, with its own `❯`, does
  * not count. Every non-blank row there is a row of CLAUDE_TEACH_LIST from its
- * title to its foot, the pointer `❯` on exactly one of them, on whichever row
- * it sits; nothing is missing and nothing is added. A row not on that list is
- * refused by name. See test/teach-list.test.js.
+ * title to its foot, in the same order, the pointer `❯` on exactly one of
+ * them, on whichever row it sits; nothing is missing and nothing is added. A
+ * row not on that list is refused by name. And it is framed as Claude Code
+ * draws it, not as it is quoted (the ruling on the review of PR #490): the
+ * non-blank row right above the title is a rule of `─` or `▔` alone, and the
+ * non-blank row right below the foot, if there is one, is the input box's top
+ * rule, starting with `─`. See test/teach-list.test.js.
  */
 export function onlyTeachListOf(rows) {
   const block = (shown) => {
@@ -874,6 +878,14 @@ export function onlyTeachListOf(rows) {
   const missing = captured.find((row) => !seen.map(unpointed).includes(unpointed(row)));
   if (missing !== undefined) return `it lacks a row the captured list has: ${missing.trim()}`;
   if (seen.length !== captured.length) return `it has ${seen.length} rows from its title to its foot, where the captured list has ${captured.length}`;
+  const outOfOrder = seen.find((row, at) => unpointed(row) !== unpointed(captured[at]));
+  if (outOfOrder !== undefined) return `its rows are not in the captured list's order: ${outOfOrder.trim()}`;
+  const from = rows.findIndex((row) => row.trim() === TEACH_TITLE);
+  const above = rows.slice(0, from).findLast((row) => row.trim() !== '');
+  if (above === undefined || !/^\s*(?:─+|▔+)\s*$/.test(above)) return `the row above its title is not a rule, so it is quoted, not drawn: ${above?.trim() ?? '(none)'}`;
+  const foot = rows.findIndex((row, at) => at > from && TEACH_FOOT.test(row));
+  const below = rows.slice(foot + 1).find((row) => row.trim() !== '');
+  if (below !== undefined && !/^\s*─/.test(below)) return `the row below its foot is not the input box's rule, so it is quoted, not drawn: ${below.trim()}`;
   return undefined;
 }
 

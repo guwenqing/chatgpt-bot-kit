@@ -54,13 +54,13 @@
 //      a. The captured list with one row changed (`2. Later`). `obk temp
 //         answer` is refused, prints that row, and the program read no byte
 //         at all: refused untouched.
-//      b. The captured list from its title down, with the input box below its
-//         foot and that box's own `❯`. As Orca renders it, it passes
+//      b. The captured list from the rule above its title down, with the
+//         input box below its foot and that box's own `❯`. As Orca renders it, it passes
 //         `onlyTeachListOf` (the premise). `obk temp answer` answers: exit 0,
 //         the answer names helper and lead, the program read exactly down and
 //         return, it ended on "2. Not now", and the title is gone.
-//      c. The 2.1.283 form's own rows, from the title down: answered, the
-//         program read exactly one Esc, and the title is gone.
+//      c. The 2.1.283 form's own rows, from the rule above its title down:
+//         answered, the program read exactly one Esc, and the title is gone.
 //
 // What it cannot show: what Claude Code's own form or list does with the
 // answer. Esc on the form is read in the 2.1.283 code (tech notes, section 1),
@@ -158,11 +158,15 @@ const TASK = 'You are a system test\'s session and you own nothing. Do not run a
 /** The form's title row, as captured. */
 const TEACH_TITLE = 'Teach auto mode about your environment?';
 
-/** The captured 2.1.283 form's own rows, from its title down. */
-const FORM_ROWS = CLAUDE_TEACH_FORM.slice(CLAUDE_TEACH_FORM.findIndex((row) => row.trim() === TEACH_TITLE));
+/**
+ * The captured 2.1.283 form's own rows, from the rule of `▔` it is drawn under
+ * down: the kit takes a form only so framed, not quoted in a turn (the ruling
+ * on the review of PR #490).
+ */
+const FORM_ROWS = CLAUDE_TEACH_FORM.slice(CLAUDE_TEACH_FORM.findIndex((row) => row.trim() === TEACH_TITLE) - 1);
 
-/** The captured 2.1.289 list from its title down: the list, its foot, and the input box below. */
-const LIST_ROWS = CLAUDE_TEACH_LIST.slice(CLAUDE_TEACH_LIST.findIndex((row) => row.trim() === TEACH_TITLE));
+/** The captured 2.1.289 list from the rule of `─` it is drawn under down: the list, its foot, and the input box below. */
+const LIST_ROWS = CLAUDE_TEACH_LIST.slice(CLAUDE_TEACH_LIST.findIndex((row) => row.trim() === TEACH_TITLE) - 1);
 
 /** The same rows with one row changed: not the captured list. */
 const LIST_ONE_OFF = LIST_ROWS.map((row) => (row === '    2. Not now' ? '    2. Later' : row));
