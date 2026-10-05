@@ -58,7 +58,9 @@ import {
   CLAUDE_TEACH_FORM,
   CLAUDE_TEACH_FORM_ON_CONTINUE,
   CLAUDE_TEACH_LIST,
+  CLAUDE_TEACH_LIST_BLANK_UNDER,
   CLAUDE_TEACH_LIST_GONE,
+  CLAUDE_TEACH_LIST_NO_FOOT_BLANK_UNDER,
   CODEX_ANSWERED,
   CODEX_DRAFT,
   CODEX_IDLE,
@@ -144,6 +146,27 @@ test('questionIn: the Teach list without its foot row, its numbered choices and 
 // is a question with no numbers on its choices.
 test('questionIn: a form above the input box, its choices unnumbered and its foot "Enter to confirm · Esc to cancel", is a question', () => {
   assert.equal(questionIn(FORM_ABOVE_THE_BOX), true);
+});
+
+// Covers criterion 1, any layout above the box: a blank row between the
+// question and the input box's top rule does not hide it, from the gate or
+// from the system tests' own look. Asked by the implementer's hand mutation
+// check (a gate that reads only the row right above the rule).
+test('a blank row between the Teach list and the input box\'s top rule: questionIn is true and questionOn gives the list, with its foot and with its foot taken out', () => {
+  for (const [label, screen] of [
+    ['the captured list, a blank row under its foot', CLAUDE_TEACH_LIST_BLANK_UNDER],
+    ['the list without its foot, a blank row under its last choice', CLAUDE_TEACH_LIST_NO_FOOT_BLANK_UNDER],
+  ]) {
+    const rule = screen.findIndex((row) => row.includes('answer-bot.helper.vm2yc5b2'));
+    assert.equal(screen[rule - 1], '', `${label}: the premise, a blank row right above the input box's top rule`);
+    assert.equal(questionIn(screen), true, `${label}: a question to the gate`);
+    const rows = questionOn(screen);
+    assert.ok(Array.isArray(rows), `${label}: a question to the look, got: ${JSON.stringify(rows)}`);
+    const trimmed = rows.map((row) => row.trim());
+    for (const row of [TITLE, '❯ 1. Yes', '3. Don\'t show again']) {
+      assert.ok(trimmed.includes(row), `${label}: what the look gives back holds "${row}", got:\n${rows.join('\n')}`);
+    }
+  }
 });
 
 // Covers criterion 3. Passes before the change: it holds the change to keeping it.

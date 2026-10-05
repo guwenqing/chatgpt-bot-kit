@@ -36,6 +36,11 @@
 // "enter select" and the like) on the lowest pointer row or below it,
 // where the input line would be: the same words higher up are history. That
 // takes in the trust list too, which the kit need not see.
+//
+// Claude Code 2.1.289 draws its Teach list above its input box, and the box's
+// own `❯` stays the lowest pointer row (#491). So a numbered choice list with
+// the pointer on one, or a foot row, counts too when it is the last thing
+// drawn right above the box's top rule. With anything after it, it is history.
 
 /**
  * Claude Code 2.1.283 at its idle input line, showing its placeholder: a
@@ -445,6 +450,25 @@ export const CLAUDE_TEACH_LIST_GONE = CLAUDE_TEACH_LIST.filter((row, at) => {
 });
 
 /**
+ * CLAUDE_TEACH_LIST with one blank row between its foot and the input box's
+ * top rule: a question. A reconstruction: no such layout was seen, but
+ * Claude Code may leave a blank row under a list it draws (#491).
+ */
+export const CLAUDE_TEACH_LIST_BLANK_UNDER = CLAUDE_TEACH_LIST.flatMap((row) => (
+  row.trim() === 'Enter to confirm · Esc to cancel' ? [row, ''] : [row]
+));
+
+/**
+ * CLAUDE_TEACH_LIST with its foot taken out and one blank row between its
+ * last numbered choice and the input box's top rule: a question by its
+ * numbered choices and pointer alone. A reconstruction, as above (#491).
+ */
+export const CLAUDE_TEACH_LIST_NO_FOOT_BLANK_UNDER = CLAUDE_TEACH_LIST.flatMap((row) => {
+  if (row.trim() === 'Enter to confirm · Esc to cancel') return [];
+  return row === '    3. Don\'t show again' ? [row, ''] : [row];
+});
+
+/**
  * Not a question: CLAUDE_TEACH_LIST's own rows, title, pointer, numbers and
  * foot, are history, quoted by the model the way a bot working on issue #491
  * has them on its screen, a conversation row after them and the input line
@@ -818,10 +842,35 @@ export function questionOn(rows) {
   }
 
   const from = Math.max(0, at);
-  if (!rows.slice(from).some((row) => FOOT_ROW.test(row))) return undefined;
-  const rule = rows.slice(0, from).findLastIndex((row) => RULE_ROW.test(row));
-  return rows.slice(rule + 1, drawn + 1);
+  if (rows.slice(from).some((row) => FOOT_ROW.test(row))) {
+    const rule = rows.slice(0, from).findLastIndex((row) => RULE_ROW.test(row));
+    return rows.slice(rule + 1, drawn + 1);
+  }
+
+  // Claude Code 2.1.289 draws its Teach list above its input box, whose own
+  // `❯` stays the lowest pointer row (#491): a question there is the last
+  // thing drawn above the box's top rule, its foot row or its numbered
+  // choices with the pointer on one. The same words with anything after them
+  // are history.
+  if (at < 1 || !RULE_ROW.test(rows[at - 1])) return undefined;
+  const end = rows.slice(0, at - 1).findLastIndex((row) => row.trim() !== '');
+  if (end < 0) return undefined;
+  const top = rows.slice(0, end).findLastIndex((row) => RULE_ROW.test(row));
+  if (FOOT_ROW.test(rows[end])) return rows.slice(top + 1, end + 1);
+  if (!NUMBERED_ROW.test(rows[end])) return undefined;
+  let first = end;
+  while (first > 0 && NUMBERED_ROW.test(rows[first - 1])) first -= 1;
+  for (let row = first; row <= end; row += 1) {
+    const pointer = ON_A_NUMBER.exec(rows[row]);
+    if (pointer !== null && (numberedAt(rows[row - 1], pointer[1].length) || numberedAt(rows[row + 1], pointer[1].length))) {
+      return rows.slice(top + 1, end + 1);
+    }
+  }
+  return undefined;
 }
+
+/** A numbered choice, with the pointer on it or not. */
+const NUMBERED_ROW = /^ *(?:[›❯] +)?\d+\. +\S/;
 
 /**
  * What stands between a live tab and a line a system test wants to type into
