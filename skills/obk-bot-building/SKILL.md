@@ -294,7 +294,7 @@ otherwise `/Applications/Orca.app/Contents/Resources/bin/orca`. A bare
 | Codex's update offer, `1. Update now` | `\r` | **Update now**, where it starts | Codex 0.156.1 |
 | `[oh-my-zsh] Would you like to update?` | `n` | no: the user updates it | oh-my-zsh bf77e35 |
 | Claude Code's `Teach auto mode…` | `\x1b` | Esc: Not now; no return | Not yet proven, below |
-| Claude Code 2.1.289's `Teach auto mode…` list | `\x1b[B\r` | down, return: **2. Not now** | Not yet proven, below |
+| The same, 2.1.289's list | `\x1b[B\r` | down, return: **2. Not now** | Not yet proven, below |
 
 Each key counts on where the selection starts on the version named. Read the
 screen before you send: if the selection is elsewhere or the options have
