@@ -473,6 +473,15 @@ Nothing in the kit's code, tests or skills stands in his way.
   run, and nothing is known to have set it since 09:47Z; so the conditions read in the code above look
   like not the whole story (worked out, not proven). Nothing answered it; the
   test's teardown closed the tab, and `~/.claude/settings.json` was unchanged. Esc still not seen.
+  **On 2.1.289 it is a numbered list again, drawn above the input box (#489).** Seen live
+  (2026-10-05, about 03:15 local, Claude Code 2.1.289 in auto mode, `temp-answer`'s live run 1), right
+  after a temporary session's first turn: `Teach auto mode about your environment?`, `Auto mode works
+  better when it knows your environment. Takes about a minute.`, `❯ 1. Yes`, `2. Not now`, `3. Don't
+  show again`, and `Enter to confirm · Esc to cancel`. Below that foot sits the input box, with its
+  own `❯`, so the list is not the lowest pointer row on the screen. The selection starts on `1. Yes`.
+  Nothing answered it (the architect's ruling on #489: no key to a real Teach screen in a test, since
+  a Not now is recorded for the whole machine); the teardown closed the tab. **verified** (live, the
+  list, its words and where it sits; what `2. Not now` and Esc do on 2.1.289, not seen)
 - Anything else: type nothing and raise it with the user, naming the bot, the tab and what is on screen.
 
 The kit's own code does not change user-level settings on its own initiative.

@@ -1,6 +1,7 @@
 // `obk temp make` and `obk temp retire`: a session's own temporary sessions
-// (PRD 6.4, #227). And `obk temp trust-hooks`, the one answer a maker gives its
-// Codex run's hooks review (#238).
+// (PRD 6.4, #227). And `obk temp trust-hooks` and `obk temp answer`, the
+// answers a maker gives its Codex run's hooks review (#238) and its Claude
+// session's Teach auto mode form (#489).
 //
 // Any long-lived session can make a temporary session of its own bot for a
 // piece of work, and retire it when the work is done, without Bot Father, who
@@ -348,37 +349,18 @@ export async function trustHooks(bots, { tab, name }) {
   if (harness !== 'codex') {
     throw new Error(`${run} runs on ${harness}, and temp trust-hooks answers a Codex run's "${HOOKS_REVIEW}" alone. ${nothing}`);
   }
-  const tabId = readBook(caller.home).sessions[name]?.tab;
-  const handle = tabId === undefined ? undefined : tabs(caller.home).find((one) => one.tabId === tabId)?.handle;
-  if (handle === undefined) {
-    throw new Error(`${run} has no tab open in Orca, so there is no review of its to answer. ${nothing}`);
-  }
-  // The session's turn for a line (#482), for the look and the keys.
-  const turn = takeLineTurn(caller.home, name, TYPING_WAIT_MS);
-  if (turn === undefined) throw new Error(`${run}: ${TYPING_HELD}.`);
-  try {
-    const seen = screenRows(handle);
-    if (seen.rows === undefined) {
-      throw new Error(`${run}'s screen could not be read (${seen.unreadable}), so the kit cannot tell whether its hooks review is there. ${nothing}`);
-    }
-    const keys = keysToTrustAll(seen.rows);
-    if (keys === undefined) {
-      throw new Error(`${run}'s screen shows no "${HOOKS_REVIEW}" with its choices, so there is nothing for this to answer. It shows: ${shown(seen.rows)}. ${nothing}`);
-    }
-    // The return is inside the text: `--enter` would be a second key.
-    orca(['terminal', 'send', '--terminal', handle, '--text', keys]);
-  } finally {
-    turn.release();
-  }
-  for (let waited = 0; ; waited += 500) {
-    const after = screenRows(handle);
-    if (after.rows !== undefined && !after.rows.some((row) => row.includes(HOOKS_REVIEW))) break;
-    if (waited >= REVIEW_GONE_MS) {
-      const still = after.rows === undefined ? `its screen could not be read again (${after.unreadable})` : `its screen still shows "${HOOKS_REVIEW}"`;
-      throw new Error(`${run}: "${TRUST_ALL}" was chosen on its hooks review, but ${REVIEW_GONE_MS / 1000} seconds later ${still}. Look at its tab.`);
-    }
-    await pause(500);
-  }
+  await answerScreen(caller, name, {
+    what: 'hooks review',
+    mark: HOOKS_REVIEW,
+    done: `"${TRUST_ALL}" was chosen on its hooks review`,
+    answer(rows, { send }) {
+      const keys = keysToTrustAll(rows);
+      if (keys === undefined) {
+        throw new Error(`${run}'s screen shows no "${HOOKS_REVIEW}" with its choices, so there is nothing for this to answer. It shows: ${shown(rows)}. ${nothing}`);
+      }
+      send(keys);
+    },
+  });
   return { bot: caller.bot, session: name, maker: caller.session };
 }
 
@@ -401,6 +383,198 @@ function keysToTrustAll(rows) {
 function shown(rows) {
   const text = rows.map((row) => row.trim()).filter((row) => row !== '').join(' ⏎ ');
   return text.length > 500 ? `${text.slice(0, 500)}…` : text;
+}
+
+/**
+ * Answer a screen of `name`, a temporary session the caller made: under the
+ * session's turn for a line (#482), read its screen and hand it to
+ * `answer(rows, { send, look })`, which sends keys with `send`, may read the
+ * screen again with `look`, and throws when the screen is not its to answer.
+ * Then wait for `mark` to leave the screen. `what` names the screen and `done`
+ * says what was sent, for the sentences that refuse or fail; `done` may be a
+ * function of what `answer` returned.
+ */
+async function answerScreen(caller, name, { what, mark, done, answer }) {
+  const run = `${caller.bot}/${name}`;
+  const nothing = 'Nothing was typed.';
+  const tabId = readBook(caller.home).sessions[name]?.tab;
+  const handle = tabId === undefined ? undefined : tabs(caller.home).find((one) => one.tabId === tabId)?.handle;
+  if (handle === undefined) {
+    throw new Error(`${run} has no tab open in Orca, so there is no ${what} of its to answer. ${nothing}`);
+  }
+  const turn = takeLineTurn(caller.home, name, TYPING_WAIT_MS);
+  if (turn === undefined) throw new Error(`${run}: ${TYPING_HELD}.`);
+  let answered;
+  try {
+    const seen = screenRows(handle);
+    if (seen.rows === undefined) {
+      throw new Error(`${run}'s screen could not be read (${seen.unreadable}), so the kit cannot tell whether its ${what} is there. ${nothing}`);
+    }
+    answered = answer(seen.rows, {
+      // The return, where there is one, is inside the text: `--enter` would be a second key.
+      send: (keys) => orca(['terminal', 'send', '--terminal', handle, '--text', keys]),
+      look: () => screenRows(handle),
+    });
+  } finally {
+    turn.release();
+  }
+  for (let waited = 0; ; waited += 500) {
+    const after = screenRows(handle);
+    if (after.rows !== undefined && !after.rows.some((row) => row.includes(mark))) return answered;
+    if (waited >= REVIEW_GONE_MS) {
+      const still = after.rows === undefined ? `its screen could not be read again (${after.unreadable})` : `its screen still shows "${mark}"`;
+      throw new Error(`${run}: ${typeof done === 'function' ? done(answered) : done}, but ${REVIEW_GONE_MS / 1000} seconds later ${still}. Look at its tab.`);
+    }
+    await pause(500);
+  }
+}
+
+/** The title of Claude Code's "Teach auto mode" screen, in each known shape. */
+const TEACH_TITLE = 'Teach auto mode about your environment?';
+
+/** The foot that ends a Claude Code form, below which its input box sits. */
+const TEACH_FOOT = /Enter to .*· Esc to cancel/;
+
+/**
+ * The known shapes of the Teach screen, from its title to its foot, each as
+ * captured live, with what answers it. Rows are compared trimmed, the pointer
+ * `❯` taken out, so the pointer may sit on any one of them.
+ *
+ * Claude Code 2.1.283's form (#261's live test, #416) is answered with Esc,
+ * which cancels it (Not now), never a return, which is Continue. Claude Code
+ * 2.1.289's numbered list (#489's live run 1) is answered with "2. Not now",
+ * never "1. Yes" or "3. Don't show again" (the architect's ruling on #489).
+ */
+const TEACH_SHAPES = [
+  {
+    name: 'the 2.1.283 form',
+    rows: [
+      TEACH_TITLE,
+      'Claude Code reads this project, your recent Claude sessions, and optionally your shell history and other',
+      'repositories. Claude analyzes this data and customizes auto mode to make better decisions.',
+      'How you use Claude here     Mixed',
+      'Also scan shell history     true',
+      'Also scan your other repos  false',
+      'Continue',
+      '←/→ to change usage · Enter to continue · Esc to cancel',
+    ],
+  },
+  {
+    name: 'the 2.1.289 list',
+    rows: [
+      TEACH_TITLE,
+      'Auto mode works better when it knows your environment. Takes about a minute.',
+      '1. Yes',
+      '2. Not now',
+      "3. Don't show again",
+      'Enter to confirm · Esc to cancel',
+    ],
+  },
+];
+
+/** The 2.1.289 list's choice this kit takes, and the row it is on. */
+const NOT_NOW_CHOICE = '2. Not now';
+
+/** A row as a shape is compared: trimmed, with its pointer, wherever it sits, taken out. */
+const unpointed = (row) => row.replace('❯', ' ').trim();
+
+/** The full-width rule Claude Code draws right above the screen's title: `─` in 2.1.289, `▔` in 2.1.283. */
+const ABOVE_TITLE = /^(?:─+|▔+)$/;
+
+/**
+ * The Teach screen on `rows`, from its title to its foot, the rows below the
+ * foot (the input box) left out: `{ shape, block }` when its non-blank rows
+ * are one known shape's, in its order and nothing else, with the pointer on
+ * exactly one; otherwise `{ misfit }`, why not.
+ *
+ * It counts only in the frame Claude Code drew it in, in both live captures:
+ * a full-width rule as the non-blank row right above the title, and, right
+ * below the foot, nothing or the input box's top rule. A quote of the screen
+ * in a turn, with the turn's own rows around it, is refused (the review of
+ * #490). A quote of the frame as well would still look the same: the frame
+ * narrows what passes, and is no proof that the screen is live.
+ */
+function teachScreen(rows) {
+  const from = rows.findIndex((row) => row.trim() === TEACH_TITLE);
+  if (from < 0) return { misfit: `it shows no "${TEACH_TITLE}"` };
+  const foot = rows.findIndex((row, at) => at > from && TEACH_FOOT.test(row));
+  if (foot < 0) return { misfit: `it shows "${TEACH_TITLE}" with no foot row ending "Esc to cancel" under it` };
+  const above = rows.slice(0, from).findLast((row) => row.trim() !== '');
+  if (above === undefined || !ABOVE_TITLE.test(above.trim())) {
+    return { misfit: `the row right above its title is ${above === undefined ? 'nothing' : `"${above.trim()}"`}, not the full-width rule Claude Code draws there` };
+  }
+  const below = rows.slice(foot + 1).find((row) => row.trim() !== '');
+  if (below !== undefined && !below.trimStart().startsWith('─')) {
+    return { misfit: `the row right below its foot is "${below.trim()}", not the top rule of the input box` };
+  }
+  const block = rows.slice(from, foot + 1).filter((row) => row.trim() !== '');
+  const misfits = TEACH_SHAPES.map((shape) => {
+    const pointers = block.filter((row) => row.includes('❯')).length;
+    if (pointers !== 1) return `${pointers} rows with the pointer ❯, where ${shape.name} has one`;
+    const odd = block.find((row) => !shape.rows.includes(unpointed(row)));
+    if (odd !== undefined) return `a row ${shape.name} does not have: ${odd.trim()}`;
+    const missing = shape.rows.find((row) => !block.map(unpointed).includes(row));
+    if (missing !== undefined) return `no row ${missing}, which ${shape.name} has`;
+    if (block.length !== shape.rows.length) return `${block.length} rows, where ${shape.name} has ${shape.rows.length}`;
+    const moved = block.findIndex((row, at) => unpointed(row) !== shape.rows[at]);
+    if (moved >= 0) return `the row ${block[moved].trim()} where ${shape.name} has ${shape.rows[moved]}`;
+    return undefined;
+  });
+  const fits = misfits.findIndex((misfit) => misfit === undefined);
+  if (fits >= 0) return { shape: TEACH_SHAPES[fits], block };
+  return { misfit: `its Teach screen is no shape the kit knows: it has ${misfits.join('; and it has ')}` };
+}
+
+/** The whole screen, a row to a line: what decides is often at its foot. */
+const wholeScreen = (rows) => rows.filter((row) => row.trim() !== '').map((row) => `    ${row}`).join('\n');
+
+/**
+ * Answer the first-run screen of a temporary session the caller made (#489):
+ * Claude Code's Teach auto mode screen, in one of the shapes the kit knows,
+ * matched exactly. The 2.1.283 form gets Esc. The 2.1.289 list gets arrows to
+ * "2. Not now" where needed, a second look that the pointer is there and the
+ * list is otherwise as it was, and only then a return. Anything else is refused with
+ * nothing typed. Like `trustHooks`, it is one command a permission rule of its
+ * own can allow. Returns `{ bot, session, maker, sent }`, `sent` saying what
+ * answered it.
+ */
+export async function answerTemp(bots, { tab, name }) {
+  const caller = callerIn(bots, tab, 'answer', "answer a session's first-run screen");
+  const nothing = 'Nothing was typed.';
+  ownTemp(caller, name, 'answer for', nothing);
+  const run = `${caller.bot}/${name}`;
+  const sent = await answerScreen(caller, name, {
+    what: `"${TEACH_TITLE}"`,
+    mark: TEACH_TITLE,
+    done: (said) => `${said} was sent to its Teach auto mode screen`,
+    answer(rows, { send, look }) {
+      const seen = teachScreen(rows);
+      if (seen.misfit !== undefined) {
+        const hooks = rows.some((row) => row.includes(HOOKS_REVIEW)) ? ` A Codex run's "${HOOKS_REVIEW}" is answered with temp trust-hooks.` : '';
+        throw new Error(`${run}'s screen is not one temp answer answers: ${seen.misfit}.${hooks} ${nothing} It shows:\n${wholeScreen(rows)}`);
+      }
+      if (seen.shape === TEACH_SHAPES[0]) {
+        send('\x1b');
+        return 'Esc (Not now)';
+      }
+      const at = seen.block.findIndex((row) => row.includes('❯'));
+      const moves = seen.block.findIndex((row) => unpointed(row) === NOT_NOW_CHOICE) - at;
+      if (moves !== 0) send(moves > 0 ? '\x1b[B'.repeat(moves) : '\x1b[A'.repeat(-moves));
+      // The guard, before every return, arrows or none: the list again, its
+      // rows in the same order (an exact shape), and the pointer on "2. Not now".
+      const again = look();
+      const now = again.rows === undefined ? { misfit: `it could not be read again (${again.unreadable})` } : teachScreen(again.rows);
+      const on = now.block?.find((row) => row.includes('❯'));
+      if (now.shape !== seen.shape || unpointed(on) !== NOT_NOW_CHOICE) {
+        const why = now.misfit ?? `its pointer is on ${unpointed(on)}, not ${NOT_NOW_CHOICE}`;
+        const sent = moves === 0 ? 'Nothing was typed' : `The arrows to "${NOT_NOW_CHOICE}" went in`;
+        throw new Error(`${run}: ${sent}, but then ${why}, so no return was sent. Look at its tab.${again.rows === undefined ? '' : ` It shows:\n${wholeScreen(again.rows)}`}`);
+      }
+      send('\r');
+      return `"${NOT_NOW_CHOICE}"`;
+    },
+  });
+  return { bot: caller.bot, session: name, maker: caller.session, sent };
 }
 
 /**

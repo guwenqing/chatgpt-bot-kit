@@ -294,6 +294,7 @@ otherwise `/Applications/Orca.app/Contents/Resources/bin/orca`. A bare
 | Codex's update offer, `1. Update now` | `\r` | **Update now**, where it starts | Codex 0.156.1 |
 | `[oh-my-zsh] Would you like to update?` | `n` | no: the user updates it | oh-my-zsh bf77e35 |
 | Claude Code's `Teach auto mode…` | `\x1b` | Esc: Not now; no return | Not yet proven, below |
+| The same, 2.1.289's list | `\x1b[B\r` | down, return: **2. Not now** | Not yet proven, below |
 
 Each key counts on where the selection starts on the version named. Read the
 screen before you send: if the selection is elsewhere or the options have
@@ -309,7 +310,10 @@ Claude Code's `Teach auto mode` on 2.1.283 is a form, not a list, ending
 Enter is Continue, which scans the project, recent sessions and the machine's
 shell history. Esc cancels it (Not now) in its code; that is not yet proven
 live, though the form was seen live twice on 2.1.283. On 2.1.278 it was a
-numbered list, answered with `2. Not now`. Codex's hooks
+numbered list, answered with `2. Not now`, and on 2.1.289 it is one again:
+`1. Yes`, `2. Not now`, `3. Don't show again`, above the input box, its
+selection on 1. Yes (seen live, not answered, in #489). Go down to 2. Not now,
+read the screen, and only then return. Codex's hooks
 question matters most. The kit's hook is how the book learns which
 conversation the session is running, and until it is answered the
 conversation has not started. Codex's trust applies to the repository root,
@@ -323,7 +327,13 @@ exception: answer it with `obk temp trust-hooks --bots <bots> --name
 <session>`, not with the keys. It reads the screen, chooses **Trust all and
 continue** only if the review is there, and checks that the review went. A
 permission rule can allow that one command, where it cannot allow keys sent
-into any tab.
+into any tab. The same goes for Claude Code's `Teach auto mode` screen on a
+temporary session you made: answer it with `obk temp answer --bots <bots>
+--name <session>`. It answers only a shape in the table exactly as the kit
+knows it (Esc on the 2.1.283 form, 2. Not now on the 2.1.289 list, the return
+only after a second look), refuses any other screen, and checks that it went. Its
+rule is `Bash(<kit> temp answer:*)`, `<kit>` the kit's CLI path as the
+command prints it; ask the user before `obk bot change --allow` adds it.
 
 Where the kit says no session came up, the shell swallowed the launch line,
 usually while it was asking its own question. Answer the shell, then close
