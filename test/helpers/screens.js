@@ -36,6 +36,11 @@
 // "enter select" and the like) on the lowest pointer row or below it,
 // where the input line would be: the same words higher up are history. That
 // takes in the trust list too, which the kit need not see.
+//
+// Claude Code 2.1.289 draws its Teach list above its input box, and the box's
+// own `❯` stays the lowest pointer row (#491). So a numbered choice list with
+// the pointer on one, or a foot row, counts too when it is the last thing
+// drawn right above the box's top rule. With anything after it, it is history.
 
 /**
  * Claude Code 2.1.283 at its idle input line, showing its placeholder: a
@@ -444,6 +449,83 @@ export const FORM_IN_HISTORY = [
   ...CLAUDE_INPUT_LINE,
 ];
 
+/**
+ * CLAUDE_TEACH_LIST once the list has gone: the capture with the rule above
+ * the list's title and the list's rows down to its foot taken out, the
+ * answered turn and the input box left as captured. Not a question. A
+ * reconstruction: what Claude Code 2.1.289 draws once the list is answered
+ * was not captured (#491).
+ */
+export const CLAUDE_TEACH_LIST_GONE = CLAUDE_TEACH_LIST.filter((row, at) => {
+  const title = CLAUDE_TEACH_LIST.findIndex((one) => one.trim() === 'Teach auto mode about your environment?');
+  const foot = CLAUDE_TEACH_LIST.findIndex((one) => one.trim() === 'Enter to confirm · Esc to cancel');
+  return at < title - 1 || at > foot;
+});
+
+/**
+ * CLAUDE_TEACH_LIST with one blank row between its foot and the input box's
+ * top rule: a question. A reconstruction: no such layout was seen, but
+ * Claude Code may leave a blank row under a list it draws (#491).
+ */
+export const CLAUDE_TEACH_LIST_BLANK_UNDER = CLAUDE_TEACH_LIST.flatMap((row) => (
+  row.trim() === 'Enter to confirm · Esc to cancel' ? [row, ''] : [row]
+));
+
+/**
+ * CLAUDE_TEACH_LIST with its foot taken out and one blank row between its
+ * last numbered choice and the input box's top rule: a question by its
+ * numbered choices and pointer alone. A reconstruction, as above (#491).
+ */
+export const CLAUDE_TEACH_LIST_NO_FOOT_BLANK_UNDER = CLAUDE_TEACH_LIST.flatMap((row) => {
+  if (row.trim() === 'Enter to confirm · Esc to cancel') return [];
+  return row === '    3. Don\'t show again' ? [row, ''] : [row];
+});
+
+/**
+ * CLAUDE_TEACH_LIST in a narrow pane: its foot row wrapped onto two rows,
+ * "  Enter to confirm ·" and "  Esc to cancel", right above the input box's
+ * top rule; every other row as captured. A question. A reconstruction (#491,
+ * from review): no narrow pane was captured, and where the foot breaks is
+ * made up here.
+ */
+export const CLAUDE_TEACH_LIST_FOOT_WRAPPED = CLAUDE_TEACH_LIST.flatMap((row) => (
+  row.trim() === 'Enter to confirm · Esc to cancel' ? ['  Enter to confirm ·', '  Esc to cancel'] : [row]
+));
+
+/**
+ * Not a question: CLAUDE_TEACH_LIST's own rows, title, pointer, numbers and
+ * foot, are history, quoted by the model the way a bot working on issue #491
+ * has them on its screen, a conversation row after them and the input line
+ * back below. A reconstruction on the captured input line (#491).
+ */
+export const LIST_IN_HISTORY = [
+  '❯ What did Claude Code 2.1.289 show after the first turn?',
+  '⏺ Its Teach list, above the input box, as issue #491 quotes it:',
+  '    Teach auto mode about your environment?',
+  '    Auto mode works better when it knows your environment. Takes about a minute.',
+  '    ❯ 1. Yes',
+  '      2. Not now',
+  '      3. Don\'t show again',
+  '    Enter to confirm · Esc to cancel',
+  '  A return on it takes "1. Yes", which starts the teach scan.',
+  ...CLAUDE_INPUT_LINE,
+];
+
+/**
+ * Not a question: the user's past turn, a numbered list of its own, echoed
+ * with Claude Code's pointer on its first row and the second lined up under
+ * it, the model's answer after it and the input line back below. A
+ * reconstruction on the captured input line, its echo laid out as
+ * CLAUDE_ANSWERED wraps a long turn (#491).
+ */
+export const NUMBERED_TURN_ECHOED = [
+  '❯ 1. Write the tests for the fake',
+  '  2. Run them and read the failures',
+  '⏺ Both are done: the tests are in test/fake.test.js, and they fail as expected.',
+  '✻ Cooked for 1s · done 4:14 AM',
+  ...CLAUDE_INPUT_LINE,
+];
+
 // A harness's own command typed into its input line and not entered yet, and
 // a harness at work (#391). Where a screen is a live capture it says so; the
 // rest are reconstructions on the captured CLAUDE_ANSWERED or CODEX_ANSWERED,
@@ -784,10 +866,35 @@ export function questionOn(rows) {
   }
 
   const from = Math.max(0, at);
-  if (!rows.slice(from).some((row) => FOOT_ROW.test(row))) return undefined;
-  const rule = rows.slice(0, from).findLastIndex((row) => RULE_ROW.test(row));
-  return rows.slice(rule + 1, drawn + 1);
+  if (rows.slice(from).some((row) => FOOT_ROW.test(row))) {
+    const rule = rows.slice(0, from).findLastIndex((row) => RULE_ROW.test(row));
+    return rows.slice(rule + 1, drawn + 1);
+  }
+
+  // Claude Code 2.1.289 draws its Teach list above its input box, whose own
+  // `❯` stays the lowest pointer row (#491): a question there is the last
+  // thing drawn above the box's top rule, its foot row or its numbered
+  // choices with the pointer on one. The same words with anything after them
+  // are history.
+  if (at < 1 || !RULE_ROW.test(rows[at - 1])) return undefined;
+  const end = rows.slice(0, at - 1).findLastIndex((row) => row.trim() !== '');
+  if (end < 0) return undefined;
+  const top = rows.slice(0, end).findLastIndex((row) => RULE_ROW.test(row));
+  if (FOOT_ROW.test(rows[end])) return rows.slice(top + 1, end + 1);
+  if (!NUMBERED_ROW.test(rows[end])) return undefined;
+  let first = end;
+  while (first > 0 && NUMBERED_ROW.test(rows[first - 1])) first -= 1;
+  for (let row = first; row <= end; row += 1) {
+    const pointer = ON_A_NUMBER.exec(rows[row]);
+    if (pointer !== null && (numberedAt(rows[row - 1], pointer[1].length) || numberedAt(rows[row + 1], pointer[1].length))) {
+      return rows.slice(top + 1, end + 1);
+    }
+  }
+  return undefined;
 }
+
+/** A numbered choice, with the pointer on it or not. */
+const NUMBERED_ROW = /^ *(?:[›❯] +)?\d+\. +\S/;
 
 /**
  * What stands between a live tab and a line a system test wants to type into

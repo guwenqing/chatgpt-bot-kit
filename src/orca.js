@@ -420,8 +420,9 @@ const ON_A_CHOICE = /^( *[›❯] +)\d+\. /;
  * Every one seen is a numbered list of choices with the harness's pointer on
  * one (tech notes, section 1; ADR 0034). The same pointer starts the harness's
  * input line and its echo of the user's past turns, and the input line is the
- * lowest of them whenever it is on screen, so only the lowest pointer row is
- * asked about: a question counts while it stands in the input line's place.
+ * lowest of them whenever it is on screen, so the lowest pointer row is asked
+ * about: a question counts while it stands in the input line's place, or
+ * while it is the last thing drawn right above the input box (#491).
  * Unnumbered lists do not count. Codex puts a status row right under its input
  * line, lined up with it, and by its layout that is one.
  */
@@ -434,6 +435,37 @@ export function questionIn(rows) {
   // there is none: under old words of one in the history, the input line is
   // the lowest pointer, and nothing below it is a foot.
   if (rows.slice(Math.max(at, 0)).some((row) => FORM_FOOT.test(row))) return true;
+  if (pointedChoiceAt(rows, at)) return true;
+  // Claude Code 2.1.289 draws its Teach list above its input box, whose own
+  // `❯` stays the lowest pointer row (#491). A question there is the last
+  // thing drawn above the box's top rule: its foot, or its numbered choices
+  // with the pointer on one, under it a foot that a narrow pane wraps onto
+  // rows of its own. The same words with anything after them are history.
+  if (at < 1 || !RULE_ROW.test(rows[at - 1])) return false;
+  let end = rows.slice(0, at - 1).findLastIndex((row) => row.trim() !== '');
+  if (end < 0) return false;
+  if (FORM_FOOT.test(rows[end])) return true;
+  while (end > 0 && FOOT_PART.test(rows[end])) end -= 1;
+  if (!NUMBERED.test(rows[end])) return false;
+  let first = end;
+  while (first > 0 && NUMBERED.test(rows[first - 1])) first -= 1;
+  for (let row = first; row <= end; row += 1) {
+    if (pointedChoiceAt(rows, row)) return true;
+  }
+  return false;
+}
+
+/** A rule Claude Code draws right across, as the top of its input box: `─` or `▔`. */
+const RULE_ROW = /^ *[─▔]{8,}/;
+
+/** A numbered choice, with the pointer on it or not. */
+const NUMBERED = /^ *(?:[›❯] +)?\d+\. /;
+
+/** A part of a foot, as a narrow pane wraps it: `Enter to confirm ·`, `Esc to cancel`. */
+const FOOT_PART = /\b(?:Enter to (?:continue|confirm|select)|Esc to cancel)\b/i;
+
+/** Whether `rows[at]` has the pointer on a numbered choice, with another lined up right above or below it. */
+function pointedChoiceAt(rows, at) {
   const pointer = at < 0 ? null : ON_A_CHOICE.exec(rows[at]);
   if (pointer === null) return false;
   const column = pointer[1].length;

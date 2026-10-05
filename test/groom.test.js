@@ -61,6 +61,7 @@ import {
   snapshot,
   spellingsOf,
 } from './helpers/cli.js';
+import { CLAUDE_TEACH_LIST, CLAUDE_TEACH_LIST_GONE } from './helpers/screens.js';
 
 // ------------------------------------------------------------------ time
 
@@ -1360,6 +1361,35 @@ test('G10 a grooming tab with something on screen waiting for an answer is refus
   await box.orca.set({ waitIdle: true });
   await groom(box, '--now');
   await theLineTyped(box, bots, before);
+});
+
+// #491: Claude Code 2.1.289's Teach list, drawn ABOVE the input box with the
+// box's own empty `❯` below it (helpers/screens.js CLAUDE_TEACH_LIST, a live
+// capture), is a question on screen like one at the bottom, Orca naming no
+// reason. A return typed into it takes "1. Yes". The same capture with the
+// list taken out is the presence: the line goes in.
+test('G10 a grooming tab showing Claude Code 2.1.289\'s Teach list above its input box is refused every flag that types, saying a question is up; with the list gone, it types (#491)', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await fleet(box);
+  await oneJob(box, bots);
+  const tab = await groomingTab(bots);
+  const showing = async (screen) => box.orca.set({
+    terminals: (await box.orca.terminals()).map((one) => (one.tabId === tab ? { ...one, screen } : one)),
+  });
+  await showing(CLAUDE_TEACH_LIST);
+  const before = await sendsByTab(box);
+
+  for (const flags of TYPING) {
+    const result = await run(box, ...flags);
+    assertRefused(result, `${flags.join(' ')} with the Teach list on the grooming tab's screen`);
+    assert.match(result.stderr, /question/i, `${flags.join(' ')}: the refusal says a question is up, got: ${result.stderr}`);
+  }
+  await assertNothingTyped(box, before, 'the Teach list on the grooming tab');
+
+  await showing(CLAUDE_TEACH_LIST_GONE);
+  const back = await sendsByTab(box);
+  await groom(box, '--now');
+  await theLineTyped(box, bots, back);
 });
 
 test('G10 a grooming tab with no harness in front, or one the kit cannot read, is refused every flag that types', async (t) => {
