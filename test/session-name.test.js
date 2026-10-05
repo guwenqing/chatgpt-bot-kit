@@ -101,6 +101,7 @@ import {
   throughAHarness,
 } from './helpers/cli.js';
 import {
+  CLAUDE_TEACH_LIST,
   CODEX_ANSWERED,
   CODEX_DRAFT,
   CODEX_IDLE,
@@ -593,6 +594,28 @@ test('a question that comes up after two characters: the typing stops, the two a
   await changeTab(box, tab.tabId, { nextScreens: [CODEX_SLASH_TYPED, CODEX_UPDATE_OFFER] });
 
   assertQuiet(await nameHook(box, bots, tab), 'a question partway');
+
+  assert.deepEqual(
+    await sendsInto(box, tab.tabId),
+    [...typed('/r'), { text: backspaces('/r'), enter: false }],
+    'the two characters typed, then exactly those two taken back, and nothing more',
+  );
+});
+
+// #491: a question drawn ABOVE the input line, with the input line's own
+// pointer below it, stops the typing as a question at the bottom does. The
+// screen is Claude Code 2.1.289's Teach list as captured (helpers/screens.js
+// CLAUDE_TEACH_LIST). The naming types only into Codex, and no Codex question
+// above its input line has been seen; the gate reads the rows and not the
+// harness, and this capture is the one screen of the kind there is. The two
+// characters typed before it came are the presence: the path was typing.
+test('#491: the Teach list drawn above the input box comes up after two characters: the typing stops, the two are taken back in one send, and nothing is entered', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await running(box);
+  const tab = await liveTab(box, bots);
+  await changeTab(box, tab.tabId, { nextScreens: [CODEX_SLASH_TYPED, CLAUDE_TEACH_LIST] });
+
+  assertQuiet(await nameHook(box, bots, tab), 'the Teach list partway');
 
   assert.deepEqual(
     await sendsInto(box, tab.tabId),
@@ -1119,6 +1142,8 @@ describe('the waits that run out, side by side', { concurrency: true }, () => {
     { what: 'Orca reports the session busy', setUp: (box) => box.orca.set({ waitIdle: 'busy' }) },
     { what: 'Orca calls it idle while its screen says "esc to interrupt"', setUp: (box, tab) => changeTab(box, tab.tabId, { screen: CODEX_WORKING }) },
     { what: 'a question of Codex\'s own is on its screen', setUp: (box, tab) => changeTab(box, tab.tabId, { screen: CODEX_UPDATE_OFFER }) },
+    // #491: a question drawn above the input line, as the partway test above says.
+    { what: 'Claude Code 2.1.289\'s Teach list is on its screen, above the input box', setUp: (box, tab) => changeTab(box, tab.tabId, { screen: CLAUDE_TEACH_LIST }) },
     { what: 'Orca reports the tab blocked', setUp: (box) => box.orca.set({ waitIdle: 'blocked', blockedReason: 'agent-permission-prompt' }) },
   ]) {
     it(`${what} for the whole 30 s: nothing typed, and it exits 0 quietly once the wait is out`, async (t) => {

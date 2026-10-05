@@ -65,7 +65,7 @@ import {
   tabsOfBot,
   typedInto,
 } from './helpers/cli.js';
-import { CODEX_UPDATE_OFFER } from './helpers/screens.js';
+import { CLAUDE_TEACH_LIST, CLAUDE_TEACH_LIST_GONE, CODEX_UPDATE_OFFER } from './helpers/screens.js';
 
 /** The line the kit types, word for word, as the architect ruled it on #226. */
 const LIST_LINE = 'obk: this session was resumed in a new tab, and this line is only so Orca lists it. Reply "ok"; nothing else is asked.';
@@ -257,6 +257,36 @@ test('a resumed Codex tab showing a question of Codex\'s own, which Orca calls i
 
   await assertListLineNotTyped(box, bots, entry, 'a question on screen');
   assert.match(entry.listLineTrouble, /question/i, `it says a question is waiting, got: ${entry.listLineTrouble}`);
+});
+
+// #491: a question drawn ABOVE the input line, with the input line's own
+// pointer below it, is a question to the gate like one at the bottom. The
+// screen is Claude Code 2.1.289's Teach list as captured (helpers/screens.js
+// CLAUDE_TEACH_LIST). The list line goes only into Codex, and no Codex question
+// above its input line has been seen; the gate reads the rows and not the
+// harness, and this capture is the one screen of the kind there is.
+test('#491: a resumed Codex tab showing the Teach list drawn above the input box gets nothing typed, and the answer says a question is waiting', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await closedWithConversation(box);
+  await box.orca.set({ screen: CLAUDE_TEACH_LIST });
+
+  const entry = entryOf(await run(box, 'up'));
+
+  assert.equal(entry.harnessStarted, true, `the premise: the harness came up, got: ${JSON.stringify(entry)}`);
+  await assertListLineNotTyped(box, bots, entry, 'the Teach list above the input box');
+  assert.match(entry.listLineTrouble, /question/i, `it says a question is waiting, got: ${entry.listLineTrouble}`);
+});
+
+// #491, the presence beside it: the same capture with the list taken out is no
+// question, and the line is typed. Passes before the change.
+test('#491: a resumed Codex tab showing the same capture with the list taken out gets the list line', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await closedWithConversation(box);
+  await box.orca.set({ screen: CLAUDE_TEACH_LIST_GONE });
+
+  const entry = entryOf(await run(box, 'up'));
+
+  await assertListLineTyped(box, bots, entry, 'the capture with the list taken out');
 });
 
 test('a gate that lets the line through only after the 20 s are up is too late: nothing is typed, and the answer says the wait ran out', async (t) => {

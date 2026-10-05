@@ -119,6 +119,8 @@ import {
   CLAUDE_AT_WORK,
   CLAUDE_IDLE,
   CLAUDE_TEACH_AUTO,
+  CLAUDE_TEACH_LIST,
+  CLAUDE_TEACH_LIST_GONE,
   CLAUDE_WORKING,
   CODEX_COMPACT_NOT_OFFERED,
   CODEX_COMPACT_TYPED,
@@ -734,6 +736,49 @@ for (const { harness, command, question } of [
   });
 }
 
+// #491: Claude Code 2.1.289's Teach list, drawn ABOVE the input box with the
+// box's own empty `❯` below it (helpers/screens.js CLAUDE_TEACH_LIST, a live
+// capture), is a question to the gate like one at the bottom of the screen. It
+// comes up after a session's first turn in auto mode, so a clear can meet it
+// partway. The two characters typed before it came are the presence: the path
+// was typing.
+test('#491: the Teach list drawn above the input box comes up after two characters of /clear: the gate stops the typing, the two are taken back in one send, and it refuses, saying a question came up', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await running(box);
+  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: [whileTyping('claude', '/clear')[0], CLAUDE_TEACH_LIST] });
+
+  const said = assertRefused(await sessionCommand(box, 'clear'));
+
+  assert.deepEqual(
+    await sendsInto(box, bots),
+    [...typed('/c'), { text: backspaces('/c'), enter: false }],
+    'the two characters typed, and then exactly those two taken back, and nothing more',
+  );
+  assert.match(said, /question/i, `it says a question came up, got:\n${said}`);
+});
+
+// #491, the presence beside the refusals: the same capture with the list taken
+// out is no question, and the clear goes through from it. Passes before the
+// change.
+test('#491: clear on Claude Code from the 2.1.289 capture with the list taken out: /clear typed, entered, and the new conversation is the answer', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await running(box);
+  await changeTab(box, (await liveTab(box, bots)).tabId, {
+    screen: CLAUDE_TEACH_LIST_GONE,
+    nextScreens: screensFor('claude', '/clear', CLAUDE_CLEAR_TYPED, CLAUDE_IDLE),
+  });
+
+  const { result, played } = await runPlaying(box, bots, 'clear', {
+    when: (sends) => sends.some((one) => one.text === '\r'),
+    then: () => hookReports(box, bots, 'sess-cleared', 'clear'),
+  });
+
+  const answer = answered(result, 'the clear');
+  assert.ok(played, 'the premise: the return was sent and the hook reported the new conversation');
+  assert.deepEqual(await sendsInto(box, bots), [...typed('/clear'), { text: '\r', enter: false }]);
+  assert.deepEqual(answer.cleared, { bot: BOT, session: 'daily', harness: 'claude', was: 'sess-daily', now: 'sess-cleared' });
+});
+
 // ------------------------------------------------ after live run 4 (ruling 2026-10-03)
 //
 // Live run 4 of #391. Claude Code 2.1.288 puts a non-breaking space after its
@@ -1065,6 +1110,22 @@ describe('the waits that run out, side by side', { concurrency: true }, () => {
     assert.match(said, /question/i, `it says a question is waiting, got:\n${said}`);
     await assertNothingTyped(box, before, 'a question on screen');
   });
+
+  // #491: a question drawn above the input box, for clear and for compact.
+  for (const verb of VERBS) {
+    it(`Claude Code 2.1.289's Teach list above the input box for the whole 30 s, Orca calling it idle: ${verb} refused, saying a question is up, nothing typed`, async (t) => {
+      const box = await createSandbox(t);
+      const bots = await running(box);
+      await changeTab(box, (await liveTab(box, bots)).tabId, { screen: CLAUDE_TEACH_LIST });
+      const before = await typedEverywhere(box);
+
+      const said = assertRefused(await sessionCommand(box, verb));
+
+      assert.match(said, /question/i, `it says a question is waiting, got:\n${said}`);
+      await assertNothingTyped(box, before, `${verb} with the Teach list on screen`);
+      assert.equal((await sessionIn(bots, BOT, 'daily')).session, 'sess-daily', 'the book is as it was');
+    });
+  }
 
   it('a tab Orca reports blocked for the whole 30 s: refused, nothing typed', async (t) => {
     const box = await createSandbox(t);

@@ -349,6 +349,40 @@ export const CLAUDE_TEACH_FORM_ON_CONTINUE = CLAUDE_TEACH_FORM.map((row) => {
 });
 
 /**
+ * Claude Code 2.1.289's "Teach auto mode about your environment?", a numbered
+ * list this time, its selection on "1. Yes", drawn above the input box right
+ * after the session's first turn: a capture, the whole `tail` of a kit-made
+ * temporary session's tab in #489's live run, 2026-10-05, in auto mode. Enter
+ * on it takes the row the pointer is on; its answer is "2. Not now" (#489).
+ * The input box below it keeps its own `❯`. `<tmp>` stands for the system temp
+ * folder, in full on the wrapped rows and in Claude Code's own shortening on
+ * the third; the rows were not wrapped again.
+ */
+export const CLAUDE_TEACH_LIST = [
+  ' ▐▛███▛█   Claude Code v2.1.289',
+  '▝▜██████▀  Opus 5.5 with xhigh effort · Claude Max',
+  ' ▝▝   ▝▝   <tmp>/obk-system-temp-answer-8k20ct/bots/answer-bot · /rc',
+  '❯ You are a system test\'s session and you own nothing. Do not run any command, read or write any file, or use any tool.',
+  '  Reply now with READY-4893 and nothing else, then wait.',
+  '  Your work dir is',
+  '  <tmp>/obk-system-temp-answer-8k20ct/bots/answer-bot/work/helper.',
+  '  It is a plain folder the kit made for you, not a git worktree.',
+  '⏺ READY-4893',
+  '✻ Baked for 1s · done 3:15 AM',
+  '─'.repeat(120),
+  '  Teach auto mode about your environment?',
+  '  Auto mode works better when it knows your environment. Takes about a minute.',
+  '  ❯ 1. Yes',
+  '    2. Not now',
+  '    3. Don\'t show again',
+  '  Enter to confirm · Esc to cancel',
+  `${'─'.repeat(91)} answer-bot.helper.vm2yc5b2 ─`,
+  '❯',
+  '─'.repeat(120),
+  '  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents',
+];
+
+/**
  * Not a question: the model's answer holds an ordinary numbered list, with no
  * pointer on it, and the empty input line is below. A reconstruction on the
  * captured input line.
@@ -394,6 +428,53 @@ export const FORM_IN_HISTORY = [
   '       Continue',
   '     ←/→ to change usage · Enter to continue · Esc to cancel',
   '  Enter on it is Continue, which starts the scan.',
+  ...CLAUDE_INPUT_LINE,
+];
+
+/**
+ * CLAUDE_TEACH_LIST once the list has gone: the capture with the rule above
+ * the list's title and the list's rows down to its foot taken out, the
+ * answered turn and the input box left as captured. Not a question. A
+ * reconstruction: what Claude Code 2.1.289 draws once the list is answered
+ * was not captured (#491).
+ */
+export const CLAUDE_TEACH_LIST_GONE = CLAUDE_TEACH_LIST.filter((row, at) => {
+  const title = CLAUDE_TEACH_LIST.findIndex((one) => one.trim() === 'Teach auto mode about your environment?');
+  const foot = CLAUDE_TEACH_LIST.findIndex((one) => one.trim() === 'Enter to confirm · Esc to cancel');
+  return at < title - 1 || at > foot;
+});
+
+/**
+ * Not a question: CLAUDE_TEACH_LIST's own rows, title, pointer, numbers and
+ * foot, are history, quoted by the model the way a bot working on issue #491
+ * has them on its screen, a conversation row after them and the input line
+ * back below. A reconstruction on the captured input line (#491).
+ */
+export const LIST_IN_HISTORY = [
+  '❯ What did Claude Code 2.1.289 show after the first turn?',
+  '⏺ Its Teach list, above the input box, as issue #491 quotes it:',
+  '    Teach auto mode about your environment?',
+  '    Auto mode works better when it knows your environment. Takes about a minute.',
+  '    ❯ 1. Yes',
+  '      2. Not now',
+  '      3. Don\'t show again',
+  '    Enter to confirm · Esc to cancel',
+  '  A return on it takes "1. Yes", which starts the teach scan.',
+  ...CLAUDE_INPUT_LINE,
+];
+
+/**
+ * Not a question: the user's past turn, a numbered list of its own, echoed
+ * with Claude Code's pointer on its first row and the second lined up under
+ * it, the model's answer after it and the input line back below. A
+ * reconstruction on the captured input line, its echo laid out as
+ * CLAUDE_ANSWERED wraps a long turn (#491).
+ */
+export const NUMBERED_TURN_ECHOED = [
+  '❯ 1. Write the tests for the fake',
+  '  2. Run them and read the failures',
+  '⏺ Both are done: the tests are in test/fake.test.js, and they fail as expected.',
+  '✻ Cooked for 1s · done 4:14 AM',
   ...CLAUDE_INPUT_LINE,
 ];
 
