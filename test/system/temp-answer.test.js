@@ -276,12 +276,17 @@ const inTab = ({ tabId, handle }) => ({ ...outsideAnyTab, ORCA_TAB_ID: tabId, OR
 
 /**
  * Run this checkout's `obk`, by its full path (#217, #220), outside any tab
- * unless `env` says which.
+ * unless `env` says which. The kit's own words never say "worktree". `shown`
+ * is the screen a command may print back, as `obk temp answer` does when it
+ * refuses: those rows are the tab's, not the kit's (helper's start prompt
+ * says it is "not a git worktree"), so they are taken out before the look.
  */
-function obk(args, env = outsideAnyTab) {
+function obk(args, env = outsideAnyTab, shown = []) {
   const done = spawnSync(process.execPath, [cliEntry, ...args], { encoding: 'utf8', cwd: os.tmpdir(), env });
   assert.equal(done.error, undefined, `could not run \`obk\`: ${done.error?.message}`);
-  assert.ok(!/worktree/i.test(done.stdout + done.stderr), `obk said "worktree": ${done.stdout}${done.stderr}`);
+  const own = shown.map((row) => row.trim()).filter((row) => row !== '')
+    .reduce((text, row) => text.replaceAll(row, ''), done.stdout + done.stderr);
+  assert.ok(!/worktree/i.test(own), `obk said "worktree": ${done.stdout}${done.stderr}`);
   return done;
 }
 
@@ -555,8 +560,12 @@ test('a maker answers its Claude temporary session\'s Teach auto mode form with 
   const lead = { tabId: sessionIn(home, LEAD).tab, handle: leadTab.terminal };
   assert.equal(typeof lead.tabId, 'string', `the premise: the book holds lead's tab, got: ${JSON.stringify(sessionIn(home, LEAD))}`);
 
-  /** `obk temp answer` for helper, run in lead's tab. */
-  const answerHelper = (json) => obk(['temp', 'answer', '--bots', bots, '--name', HELPER, ...(json ? ['--json'] : [])], inTab(lead));
+  /** `obk temp answer` for helper, run in lead's tab, which may print back the screen it read. */
+  const answerHelper = (json) => obk(
+    ['temp', 'answer', '--bots', bots, '--name', HELPER, ...(json ? ['--json'] : [])],
+    inTab(lead),
+    rowsOf(handle) ?? [],
+  );
 
   // ---------------------------------------------------------------------------
   // 2. lead makes helper, a Claude temporary session with one short turn to
