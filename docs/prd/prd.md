@@ -19,7 +19,7 @@ This PRD says what is wanted and where the limits are. It does not say how to bu
 ## [PRD-2] 1. Problem
 
 A person wants a small fleet of long-lived role bots on their own computer:
-a manager, developers, reviewers, a personal helper.
+a manager, developers, reviewers, a personal helper, a tester.
 Each bot keeps its identity, rules, skills and sessions across restarts.
 The person manages everything by talking to an LLM, not by editing files.
 
