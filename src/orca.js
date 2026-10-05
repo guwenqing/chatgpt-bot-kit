@@ -439,12 +439,13 @@ export function questionIn(rows) {
   // Claude Code 2.1.289 draws its Teach list above its input box, whose own
   // `❯` stays the lowest pointer row (#491). A question there is the last
   // thing drawn above the box's top rule: its foot, or its numbered choices
-  // with the pointer on one. The same words with anything after them are
-  // history.
+  // with the pointer on one, under it a foot that a narrow pane wraps onto
+  // rows of its own. The same words with anything after them are history.
   if (at < 1 || !RULE_ROW.test(rows[at - 1])) return false;
-  const end = rows.slice(0, at - 1).findLastIndex((row) => row.trim() !== '');
+  let end = rows.slice(0, at - 1).findLastIndex((row) => row.trim() !== '');
   if (end < 0) return false;
   if (FORM_FOOT.test(rows[end])) return true;
+  while (end > 0 && FOOT_PART.test(rows[end])) end -= 1;
   if (!NUMBERED.test(rows[end])) return false;
   let first = end;
   while (first > 0 && NUMBERED.test(rows[first - 1])) first -= 1;
@@ -459,6 +460,9 @@ const RULE_ROW = /^ *[─▔]{8,}/;
 
 /** A numbered choice, with the pointer on it or not. */
 const NUMBERED = /^ *(?:[›❯] +)?\d+\. /;
+
+/** A part of a foot, as a narrow pane wraps it: `Enter to confirm ·`, `Esc to cancel`. */
+const FOOT_PART = /\b(?:Enter to (?:continue|confirm|select)|Esc to cancel)\b/i;
 
 /** Whether `rows[at]` has the pointer on a numbered choice, with another lined up right above or below it. */
 function pointedChoiceAt(rows, at) {
