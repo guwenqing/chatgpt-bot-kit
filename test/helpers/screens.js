@@ -469,6 +469,17 @@ export const CLAUDE_TEACH_LIST_NO_FOOT_BLANK_UNDER = CLAUDE_TEACH_LIST.flatMap((
 });
 
 /**
+ * CLAUDE_TEACH_LIST in a narrow pane: its foot row wrapped onto two rows,
+ * "  Enter to confirm ·" and "  Esc to cancel", right above the input box's
+ * top rule; every other row as captured. A question. A reconstruction (#491,
+ * from review): no narrow pane was captured, and where the foot breaks is
+ * made up here.
+ */
+export const CLAUDE_TEACH_LIST_FOOT_WRAPPED = CLAUDE_TEACH_LIST.flatMap((row) => (
+  row.trim() === 'Enter to confirm · Esc to cancel' ? ['  Enter to confirm ·', '  Esc to cancel'] : [row]
+));
+
+/**
  * Not a question: CLAUDE_TEACH_LIST's own rows, title, pointer, numbers and
  * foot, are history, quoted by the model the way a bot working on issue #491
  * has them on its screen, a conversation row after them and the input line

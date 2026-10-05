@@ -59,6 +59,7 @@ import {
   CLAUDE_TEACH_FORM_ON_CONTINUE,
   CLAUDE_TEACH_LIST,
   CLAUDE_TEACH_LIST_BLANK_UNDER,
+  CLAUDE_TEACH_LIST_FOOT_WRAPPED,
   CLAUDE_TEACH_LIST_GONE,
   CLAUDE_TEACH_LIST_NO_FOOT_BLANK_UNDER,
   CODEX_ANSWERED,
@@ -166,6 +167,24 @@ test('a blank row between the Teach list and the input box\'s top rule: question
     for (const row of [TITLE, '❯ 1. Yes', '3. Don\'t show again']) {
       assert.ok(trimmed.includes(row), `${label}: what the look gives back holds "${row}", got:\n${rows.join('\n')}`);
     }
+  }
+});
+
+// Covers criterion 1, any form: in a narrow pane the list's foot wraps onto
+// two rows above the input box's top rule, and the numbered choices with the
+// pointer above them still make it a question, to the gate and to the system
+// tests' own look. Asked by the review of the change.
+test('the Teach list with its foot wrapped onto two rows above the input box\'s top rule: questionIn is true and questionOn gives the list', () => {
+  const screen = CLAUDE_TEACH_LIST_FOOT_WRAPPED;
+  const rule = screen.findIndex((row) => row.includes('answer-bot.helper.vm2yc5b2'));
+  assert.deepEqual(screen.slice(rule - 2, rule), ['  Enter to confirm ·', '  Esc to cancel'], 'the premise: the wrapped foot right above the top rule');
+
+  assert.equal(questionIn(screen), true, 'a question to the gate');
+  const rows = questionOn(screen);
+  assert.ok(Array.isArray(rows), `a question to the look, got: ${JSON.stringify(rows)}`);
+  const trimmed = rows.map((row) => row.trim());
+  for (const row of [TITLE, '❯ 1. Yes', '3. Don\'t show again']) {
+    assert.ok(trimmed.includes(row), `what the look gives back holds "${row}", got:\n${rows.join('\n')}`);
   }
 });
 
