@@ -1,6 +1,7 @@
 // `obk temp make` and `obk temp retire`: a session's own temporary sessions
-// (PRD 6.4, #227). And `obk temp trust-hooks`, the one answer a maker gives its
-// Codex run's hooks review (#238).
+// (PRD 6.4, #227). And `obk temp trust-hooks` and `obk temp answer`, the
+// answers a maker gives its Codex run's hooks review (#238) and its Claude
+// session's Teach auto mode form (#489).
 //
 // Any long-lived session can make a temporary session of its own bot for a
 // piece of work, and retire it when the work is done, without Bot Father, who
@@ -348,37 +349,18 @@ export async function trustHooks(bots, { tab, name }) {
   if (harness !== 'codex') {
     throw new Error(`${run} runs on ${harness}, and temp trust-hooks answers a Codex run's "${HOOKS_REVIEW}" alone. ${nothing}`);
   }
-  const tabId = readBook(caller.home).sessions[name]?.tab;
-  const handle = tabId === undefined ? undefined : tabs(caller.home).find((one) => one.tabId === tabId)?.handle;
-  if (handle === undefined) {
-    throw new Error(`${run} has no tab open in Orca, so there is no review of its to answer. ${nothing}`);
-  }
-  // The session's turn for a line (#482), for the look and the keys.
-  const turn = takeLineTurn(caller.home, name, TYPING_WAIT_MS);
-  if (turn === undefined) throw new Error(`${run}: ${TYPING_HELD}.`);
-  try {
-    const seen = screenRows(handle);
-    if (seen.rows === undefined) {
-      throw new Error(`${run}'s screen could not be read (${seen.unreadable}), so the kit cannot tell whether its hooks review is there. ${nothing}`);
-    }
-    const keys = keysToTrustAll(seen.rows);
-    if (keys === undefined) {
-      throw new Error(`${run}'s screen shows no "${HOOKS_REVIEW}" with its choices, so there is nothing for this to answer. It shows: ${shown(seen.rows)}. ${nothing}`);
-    }
-    // The return is inside the text: `--enter` would be a second key.
-    orca(['terminal', 'send', '--terminal', handle, '--text', keys]);
-  } finally {
-    turn.release();
-  }
-  for (let waited = 0; ; waited += 500) {
-    const after = screenRows(handle);
-    if (after.rows !== undefined && !after.rows.some((row) => row.includes(HOOKS_REVIEW))) break;
-    if (waited >= REVIEW_GONE_MS) {
-      const still = after.rows === undefined ? `its screen could not be read again (${after.unreadable})` : `its screen still shows "${HOOKS_REVIEW}"`;
-      throw new Error(`${run}: "${TRUST_ALL}" was chosen on its hooks review, but ${REVIEW_GONE_MS / 1000} seconds later ${still}. Look at its tab.`);
-    }
-    await pause(500);
-  }
+  await answerScreen(caller, name, {
+    what: 'hooks review',
+    mark: HOOKS_REVIEW,
+    done: `"${TRUST_ALL}" was chosen on its hooks review`,
+    keysFor(rows) {
+      const keys = keysToTrustAll(rows);
+      if (keys === undefined) {
+        throw new Error(`${run}'s screen shows no "${HOOKS_REVIEW}" with its choices, so there is nothing for this to answer. It shows: ${shown(rows)}. ${nothing}`);
+      }
+      return keys;
+    },
+  });
   return { bot: caller.bot, session: name, maker: caller.session };
 }
 
@@ -401,6 +383,116 @@ function keysToTrustAll(rows) {
 function shown(rows) {
   const text = rows.map((row) => row.trim()).filter((row) => row !== '').join(' ⏎ ');
   return text.length > 500 ? `${text.slice(0, 500)}…` : text;
+}
+
+/**
+ * Answer a screen of `name`, a temporary session the caller made: under the
+ * session's turn for a line (#482), read its screen, send it the keys
+ * `keysFor(rows)` gives, which throws when the screen is not its to answer,
+ * and then wait for `mark` to leave the screen. `what` names the screen and
+ * `done` says what was sent, for the sentences that refuse or fail.
+ */
+async function answerScreen(caller, name, { what, mark, done, keysFor }) {
+  const run = `${caller.bot}/${name}`;
+  const nothing = 'Nothing was typed.';
+  const tabId = readBook(caller.home).sessions[name]?.tab;
+  const handle = tabId === undefined ? undefined : tabs(caller.home).find((one) => one.tabId === tabId)?.handle;
+  if (handle === undefined) {
+    throw new Error(`${run} has no tab open in Orca, so there is no ${what} of its to answer. ${nothing}`);
+  }
+  const turn = takeLineTurn(caller.home, name, TYPING_WAIT_MS);
+  if (turn === undefined) throw new Error(`${run}: ${TYPING_HELD}.`);
+  try {
+    const seen = screenRows(handle);
+    if (seen.rows === undefined) {
+      throw new Error(`${run}'s screen could not be read (${seen.unreadable}), so the kit cannot tell whether its ${what} is there. ${nothing}`);
+    }
+    // The return, where there is one, is inside the text: `--enter` would be a second key.
+    orca(['terminal', 'send', '--terminal', handle, '--text', keysFor(seen.rows)]);
+  } finally {
+    turn.release();
+  }
+  for (let waited = 0; ; waited += 500) {
+    const after = screenRows(handle);
+    if (after.rows !== undefined && !after.rows.some((row) => row.includes(mark))) return;
+    if (waited >= REVIEW_GONE_MS) {
+      const still = after.rows === undefined ? `its screen could not be read again (${after.unreadable})` : `its screen still shows "${mark}"`;
+      throw new Error(`${run}: ${done}, but ${REVIEW_GONE_MS / 1000} seconds later ${still}. Look at its tab.`);
+    }
+    await pause(500);
+  }
+}
+
+/**
+ * Claude Code 2.1.283's "Teach auto mode about your environment?" form, from
+ * its title down, as captured live in #261's test (#416): the one screen
+ * `temp answer` answers. Its rows are compared trimmed, the pointer `❯` taken
+ * out, so the pointer may sit on any one of them.
+ */
+const TEACH_FORM = [
+  'Teach auto mode about your environment?',
+  'Claude Code reads this project, your recent Claude sessions, and optionally your shell history and other',
+  'repositories. Claude analyzes this data and customizes auto mode to make better decisions.',
+  'How you use Claude here     Mixed',
+  'Also scan shell history     true',
+  'Also scan your other repos  false',
+  'Continue',
+  '←/→ to change usage · Enter to continue · Esc to cancel',
+];
+
+/** Esc, which cancels the form: Not now, which teaches nothing. Never a return, which is Continue. */
+const NOT_NOW = '\x1b';
+
+/** A row as the form is compared: trimmed, with its pointer, wherever it sits, taken out. */
+const unpointed = (row) => row.replace('❯', ' ').trim();
+
+/**
+ * Whether `rows` hold the Teach form and nothing else: every non-blank row
+ * from its title down is a row of TEACH_FORM, the pointer on exactly one,
+ * nothing missing and nothing added. Undefined when they do, or why not.
+ */
+function teachFormMisfit(rows) {
+  const from = rows.findIndex((row) => row.trim() === TEACH_FORM[0]);
+  if (from < 0) return `it shows no "${TEACH_FORM[0]}"`;
+  const seen = rows.slice(from).filter((row) => row.trim() !== '');
+  const pointers = seen.filter((row) => row.includes('❯')).length;
+  if (pointers !== 1) return `its form has ${pointers} rows with the pointer ❯, where the known form has one`;
+  const odd = seen.find((row) => !TEACH_FORM.includes(unpointed(row)));
+  if (odd !== undefined) return `its form has a row the known form does not: ${odd.trim()}`;
+  const missing = TEACH_FORM.find((row) => !seen.map(unpointed).includes(row));
+  if (missing !== undefined) return `its form lacks a row the known form has: ${missing}`;
+  if (seen.length !== TEACH_FORM.length) return `its form has ${seen.length} rows, where the known form has ${TEACH_FORM.length}`;
+  return undefined;
+}
+
+/**
+ * Answer the first-run screen of a temporary session the caller made (#489).
+ * The one screen it answers is Claude Code's Teach auto mode form, matched
+ * exactly, with Esc; anything else is refused with nothing typed. Like
+ * `trustHooks`, it is one command a permission rule of its own can allow.
+ * Returns `{ bot, session, maker }`.
+ */
+export async function answerTemp(bots, { tab, name }) {
+  const caller = callerIn(bots, tab, 'answer', "answer a session's first-run screen");
+  const nothing = 'Nothing was typed.';
+  ownTemp(caller, name, 'answer for', nothing);
+  const run = `${caller.bot}/${name}`;
+  await answerScreen(caller, name, {
+    what: `"${TEACH_FORM[0]}"`,
+    mark: TEACH_FORM[0],
+    done: 'Esc (Not now) was sent to its Teach auto mode form',
+    keysFor(rows) {
+      const misfit = teachFormMisfit(rows);
+      if (misfit !== undefined) {
+        const hooks = rows.some((row) => row.includes(HOOKS_REVIEW)) ? ` A Codex run's "${HOOKS_REVIEW}" is answered with temp trust-hooks.` : '';
+        // The whole screen, a row to a line: what decides is often at its foot.
+        const screen = rows.filter((row) => row.trim() !== '').map((row) => `    ${row}`).join('\n');
+        throw new Error(`${run}'s screen is not one temp answer answers: ${misfit}.${hooks} ${nothing} It shows:\n${screen}`);
+      }
+      return NOT_NOW;
+    },
+  });
+  return { bot: caller.bot, session: name, maker: caller.session };
 }
 
 /**

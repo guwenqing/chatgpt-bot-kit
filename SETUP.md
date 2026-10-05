@@ -221,6 +221,24 @@ Codex's `/new` question (seen on 0.156.1, 0.157.1, 0.158.0 and 0.160.0) is alway
 home. The kit never makes a git worktree, so
 `2. New worktree` is never the answer.
 
+A bot's own temporary sessions are answered by their maker, through the kit, so
+that one narrow permission rule allows it rather than a rule to type into any
+tab. On Codex's hooks review, the maker runs
+`obk temp trust-hooks --bots <their path> --name <session>`. On Claude Code's
+`Teach auto mode` form, it runs `obk temp answer --bots <their path> --name <session>`.
+That command reads the screen and sends Esc only when the screen holds that
+form exactly as the kit knows it. It refuses any other screen, types nothing
+then, and prints what it saw. Afterwards it checks that the form has gone. In
+auto mode the maker's bot needs this rule, with the kit's full CLI path for
+`<kit>`, as the command's own output prints it:
+
+```text
+Bash(<kit> temp answer:*)
+```
+
+Ask the user, and only after their yes run
+`obk bot change --bots <their path> --bot <bot> --allow 'Bash(<kit> temp answer:*)'`.
+
 **Anything you do not recognise: type nothing.** Tell them what is on the
 screen and which tab it is in, and wait. A keypress into a menu you have not read
 is how a harness quits back to the shell.

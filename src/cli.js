@@ -31,7 +31,7 @@ import { readRoster } from './roster.js';
 import { buildAgents, buildRules, CODEX_CAP } from './rules.js';
 import { addSkill, buildSkills, linkSkills, removeSkill } from './skills.js';
 import { addSource, fetchSources } from './sources.js';
-import { listRoles, makeTemp, optionsLine, retireTemp, trustHooks } from './temp.js';
+import { answerTemp, listRoles, makeTemp, optionsLine, retireTemp, trustHooks } from './temp.js';
 import { readUsage } from './usage.js';
 import { BOT_FATHER, bringUp, ownMailbox } from './up.js';
 
@@ -140,6 +140,12 @@ Usage:
                             all and continue", and check the review went. It
                             refuses anything else on that screen, and types
                             nothing then.
+  obk temp answer --bots <path> --name <session>
+                            Run in the maker's own tab: answer Claude Code's
+                            "Teach auto mode" form on a temporary session it
+                            made with Esc (Not now), and check the form went.
+                            It refuses any other screen, and types nothing
+                            then.
   obk rules build --bots <path> [--bot <bot>]
                             Build every bot's AGENTS.md from its charter and
                             the rule units it carries, or just the one you
@@ -329,6 +335,7 @@ const COMMANDS = {
   'temp roles': ['bots'],
   'temp retire': ['bots', 'name'],
   'temp trust-hooks': ['bots', 'name'],
+  'temp answer': ['bots', 'name'],
 };
 
 /** What each flag is for, in the sentence a caller reads when it is missing. */
@@ -789,6 +796,19 @@ const commands = {
     return {
       answer: { bots, ...trusted },
       lines: [`trusted    ${trusted.bot} ${trusted.session}'s hooks, a temporary session of ${trusted.maker}'s: chose "Trust all and continue" on its hooks review, and the review has gone`],
+    };
+  },
+
+  async 'temp answer'(bots, values) {
+    const tab = callerTab(bots, true);
+    refuseWhenOrcaIsDown();
+    const answered = await answerTemp(bots, { tab, name: values.name });
+    return {
+      answer: { bots, ...answered },
+      lines: [
+        `answered   ${answered.bot} ${answered.session}, a temporary session of ${answered.maker}'s: sent Esc (Not now) to its "Teach auto mode about your environment?" form, and the form has gone`,
+        `rule       a maker's bot runs this under one permission rule, which the user approves:  Bash(${shellWord(ownCli())} temp answer:*)`,
+      ],
     };
   },
 
