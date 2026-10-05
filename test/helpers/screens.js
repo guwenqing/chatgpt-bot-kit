@@ -349,6 +349,53 @@ export const CLAUDE_TEACH_FORM_ON_CONTINUE = CLAUDE_TEACH_FORM.map((row) => {
 });
 
 /**
+ * Claude Code 2.1.289's "Teach auto mode about your environment?", a numbered
+ * list this time, its selection on "1. Yes", drawn above the input box right
+ * after the session's first turn: a capture, the whole `tail` of a kit-made
+ * temporary session's tab in #489's live run, 2026-10-05, in auto mode. Enter
+ * on it takes the row the pointer is on; its answer is "2. Not now" (#489).
+ * The input box below it keeps its own `❯`. `<tmp>` stands for the system temp
+ * folder, in full on the wrapped rows and in Claude Code's own shortening on
+ * the third; the rows were not wrapped again.
+ */
+export const CLAUDE_TEACH_LIST = [
+  ' ▐▛███▛█   Claude Code v2.1.289',
+  '▝▜██████▀  Opus 5.5 with xhigh effort · Claude Max',
+  ' ▝▝   ▝▝   <tmp>/obk-system-temp-answer-8k20ct/bots/answer-bot · /rc',
+  '❯ You are a system test\'s session and you own nothing. Do not run any command, read or write any file, or use any tool.',
+  '  Reply now with READY-4893 and nothing else, then wait.',
+  '  Your work dir is',
+  '  <tmp>/obk-system-temp-answer-8k20ct/bots/answer-bot/work/helper.',
+  '  It is a plain folder the kit made for you, not a git worktree.',
+  '⏺ READY-4893',
+  '✻ Baked for 1s · done 3:15 AM',
+  '─'.repeat(120),
+  '  Teach auto mode about your environment?',
+  '  Auto mode works better when it knows your environment. Takes about a minute.',
+  '  ❯ 1. Yes',
+  '    2. Not now',
+  '    3. Don\'t show again',
+  '  Enter to confirm · Esc to cancel',
+  `${'─'.repeat(91)} answer-bot.helper.vm2yc5b2 ─`,
+  '❯',
+  '─'.repeat(120),
+  '  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents',
+];
+
+/** CLAUDE_TEACH_LIST with its selection on `choice`, one of its three rows: a reconstruction. */
+const teachListOn = (choice) => CLAUDE_TEACH_LIST.map((row) => {
+  const found = /^ {2}(?:❯ | {2})([123]\. .+)$/.exec(row);
+  if (found === null) return row;
+  return found[1] === choice ? `  ❯ ${found[1]}` : `    ${found[1]}`;
+});
+
+/** The same list with its selection moved down to "2. Not now", no return pressed yet: a reconstruction. */
+export const CLAUDE_TEACH_LIST_ON_NOT_NOW = teachListOn('2. Not now');
+
+/** The same list with its selection on "3. Don't show again": a reconstruction. */
+export const CLAUDE_TEACH_LIST_ON_THREE = teachListOn('3. Don\'t show again');
+
+/**
  * Not a question: the model's answer holds an ordinary numbered list, with no
  * pointer on it, and the empty input line is below. A reconstruction on the
  * captured input line.
@@ -792,6 +839,53 @@ export function onlyTeachFormOf(rows) {
   const missing = captured.find((row) => !seen.map(unpointed).includes(unpointed(row)));
   if (missing !== undefined) return `it lacks a row the captured form has: ${missing.trim()}`;
   if (seen.length !== captured.length) return `it has ${seen.length} rows from its title down, where the captured form has ${captured.length}`;
+  return undefined;
+}
+
+/** The foot row Claude Code draws under a Teach form or list: `Enter to … · Esc to cancel`. */
+const TEACH_FOOT = /^ *(?:.* · )?Enter to \S.* · Esc to cancel *$/;
+
+/**
+ * Whether Claude Code 2.1.289's "Teach auto mode about your environment?" list
+ * on a tab's rendered `rows` is the captured one and nothing else (#489, the
+ * architect's ruling on the 2.1.289 list): undefined when it is, or why not.
+ * The rows that count run from the title row to the first foot row under it,
+ * `Enter to … · Esc to cancel`; the input box below, with its own `❯`, does
+ * not count. Every non-blank row there is a row of CLAUDE_TEACH_LIST from its
+ * title to its foot, in the same order, the pointer `❯` on exactly one of
+ * them, on whichever row it sits; nothing is missing and nothing is added. A
+ * row not on that list is refused by name. And it is framed as Claude Code
+ * draws it, not as it is quoted (the ruling on the review of PR #490): the
+ * non-blank row right above the title is a rule of `─` or `▔` alone, and the
+ * non-blank row right below the foot, if there is one, is the input box's top
+ * rule, starting with `─`. See test/teach-list.test.js.
+ */
+export function onlyTeachListOf(rows) {
+  const block = (shown) => {
+    const from = shown.findIndex((row) => row.trim() === TEACH_TITLE);
+    if (from < 0) return undefined;
+    const foot = shown.findIndex((row, at) => at > from && TEACH_FOOT.test(row));
+    return foot < 0 ? undefined : shown.slice(from, foot + 1).filter((row) => row.trim() !== '');
+  };
+  if (!rows.some((row) => row.trim() === TEACH_TITLE)) return `it has no "${TEACH_TITLE}" row, so it is not the list captured as CLAUDE_TEACH_LIST`;
+  const seen = block(rows);
+  if (seen === undefined) return 'it has no "Enter to … · Esc to cancel" row under its title, so it is not the list captured as CLAUDE_TEACH_LIST';
+  const captured = block(CLAUDE_TEACH_LIST);
+  const pointers = seen.filter((row) => row.includes('❯')).length;
+  if (pointers !== 1) return `it has ${pointers} rows with the pointer ❯ from its title to its foot, where the captured list has one`;
+  const odd = seen.find((row) => !captured.map(unpointed).includes(unpointed(row)));
+  if (odd !== undefined) return `it carries a row the captured list does not, which this test has no ruling for: ${odd.trim()}`;
+  const missing = captured.find((row) => !seen.map(unpointed).includes(unpointed(row)));
+  if (missing !== undefined) return `it lacks a row the captured list has: ${missing.trim()}`;
+  if (seen.length !== captured.length) return `it has ${seen.length} rows from its title to its foot, where the captured list has ${captured.length}`;
+  const outOfOrder = seen.find((row, at) => unpointed(row) !== unpointed(captured[at]));
+  if (outOfOrder !== undefined) return `its rows are not in the captured list's order: ${outOfOrder.trim()}`;
+  const from = rows.findIndex((row) => row.trim() === TEACH_TITLE);
+  const above = rows.slice(0, from).findLast((row) => row.trim() !== '');
+  if (above === undefined || !/^\s*(?:─+|▔+)\s*$/.test(above)) return `the row above its title is not a rule, so it is quoted, not drawn: ${above?.trim() ?? '(none)'}`;
+  const foot = rows.findIndex((row, at) => at > from && TEACH_FOOT.test(row));
+  const below = rows.slice(foot + 1).find((row) => row.trim() !== '');
+  if (below !== undefined && !/^\s*─/.test(below)) return `the row below its foot is not the input box's rule, so it is quoted, not drawn: ${below.trim()}`;
   return undefined;
 }
 
