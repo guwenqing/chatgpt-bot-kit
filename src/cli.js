@@ -142,10 +142,10 @@ Usage:
                             nothing then.
   obk temp answer --bots <path> --name <session>
                             Run in the maker's own tab: answer Claude Code's
-                            "Teach auto mode" form on a temporary session it
-                            made with Esc (Not now), and check the form went.
-                            It refuses any other screen, and types nothing
-                            then.
+                            "Teach auto mode" screen on a temporary session it
+                            made with Not now, in a shape the kit knows, and
+                            check the screen went. It refuses any other
+                            screen, and types nothing then.
   obk rules build --bots <path> [--bot <bot>]
                             Build every bot's AGENTS.md from its charter and
                             the rule units it carries, or just the one you
@@ -806,7 +806,7 @@ const commands = {
     return {
       answer: { bots, ...answered },
       lines: [
-        `answered   ${answered.bot} ${answered.session}, a temporary session of ${answered.maker}'s: sent Esc (Not now) to its "Teach auto mode about your environment?" form, and the form has gone`,
+        `answered   ${answered.bot} ${answered.session}, a temporary session of ${answered.maker}'s: sent ${answered.sent} to its "Teach auto mode about your environment?" screen, and the screen has gone`,
         `rule       a maker's bot runs this under one permission rule, which the user approves:  Bash(${shellWord(ownCli())} temp answer:*)`,
       ],
     };

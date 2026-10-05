@@ -200,6 +200,7 @@ waiting for:
 | Codex's update offer, `1. Update now` | `\r` | return: its selection starts on **Update now**, which accepts it | Codex 0.156.1; seen on 0.157.1 (offering 0.158.0) with the selection on **Update now**, not pressed; 0.158.0 offered 0.160.0, taken on 2026-10-02 by Bot Father's restarts |
 | `[oh-my-zsh] Would you like to update?` | `n` | they update their own shell | oh-my-zsh bf77e35 |
 | Claude Code's `Teach auto mode about your environment?` | `\x1b` | Esc, which cancels it (**Not now**). On 2.1.283 it is a form, not a list: `How you use Claude here`, `Also scan shell history`, `Also scan your other repos`, `Continue`, and `Enter to continue · Esc to cancel`. **Never send a return**: Enter is **Continue**, which starts a scan of the project, recent Claude sessions and, by default, the machine's shell history | Not yet proven: Esc cancels in Claude Code 2.1.283's code, not yet seen live (#370); the form was seen live twice on 2.1.283, in #261's live test and #239's live run 1 (#416); 2.1.278 showed a numbered list, answered with 2. Not now |
+| Claude Code 2.1.289's `Teach auto mode about your environment?`, a numbered list: `1. Yes`, `2. Not now`, `3. Don't show again`, and `Enter to confirm · Esc to cancel`, above the input box | `\x1b[B\r` | down, then return, to **2. Not now**: its selection starts on **1. Yes**. Read the screen after the down arrow, and send the return only with the selection on **2. Not now**. Never **1. Yes**, which starts the teach scan, and never **3. Don't show again** | Not yet proven: the list was seen live on 2.1.289 with its selection on 1. Yes, in #489's live run 1, and was not answered there |
 
 Each key counts on where the selection starts, as it did on the version named.
 Read the screen in front of you before you send: if the selection is somewhere
@@ -225,10 +226,13 @@ A bot's own temporary sessions are answered by their maker, through the kit, so
 that one narrow permission rule allows it rather than a rule to type into any
 tab. On Codex's hooks review, the maker runs
 `obk temp trust-hooks --bots <their path> --name <session>`. On Claude Code's
-`Teach auto mode` form, it runs `obk temp answer --bots <their path> --name <session>`.
-That command reads the screen and sends Esc only when the screen holds that
-form exactly as the kit knows it. It refuses any other screen, types nothing
-then, and prints what it saw. Afterwards it checks that the form has gone. In
+`Teach auto mode` screen, it runs `obk temp answer --bots <their path> --name <session>`.
+That command reads the screen and answers only when it holds one of the two
+shapes in the table exactly as the kit knows it: Esc for the 2.1.283 form, and
+**2. Not now** for the 2.1.289 list. On the list it sends the arrows, reads the
+screen again, and sends the return only with the selection on **2. Not now**.
+It refuses any other screen, types nothing then, and prints what it saw.
+Afterwards it checks that the screen has gone. In
 auto mode the maker's bot needs this rule, with the kit's full CLI path for
 `<kit>`, as the command's own output prints it:
 

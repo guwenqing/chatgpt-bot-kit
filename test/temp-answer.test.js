@@ -33,6 +33,16 @@
 //      `Bash(<kit> temp answer:*)`, <kit> the running kit's CLI path.
 //   8. `obk --help` lists `obk temp answer --bots <path> --name <session>`.
 //
+// And Claude Code 2.1.289's Teach list (the architect's ruling on #489's live
+// run, its letters here): two known forms, the 2.1.283 form and the 2.1.289
+// list (A); the match runs from the title to the foot row, `Enter to … · Esc
+// to cancel`, and the rows below the foot do not count (B); the 2.1.283 form
+// still gets Esc alone (C); the list gets "2. Not now", by arrows from
+// wherever the pointer is, then a look that finds the pointer on 2 and the
+// list otherwise as it was, and only then a return alone; never a digit,
+// never --enter, never Esc, never 1 or 3 (D); and the title must go after
+// (E). Tests TB, TD and TE.
+//
 // Every run is in the sandbox (helpers/cli.js): the fake Orca shows each tab
 // the screen a test gives it, and moves it on at the next key when told to
 // (`screenAfterSend`, `nextScreens`).
@@ -45,6 +55,8 @@ import { describe, it as test } from 'node:test';
 import {
   createSandbox,
   kitLaunchMark,
+  orcaCommand,
+  orcaFlag,
   repoRoot,
   sentInto,
   sessionIn,
@@ -56,6 +68,9 @@ import {
   CLAUDE_TEACH_AUTO,
   CLAUDE_TEACH_FORM,
   CLAUDE_TEACH_FORM_ON_CONTINUE,
+  CLAUDE_TEACH_LIST,
+  CLAUDE_TEACH_LIST_ON_NOT_NOW,
+  CLAUDE_TEACH_LIST_ON_THREE,
   CLAUDE_TRUST,
   CODEX_HOOKS_REVIEW,
   FORM_IN_HISTORY,
@@ -168,6 +183,68 @@ const changed = (change) => CLAUDE_TEACH_FORM.map(change);
 
 /** The form's own rows, from its title down, as captured. */
 const formRows = CLAUDE_TEACH_FORM.slice(CLAUDE_TEACH_FORM.findIndex((row) => row.trim() === TITLE));
+
+// Claude Code 2.1.289's Teach list (#489, the architect's ruling on the
+// 2.1.289 list): answered with "2. Not now", by arrows from wherever the
+// pointer is, then a look at the screen that finds the pointer on "2. Not now"
+// and the list otherwise as it was, and only then a return alone. Never a
+// digit, never --enter, never Esc, and never a return on 1 or 3.
+
+/** The arrow keys and the return the list's answer is made of. */
+const DOWN = '\x1b[B';
+const UP = '\x1b[A';
+const RETURN = '\r';
+
+/** The captured list with each row `change` gives back. */
+const listChanged = (rows, change) => rows.map(change);
+
+/** The captured list with `rows` put in right above its foot row. */
+const listWithAboveFoot = (...rows) => {
+  const foot = CLAUDE_TEACH_LIST.findIndex((row) => row.includes('Enter to confirm · Esc to cancel'));
+  return [...CLAUDE_TEACH_LIST.slice(0, foot), ...rows, ...CLAUDE_TEACH_LIST.slice(foot)];
+};
+
+/** A draft in the input box below the list's foot, where the bare `❯` was. */
+const withDraft = (rows) => rows.map((row) => (row === '❯' ? '❯ fix the flaky test' : row));
+
+/** The texts sent into one tab, in order, each send made with no `--enter`. */
+function textsSent(sent, tab) {
+  const sends = sent[tab] ?? [];
+  assert.ok(sends.every((one) => one.enter === false), `with no --enter: ${JSON.stringify(sends)}`);
+  return sends.map((one) => one.text);
+}
+
+/** The kit's reads of one tab's screen and its sends into it, in the order Orca got them. */
+async function readsAndSendsOf(box, tab) {
+  const handle = (await box.orca.terminals()).find((terminal) => terminal.tabId === tab).handle;
+  return (await box.orca.calls())
+    .filter((call) => orcaFlag(call, '--terminal') === handle)
+    .map((call) => ({ command: orcaCommand(call), text: orcaFlag(call, '--text') }))
+    .filter((call) => call.command === 'terminal read' || call.command === 'terminal send');
+}
+
+/**
+ * The list answered: exit 0, keys into drafter's tab and no other, the arrows
+ * `arrows` first and then a return alone as the last send, and a read of the
+ * screen between the last arrow and the return, which is the guard's look.
+ */
+async function assertNotNowInto(box, result, before, tab, arrows, what) {
+  assert.equal(result.code, 0, `${what}: it answers the list:\n${result.stdout}${result.stderr}`);
+  const sent = await sentSince(box, before);
+  assert.deepEqual(Object.keys(sent), [tab], `${what}: keys go into the session's tab and no other: ${JSON.stringify(sent)}`);
+  const texts = textsSent(sent, tab);
+  assert.equal(texts.at(-1), RETURN, `${what}: the last send is a return alone: ${JSON.stringify(texts)}`);
+  assert.equal(texts.join(''), `${arrows}${RETURN}`, `${what}: the arrows to "2. Not now", then the return, and nothing else: ${JSON.stringify(texts)}`);
+  if (arrows !== '') {
+    const calls = await readsAndSendsOf(box, tab);
+    const back = calls.findLastIndex((call) => call.command === 'terminal send' && call.text === RETURN);
+    const lastArrow = calls.findLastIndex((call, at) => at < back && call.command === 'terminal send');
+    assert.ok(
+      calls.slice(lastArrow + 1, back).some((call) => call.command === 'terminal read'),
+      `${what}: the screen is read again after the arrows and before the return: ${JSON.stringify(calls)}`,
+    );
+  }
+}
 
 /** How many of the tests below run at once: each brings up a fleet of its own in its own sandbox. */
 const AT_ONCE = { concurrency: 8 };
@@ -338,6 +415,115 @@ describe('obk temp answer', AT_ONCE, () => {
     const said = await assertRefusedUntyped(box, await answer(box, planner, 'scout'), before, 'Codex\'s hooks review');
     assert.match(said, /Hooks need review/, `it says what the screen shows: ${said}`);
     assert.match(said, /temp trust-hooks/, `it points to temp trust-hooks: ${said}`);
+  });
+
+  // ------------------------------------------------------------ the 2.1.289 list (A, B, D)
+
+  for (const [label, screen, after, arrows] of [
+    ['the captured list, the pointer on "1. Yes": down, then return', CLAUDE_TEACH_LIST, [CLAUDE_TEACH_LIST_ON_NOT_NOW, CLAUDE_ANSWERED], DOWN],
+    ['the list with its pointer on "3. Don\'t show again": up, then return', CLAUDE_TEACH_LIST_ON_THREE, [CLAUDE_TEACH_LIST_ON_NOT_NOW, CLAUDE_ANSWERED], UP],
+    ['the list with its pointer already on "2. Not now": return alone', CLAUDE_TEACH_LIST_ON_NOT_NOW, [CLAUDE_ANSWERED], ''],
+    ['the list with a draft in the input box below its foot, which does not count', withDraft(CLAUDE_TEACH_LIST), [withDraft(CLAUDE_TEACH_LIST_ON_NOT_NOW), CLAUDE_ANSWERED], DOWN],
+  ]) {
+    test(`TD ${label}, into the session's tab alone`, async (t) => {
+      const box = await createSandbox(t);
+      const { bots, planner } = await fleet(box);
+      await showIn(box, bots, 'drafter', { screen, nextScreens: after });
+      const drafter = (await sessionIn(bots, BOT, 'drafter')).tab;
+      const before = await sendsByTab(box);
+
+      await assertNotNowInto(box, await answer(box, planner, 'drafter'), before, drafter, arrows, label);
+    });
+  }
+
+  test('TB the 2.1.283 form with a draft in the input box below its foot, which does not count: Esc alone', async (t) => {
+    const box = await createSandbox(t);
+    const { bots, planner } = await fleet(box);
+    const below = [`${'─'.repeat(92)} temp-bot.drafter.abcd1234 ─`, '❯ fix the flaky test', '─'.repeat(120), '  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents'];
+    await showIn(box, bots, 'drafter', { screen: [...CLAUDE_TEACH_FORM, ...below], screenAfterSend: CLAUDE_ANSWERED });
+    const drafter = (await sessionIn(bots, BOT, 'drafter')).tab;
+    const before = await sendsByTab(box);
+
+    await assertEscInto(box, await answer(box, planner, 'drafter'), before, drafter, 'the form with an input box below it');
+  });
+
+  // The guard: after the arrows, the screen read again must show the pointer
+  // on "2. Not now" and the list otherwise as it was. When it does not, no
+  // return goes in, and the command says what it saw.
+  for (const [label, afterArrow, row] of [
+    ['the pointer did not move', CLAUDE_TEACH_LIST, /❯ 1\. Yes/],
+    ['the pointer went on to "3. Don\'t show again"', CLAUDE_TEACH_LIST_ON_THREE, /❯ 3\. Don't show again/],
+    ['the pointer is on "2. Not now" but another row changed', listChanged(CLAUDE_TEACH_LIST_ON_NOT_NOW, (one) => (one === '    3. Don\'t show again' ? '    3. Never ask again' : one)), /3\. Never ask again/],
+  ]) {
+    test(`TD the guard: after the down arrow ${label}, so no return goes in, and it says what it saw`, async (t) => {
+      const box = await createSandbox(t);
+      const { bots, planner } = await fleet(box);
+      await showIn(box, bots, 'drafter', { screen: CLAUDE_TEACH_LIST, nextScreens: [afterArrow, CLAUDE_ANSWERED] });
+      const drafter = (await sessionIn(bots, BOT, 'drafter')).tab;
+      const before = await sendsByTab(box);
+
+      const result = await answer(box, planner, 'drafter');
+
+      const said = `${result.stdout}${result.stderr}`;
+      assert.notEqual(result.code, 0, `${label}: it should be refused, got:\n${said}`);
+      assert.ok(!/^\s+at /m.test(said), `${label}: a message, not a crash:\n${said}`);
+      const sent = await sentSince(box, before);
+      assert.deepEqual(Object.keys(sent), [drafter], `${label}: keys went into the session's tab alone: ${JSON.stringify(sent)}`);
+      assert.deepEqual(textsSent(sent, drafter), [DOWN], `${label}: the down arrow went in, and nothing after it`);
+      assert.match(said, row, `${label}: it says what it saw: ${said}`);
+    });
+  }
+
+  for (const [label, screen, row] of [
+    ['the list with a row changed', listChanged(CLAUDE_TEACH_LIST, (one) => (one === '    2. Not now' ? '    2. Later' : one)), /2\. Later/],
+    ['the list with a row more', listWithAboveFoot('    4. Ask me every time'), /4\. Ask me every time/],
+    ['the list with a row less', CLAUDE_TEACH_LIST.filter((one) => one !== '    3. Don\'t show again'), /Teach auto mode about your environment\?/],
+    ['the list with a row of the 2.1.283 form among it', listWithAboveFoot('     Continue'), /Teach auto mode about your environment\?/],
+    ['the list with two pointers between its title and its foot', listChanged(CLAUDE_TEACH_LIST, (one) => (one === '    2. Not now' ? '  ❯ 2. Not now' : one)), /❯ 2\. Not now/],
+    ['the list with no pointer between its title and its foot', listChanged(CLAUDE_TEACH_LIST, (one) => (one === '  ❯ 1. Yes' ? '    1. Yes' : one)), /Auto mode works better when it knows your environment/],
+    ['the list with no foot row', CLAUDE_TEACH_LIST.filter((one) => !one.includes('Esc to cancel')), /Auto mode works better when it knows your environment/],
+  ]) {
+    test(`TD ${label} is refused, says what the screen shows, and nothing is typed`, async (t) => {
+      const box = await createSandbox(t);
+      const { bots, planner } = await fleet(box);
+      await showIn(box, bots, 'drafter', { screen, nextScreens: [CLAUDE_TEACH_LIST_ON_NOT_NOW, CLAUDE_ANSWERED] });
+      const before = await sendsByTab(box);
+
+      const said = await assertRefusedUntyped(box, await answer(box, planner, 'drafter'), before, label);
+      assert.match(said, row, `it prints what the screen shows, this row among it: ${said}`);
+    });
+  }
+
+  test('TE a list still on screen a few seconds after "2. Not now" is a failure, and it says so', async (t) => {
+    const box = await createSandbox(t);
+    const { bots, planner } = await fleet(box);
+    await showIn(box, bots, 'drafter', { screen: CLAUDE_TEACH_LIST, nextScreens: [CLAUDE_TEACH_LIST_ON_NOT_NOW] });
+    const drafter = (await sessionIn(bots, BOT, 'drafter')).tab;
+    const before = await sendsByTab(box);
+
+    const result = await answer(box, planner, 'drafter');
+
+    const said = `${result.stdout}${result.stderr}`;
+    assert.notEqual(result.code, 0, `the list did not go, so it did not work:\n${said}`);
+    assert.ok(!/^\s+at /m.test(said), `a message, not a crash:\n${said}`);
+    assert.equal(textsSent(await sentSince(box, before), drafter).join(''), `${DOWN}${RETURN}`, 'the answer was sent, and nothing more');
+    assert.match(said, /still/i, `it says the list is still there: ${said}`);
+    assert.ok(said.includes(TITLE), `naming it: ${said}`);
+  });
+
+  test('TD on success with the list it says which session, that it chose Not now on the Teach auto mode list, and that the list has gone', async (t) => {
+    const box = await createSandbox(t);
+    const { bots, planner } = await fleet(box);
+    await showIn(box, bots, 'drafter', { screen: CLAUDE_TEACH_LIST, nextScreens: [CLAUDE_TEACH_LIST_ON_NOT_NOW, CLAUDE_ANSWERED] });
+
+    const result = await answer(box, planner, 'drafter');
+
+    assert.equal(result.code, 0, `it answers the list:\n${result.stdout}${result.stderr}`);
+    const said = result.stdout;
+    assert.ok(said.includes('drafter'), `it says which session: ${said}`);
+    assert.match(said, /Not now/, `that it chose Not now: ${said}`);
+    assert.match(said, /Teach auto mode/, `on the Teach auto mode list: ${said}`);
+    assert.match(said, /\bgone\b|\bclosed\b|no longer/i, `and that the list has gone: ${said}`);
   });
 
   // ------------------------------------------------------------ 5. the form gone

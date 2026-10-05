@@ -5,64 +5,78 @@
 // `npm run test:system -- --yes test/system/temp-answer.test.js`; `npm test`
 // cannot, and no CI machine could.
 //
-// The form cannot be brought up on demand. Claude Code 2.1.283 shows it in auto
-// mode after a session's first turn, and only when its own counters allow (at
-// least 5 startups and 5 auto-mode denials, and not within 7 days of a Not now,
-// read in its code; tech notes, section 1). Every Esc on it is a Not now
-// written into the owner's ~/.claude.json for the whole machine, which a system
-// test may not do (#240; the architect's ruling for #489's live run). So this
-// test sends the real form no key and runs no `obk temp answer` on it. It
-// answers a staged copy of the form instead, in its own tab:
+// Claude Code has two known forms of it: 2.1.283's form, answered with Esc,
+// and 2.1.289's numbered list, answered with "2. Not now" by arrows, a look
+// at the screen, and a return (helpers/screens.js CLAUDE_TEACH_FORM and
+// CLAUDE_TEACH_LIST; the architect's ruling on #489's live run). In auto mode
+// Claude Code now puts the list up after every first turn on this machine. Any
+// key into it writes a choice into the owner's ~/.claude.json for the whole
+// machine, which a system test may not do (#240). So this test sends a real
+// form no key and runs no `obk temp answer` on one. It answers staged copies
+// instead, in a tab of its own that never shows a real one:
 //
 //   1. A throwaway fleet: a bot on Claude Code with one long-lived session,
 //      lead, brought up. lead is asked to do nothing; the commands it would run
 //      are run for it, with lead's tab id and handle (#250, #408).
-//   2. From lead's tab, `obk temp make --name helper`, a Claude temporary
-//      session whose start prompt asks for one short reply, so it has a first
-//      turn. Its folder trust is answered by this test, down and return, only
+//   2. From lead's tab, `obk temp make --name helper --approval ask`, a Claude
+//      temporary session whose start prompt asks for one short reply, so it
+//      has a first turn. It runs at `ask` (`--permission-mode manual`), not in
+//      auto mode, because the Teach form is auto mode's and Claude Code shows
+//      it in auto mode only (read in the 2.1.283 code, tech notes, section 1;
+//      worked out, not proven for 2.1.289). That is the way to a tab of the
+//      test's own with no real form in it: a Codex helper would need its first-
+//      run screens answered and a harness the kit may not take a Teach form
+//      from. Its folder trust is answered by this test, down and return, only
 //      when it is the plain one for the bot home (helpers/screens.js
 //      `onlyPlainTrustOf`, the ruling on #451), as temp-roles does.
-//   3. The real form. For TEACH_WATCH_MS after helper's reply, the test looks
-//      for the form's title. If it comes, the test types nothing into it. It
-//      records whether `onlyTeachFormOf` matches it, with its rows when it does
-//      not, and ends there as skipped: steps 4 and 5 need helper at its plain
-//      input line, and only a key would take the form away. The teardown
-//      closes the tab. Such a run proves nothing about the command; run it
-//      again once the form no longer comes. If the form does not come, the
-//      test says so and goes on.
+//   3. Should a real form come up all the same: for TEACH_WATCH_MS after
+//      helper's reply, the test looks for the title. If it comes, the test
+//      types nothing into it. It records whether `onlyTeachFormOf` or
+//      `onlyTeachListOf` matches it, with its rows, and ends there as skipped:
+//      steps 4 and 5 need helper at its plain input line, and only a key would
+//      take the form away. The teardown closes the tab. If it does not come,
+//      the test says so and goes on.
 //   4. A real screen that is not the form: helper at its plain input line.
 //      `obk temp answer` is refused, says something of what the screen shows,
 //      and leaves the tab as it was: still at its plain input line, the input
 //      line as before, and no new user line in helper's transcript.
-//   5. The staged form. helper quits with /exit, typed only at its plain input
-//      line, and the shell comes to the front. The test then runs a small node
-//      program of its own in that tab, on the tab's terminal: it clears the
-//      screen, draws the rows it is given, and writes every byte it reads to a
-//      file. Esc alone clears the rows and ends it; any other key leaves the
-//      rows up; a stop file the test writes ends it too. It is started with
-//      `OBK_TAB_SHELL=$$`, the kit's mark for a program the tab's shell started
-//      (#261), in case the kit looks at what is in front.
-//      a. First the captured form with one value changed (`Also scan your
-//         other repos  true`). `obk temp answer` is refused, prints that row,
-//         and the program read no byte at all: refused untouched.
-//      b. Then the captured form's own rows, from the title down. As Orca
-//         renders them they pass `onlyTeachFormOf` (the premise). `obk temp
-//         answer` answers: exit 0, the answer names helper and lead, the
-//         program read exactly one Esc and nothing else, and the title is gone.
+//   5. The staged forms. helper quits with /exit, typed only at its plain
+//      input line with no Teach title on screen, and the shell comes to the
+//      front. The test then runs a small node program of its own in that tab,
+//      on the tab's terminal: it clears the screen, draws the rows it is given,
+//      writes every byte it reads to a file, and writes how it ended to
+//      another. As the list, it moves its pointer on each arrow, as Claude
+//      Code's does, and ends only on a return with the pointer on "2. Not now";
+//      a return on 1 or 3, Esc, or any other key leaves it up. As the 2.1.283
+//      form, it ends on Esc alone. A stop file the test writes ends it too. It
+//      is started with `OBK_TAB_SHELL=$$`, the kit's mark for a program the
+//      tab's shell started (#261), in case the kit looks at what is in front.
+//      a. The captured list with one row changed (`2. Later`). `obk temp
+//         answer` is refused, prints that row, and the program read no byte
+//         at all: refused untouched.
+//      b. The captured list from its title down, with the input box below its
+//         foot and that box's own `❯`. As Orca renders it, it passes
+//         `onlyTeachListOf` (the premise). `obk temp answer` answers: exit 0,
+//         the answer names helper and lead, the program read exactly down and
+//         return, it ended on "2. Not now", and the title is gone.
+//      c. The 2.1.283 form's own rows, from the title down: answered, the
+//         program read exactly one Esc, and the title is gone.
 //
-// What it cannot show: that Esc on Claude Code's own form teaches nothing. That
-// is read in the 2.1.283 code (tech notes, section 1), and this test sends the
-// real form no key. What it does show: the kit reads the live screen as Orca
-// renders it, matches the captured form there, sends Esc and nothing else,
-// refuses a form one value off without a single byte, and sees the form go.
+// What it cannot show: what Claude Code's own form or list does with the
+// answer. Esc on the form is read in the 2.1.283 code (tech notes, section 1),
+// and this test sends a real one no key. What it does show: the kit reads the
+// live screen as Orca renders it, matches both known forms there, answers
+// each with its own keys and nothing else, waits for the pointer before the
+// return, refuses a list one row off without a single byte, and sees the
+// form go.
 //
 // The machine it runs on is someone's working machine. So this test, like the
 // ones beside it: works in a throwaway bots folder under the system temp
 // directory, its staging program and files beside it; writes down every
 // terminal and workspace Orca already had; runs this checkout's `src/cli.js` by
 // its full path, never the machine's `obk` (#220); types only into helper's tab,
-// its own: the folder trust's answer, /exit, and the two lines that start the
-// staging program; closes only its own tabs, through the tab guard, and deletes
+// its own: the folder trust's answer, /exit, and the three lines that start
+// the staging program; closes only its own tabs, through the tab guard, and deletes
 // its own workspaces, whatever happened; signals no process, and reads `ps` for
 // one pid at a time. `orca terminal close --worktree … --all` is never run, and
 // the guard refuses it. Claude Code's records of the throwaway folder are read,
@@ -85,7 +99,14 @@ import { setTimeout } from 'node:timers/promises';
 import { parse } from 'yaml';
 
 import { cliEntry, shellWord } from '../helpers/cli.js';
-import { CLAUDE_TEACH_FORM, onlyPlainTrustOf, onlyTeachFormOf, questionOn } from '../helpers/screens.js';
+import {
+  CLAUDE_TEACH_FORM,
+  CLAUDE_TEACH_LIST,
+  onlyPlainTrustOf,
+  onlyTeachFormOf,
+  onlyTeachListOf,
+  questionOn,
+} from '../helpers/screens.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
 
@@ -137,42 +158,78 @@ const TASK = 'You are a system test\'s session and you own nothing. Do not run a
 /** The form's title row, as captured. */
 const TEACH_TITLE = 'Teach auto mode about your environment?';
 
-/** The captured form's own rows, from its title down. */
+/** The captured 2.1.283 form's own rows, from its title down. */
 const FORM_ROWS = CLAUDE_TEACH_FORM.slice(CLAUDE_TEACH_FORM.findIndex((row) => row.trim() === TEACH_TITLE));
 
-/** The same rows with one value changed: not the captured form. */
-const FORM_ONE_OFF = FORM_ROWS.map((row) => (row.includes('Also scan your other repos') ? row.replace('false', 'true') : row));
+/** The captured 2.1.289 list from its title down: the list, its foot, and the input box below. */
+const LIST_ROWS = CLAUDE_TEACH_LIST.slice(CLAUDE_TEACH_LIST.findIndex((row) => row.trim() === TEACH_TITLE));
+
+/** The same rows with one row changed: not the captured list. */
+const LIST_ONE_OFF = LIST_ROWS.map((row) => (row === '    2. Not now' ? '    2. Later' : row));
 
 /**
- * The staging program: draws the rows in its first argument's file on a
- * cleared screen, writes every byte it reads to its second argument's file,
- * ends on Esc alone (clearing the rows first) or when its third argument's
- * file appears, and in any case after ten minutes.
+ * The staging program: `node stage.mjs <list|form> <rows file> <keys file>
+ * <stop file>`. It draws the rows on a cleared screen, writes every byte it
+ * reads to the keys file and how it ended to `<keys file>.outcome`. As the
+ * list, each arrow moves its pointer among the numbered rows and redraws, and
+ * only a return with the pointer on "2. Not now" ends it ("not now"). As the
+ * form, Esc alone ends it ("esc"). It ends too when the stop file appears
+ * ("stopped"), and after ten minutes ("timed out"). Written with no backtick
+ * and no template, so it can sit in String.raw as it is.
  */
-const STAGE = [
-  "import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';",
-  '',
-  'const [rowsFile, keysFile, stopFile] = process.argv.slice(2);',
-  "const rows = JSON.parse(readFileSync(rowsFile, 'utf8'));",
-  "writeFileSync(keysFile, '');",
-  "const draw = (lines) => process.stdout.write(`\\x1b[2J\\x1b[H${lines.join('\\r\\n')}\\r\\n`);",
-  'let watch;',
-  'const end = (code) => {',
-  '  clearInterval(watch);',
-  '  process.stdin.setRawMode(false);',
-  '  process.exit(code);',
-  '};',
-  'draw(rows);',
-  "watch = setInterval(() => { if (existsSync(stopFile)) { draw(['STAGE-STOPPED']); end(0); } }, 250);",
-  "setTimeout(() => { draw(['STAGE-TIMED-OUT']); end(1); }, 600000);",
-  'process.stdin.setRawMode(true);',
-  "process.stdin.on('data', (chunk) => {",
-  '  appendFileSync(keysFile, chunk);',
-  "  if (chunk.length === 1 && chunk[0] === 0x1b) { draw(['STAGE-ESC: the staged form was cancelled']); end(0); }",
-  '});',
-  'process.stdin.resume();',
-  '',
-].join('\n');
+const STAGE = String.raw`import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+
+const [mode, rowsFile, keysFile, stopFile] = process.argv.slice(2);
+const outcomeFile = keysFile + '.outcome';
+let rows = JSON.parse(readFileSync(rowsFile, 'utf8'));
+writeFileSync(keysFile, '');
+writeFileSync(outcomeFile, 'up');
+const draw = (lines) => process.stdout.write('\x1b[2J\x1b[H' + lines.join('\r\n') + '\r\n');
+const CHOICE = /^ {2}(?:❯ | {2})([123]\. .+)$/;
+const choices = () => rows.flatMap((row, at) => (CHOICE.test(row) ? [at] : []));
+const pointerAt = () => rows.findIndex((row) => /^ {2}❯ [123]\. /.test(row));
+const move = (by) => {
+  const list = choices();
+  const to = list.indexOf(pointerAt()) + by;
+  if (to < 0 || to >= list.length) return;
+  rows = rows.map((row, at) => {
+    const found = CHOICE.exec(row);
+    if (found === null) return row;
+    return at === list[to] ? '  ❯ ' + found[1] : '    ' + found[1];
+  });
+  draw(rows);
+};
+let watch;
+const end = (outcome, code) => {
+  writeFileSync(outcomeFile, outcome);
+  clearInterval(watch);
+  process.stdin.setRawMode(false);
+  process.exit(code);
+};
+draw(rows);
+watch = setInterval(() => { if (existsSync(stopFile)) { draw(['STAGE-STOPPED']); end('stopped', 0); } }, 250);
+setTimeout(() => { draw(['STAGE-TIMED-OUT']); end('timed out', 1); }, 600000);
+process.stdin.setRawMode(true);
+process.stdin.on('data', (chunk) => {
+  appendFileSync(keysFile, chunk);
+  let text = chunk.toString('latin1');
+  while (text.length > 0) {
+    if (text.startsWith('\x1b[A') || text.startsWith('\x1b[B')) {
+      if (mode === 'list') move(text[2] === 'A' ? -1 : 1);
+      text = text.slice(3);
+    } else if (text[0] === '\x1b') {
+      if (mode === 'form') { draw(['STAGE-ESC: the staged form was cancelled']); end('esc', 0); }
+      text = text.slice(1);
+    } else if (text[0] === '\r') {
+      if (mode === 'list' && CHOICE.exec(rows[pointerAt()] ?? '')?.[1] === '2. Not now') { draw(['STAGE-NOT-NOW: the staged list was answered']); end('not now', 0); }
+      text = text.slice(1);
+    } else {
+      text = text.slice(1);
+    }
+  }
+});
+process.stdin.resume();
+`;
 
 /** Every close goes through the guard, which counts it for the check at the end (#246). */
 const guard = tabGuard(ORCA);
@@ -326,6 +383,9 @@ function promptOf(handle) {
   const rows = rowsOf(handle);
   if (rows === undefined) return { why: 'its screen could not be read' };
   const screen = `\n    ${rows.join('\n    ')}`;
+  // The shared look misses 2.1.289's list, whose foot row sits above the
+  // input box (#489): its title says it is up.
+  if (showsForm(rows)) return { why: `a Teach auto mode form is up:${screen}` };
   if (questionOn(rows) !== undefined) return { why: `a question, form or menu is up:${screen}` };
   const at = rows.findLastIndex((row) => row.trimStart().startsWith('❯'));
   if (at < 0) return { why: `no input line is on it:${screen}` };
@@ -499,8 +559,9 @@ test('a maker answers its Claude temporary session\'s Teach auto mode form with 
   const answerHelper = (json) => obk(['temp', 'answer', '--bots', bots, '--name', HELPER, ...(json ? ['--json'] : [])], inTab(lead));
 
   // ---------------------------------------------------------------------------
-  // 2. lead makes helper, a Claude temporary session with one short turn to take.
-  const made = obkJson(['temp', 'make', '--bots', bots, '--name', HELPER, '--prompt', TASK], inTab(lead));
+  // 2. lead makes helper, a Claude temporary session with one short turn to
+  // take, at `ask`, out of auto mode, where the Teach form does not come.
+  const made = obkJson(['temp', 'make', '--bots', bots, '--name', HELPER, '--approval', 'ask', '--prompt', TASK], inTab(lead));
   assert.equal(made.session, HELPER, `temp make makes ${HELPER}: ${JSON.stringify(made)}`);
   assert.equal(made.maker, LEAD, `${HELPER} is lead's: ${JSON.stringify(made)}`);
   const handle = openedIn(made, `temp make of ${HELPER}`).terminal;
@@ -540,7 +601,7 @@ test('a maker answers its Claude temporary session\'s Teach auto mode form with 
   const id = sessionIn(home, HELPER).session;
 
   // ---------------------------------------------------------------------------
-  // 3. The real form, if Claude Code puts it up after the first turn.
+  // 3. A real form, should Claude Code put one up all the same.
   const watchUntil = Date.now() + TEACH_WATCH_MS;
   let real;
   while (real === undefined && Date.now() < watchUntil) {
@@ -551,14 +612,15 @@ test('a maker answers its Claude temporary session\'s Teach auto mode form with 
   if (real !== undefined) {
     // No key into it, and no obk temp answer on it: an Esc would write a Not now
     // into the owner's ~/.claude.json (#240). Recorded, and left to the teardown.
-    const wrong = onlyTeachFormOf(real);
-    t.diagnostic(wrong === undefined
-      ? `real Teach form seen in ${HELPER}'s tab, matched by onlyTeachFormOf, left unanswered`
-      : `real Teach form seen in ${HELPER}'s tab, not matched by onlyTeachFormOf (${wrong}), left unanswered; what it showed:\n    ${real.join('\n    ')}`);
+    const asForm = onlyTeachFormOf(real);
+    const asList = onlyTeachListOf(real);
+    const matched = asForm === undefined ? 'matched by onlyTeachFormOf' : asList === undefined ? 'matched by onlyTeachListOf'
+      : `matched by neither (onlyTeachFormOf: ${asForm}; onlyTeachListOf: ${asList})`;
+    t.diagnostic(`real Teach form seen in ${HELPER}'s tab at approval ask, ${matched}, left unanswered; what it showed:\n    ${real.join('\n    ')}`);
     t.skip(`the real Teach form is up in ${HELPER}'s tab and this test sends it no key, so steps 4 and 5 cannot run: this run proves nothing about obk temp answer. Run it again once Claude Code no longer puts the form up.`);
     return;
   }
-  t.diagnostic(`Claude Code put up no Teach form in ${HELPER}'s tab within ${TEACH_WATCH_MS} ms of its first turn`);
+  t.diagnostic(`Claude Code put up no Teach form in ${HELPER}'s tab at approval ask within ${TEACH_WATCH_MS} ms of its first turn`);
 
   // ---------------------------------------------------------------------------
   // 4. A real screen that is not the form: helper at its plain input line.
@@ -583,34 +645,48 @@ test('a maker answers its Claude temporary session\'s Teach auto mode form with 
   assert.equal(userLinesIn(home, id), usersBefore, 'and its transcript has no new user line');
 
   // ---------------------------------------------------------------------------
-  // 5. The staged form, in helper's own tab once its Claude Code has quit.
+  // 5. The staged forms, in helper's own tab once its Claude Code has quit.
   typeIntoClaude(handle, '/exit');
   await shellInFront(handle);
   await writeFile(stage, STAGE);
-  const startStage = async (rows, what) => {
+  const startStage = async (mode, rows, what) => {
     await rm(stopFile, { force: true });
     await writeFile(rowsFile, JSON.stringify(rows));
-    sendLine(handle, `OBK_TAB_SHELL=$$ node ${shellWord(stage)} ${shellWord(rowsFile)} ${shellWord(keysFile)} ${shellWord(stopFile)}`);
+    sendLine(handle, `OBK_TAB_SHELL=$$ node ${shellWord(stage)} ${mode} ${shellWord(rowsFile)} ${shellWord(keysFile)} ${shellWord(stopFile)}`);
     return until(`${what} to be drawn in ${HELPER}'s tab`, MOVE_MS, async () => {
       const rows = rowsOf(handle);
       return showsForm(rows) ? rows : undefined;
     }, () => whatIsUp(handle));
   };
   const keysRead = () => (existsSync(keysFile) ? readFileSync(keysFile, 'latin1') : undefined);
+  const outcome = () => (existsSync(`${keysFile}.outcome`) ? readFileSync(`${keysFile}.outcome`, 'utf8') : undefined);
 
-  // 5a. The form one value off: refused, and not one byte reaches the tab.
-  const offRows = await startStage(FORM_ONE_OFF, 'the staged form one value off');
-  assert.notEqual(onlyTeachFormOf(offRows), undefined, `the premise: the staged form one value off is not the captured one:\n    ${offRows.join('\n    ')}`);
-  const offSaid = refused(answerHelper(false), 'the staged form one value off');
-  assert.match(offSaid, /Also scan your other repos\s+true/, `the refusal prints the row that is off: ${offSaid}`);
+  // 5a. The list one row off: refused, and not one byte reaches the tab.
+  const offRows = await startStage('list', LIST_ONE_OFF, 'the staged list one row off');
+  assert.notEqual(onlyTeachListOf(offRows), undefined, `the premise: the staged list one row off is not the captured one:\n    ${offRows.join('\n    ')}`);
+  const offSaid = refused(answerHelper(false), 'the staged list one row off');
+  assert.match(offSaid, /2\. Later/, `the refusal prints the row that is off: ${offSaid}`);
   await setTimeout(SETTLE_MS);
   assert.equal(keysRead(), '', 'the refusal sent no key into the tab: the staging program read nothing');
-  assert.equal(showsForm(rowsOf(handle)), true, 'and the staged form is still up');
+  assert.equal(showsForm(rowsOf(handle)), true, 'and the staged list is still up');
   await writeFile(stopFile, '');
   await shellInFront(handle);
 
-  // 5b. The captured form's own rows: answered with Esc alone, and gone.
-  const formRows = await startStage(FORM_ROWS, 'the staged captured form');
+  // 5b. The captured list: down to "2. Not now", a look, then return; and gone.
+  const listRows = await startStage('list', LIST_ROWS, 'the staged captured list');
+  assert.equal(
+    onlyTeachListOf(listRows),
+    undefined,
+    `the premise: the staged list, as Orca renders it, is the captured one (a tab too narrow wraps its rows):\n    ${listRows.join('\n    ')}`,
+  );
+  answeredBy(answerHelper(true), 'the staged list');
+  assert.equal(keysRead(), '\x1b[B\r', `the staging program read down, then return, and nothing else, got: ${JSON.stringify(keysRead())}`);
+  assert.equal(outcome(), 'not now', 'and it ended on the return with its pointer on "2. Not now"');
+  assert.equal(showsForm(rowsOf(handle)), false, `the staged list has gone.${whatIsUp(handle)}`);
+  await shellInFront(handle);
+
+  // 5c. The 2.1.283 form's own rows: answered with Esc alone, and gone.
+  const formRows = await startStage('form', FORM_ROWS, 'the staged 2.1.283 form');
   assert.equal(
     onlyTeachFormOf(formRows),
     undefined,
@@ -618,6 +694,7 @@ test('a maker answers its Claude temporary session\'s Teach auto mode form with 
   );
   answeredBy(answerHelper(true), 'the staged form');
   assert.equal(keysRead(), '\x1b', `the staging program read Esc and nothing else, got: ${JSON.stringify(keysRead())}`);
+  assert.equal(outcome(), 'esc', 'and it ended on the Esc');
   assert.equal(showsForm(rowsOf(handle)), false, `the staged form has gone.${whatIsUp(handle)}`);
   await shellInFront(handle);
 });
