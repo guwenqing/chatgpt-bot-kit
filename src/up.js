@@ -14,7 +14,7 @@ import { conversationsIn, hasConversation, heldAsUserTurn, transcriptsIn } from 
 import { installHook } from './hooks.js';
 import { writePermissions } from './permissions.js';
 import { addressOf, harnessOf, isAddressOf, isShortPrompt, launchCommand, mailboxStep, reachesMail, sessionTrouble, startPrompt, workDirOf } from './launch.js';
-import { asFolderProject, coordinatorOf, findProject, harnessInTab, makeMailbox, makeProject, openTab, QUESTION_ON_SCREEN, retitleTab, tabs, tabToTypeInto, TERMINAL_ENV, TIMED_OUT, tellWindow, typeIntoTab, useMailbox } from './orca.js';
+import { asFolderProject, coordinatorOf, findProject, harnessInTab, makeMailbox, makeProject, openTab, QUESTION_ON_SCREEN, retitleTab, screenRows, shellInTab, tabs, tabToTypeInto, TERMINAL_ENV, TIMED_OUT, tellWindow, typeIntoTab, useMailbox } from './orca.js';
 import { TAB_ENV } from './record.js';
 import { buildAgents, rulesStamp } from './rules.js';
 import { linkSkills } from './skills.js';
@@ -338,6 +338,14 @@ async function bringUpSession(bots, home, live, session, bot, title) {
     writePrompt(launch);
   }
 
+  // Only into a shell that is ready for it (#498). A question the shell asks as
+  // it starts takes the line as its answer: Orca holds a line for a new tab
+  // only until its shell is ready or 15 s pass, and then lets it through.
+  const notLaunched = await shellNotReady(made.handle);
+  if (notLaunched !== undefined) {
+    return entry(made, { bot: bot.name, name: session.name, created: true, notLaunched });
+  }
+
   // Typing it in is the way: for a project the kit has just made, giving Orca
   // the harness as the tab's own command times out and leaves a dead tab.
   typeIntoTab(made.handle, launch.command);
@@ -393,6 +401,39 @@ async function bringUpSession(bots, home, live, session, bot, title) {
     listLine: list?.typed,
     listLineTrouble: list?.why,
   });
+}
+
+/**
+ * How long a new tab's shell is given to come to a ready prompt, and the pause
+ * between looks. A start-up with oh-my-zsh took about a second here; Orca
+ * itself waits 15 s for a new shell.
+ */
+const SHELL_READY_MS = 15000;
+const SHELL_LOOK_MS = 250;
+
+/**
+ * Undefined once the shell in the new tab `handle` is at a ready prompt, or,
+ * when it is not within SHELL_READY_MS, a sentence that says why and names
+ * what its screen shows (#498).
+ */
+async function shellNotReady(handle) {
+  const until = Date.now() + SHELL_READY_MS;
+  let seen;
+  for (;;) {
+    seen = shellInTab(handle);
+    if (seen.ready === true) return undefined;
+    if (Date.now() >= until) break;
+    await pause(SHELL_LOOK_MS);
+  }
+  const wait = `it did not come to a ready prompt in ${SHELL_READY_MS / 1000} s`;
+  if (seen.program !== undefined) return `${seen.program} is running in front of the shell, and ${wait}`;
+  if (seen.unsure !== undefined) return `the kit could not tell whether the shell is ready (${seen.unsure})`;
+  const read = screenRows(handle);
+  if (read.rows === undefined) return `the shell is asking something, and ${wait}; its screen could not be read (${read.unreadable})`;
+  const last = read.rows.findLast((row) => row.trim() !== '');
+  return last === undefined
+    ? `the shell is asking something, and ${wait}; its screen is blank`
+    : `the shell is asking: ${last.trim()} (${wait})`;
 }
 
 /** The line a resumed Codex session is typed so Orca lists it, in the architect's words (#226). */
@@ -796,8 +837,11 @@ const ids = (setup, change) => ({ project: setup.projectId, setup: setup.id, cha
 export const promptPath = (bots, bot, session) =>
   path.join(`${bots}.prompts`, `${encodeURIComponent(bot)}.${encodeURIComponent(session)}.txt`);
 
-function entry(tab, { bot, name, created, running = false, blockedReason, promptReceived, promptFile, resumed, noConversation, unclaimed, noMailbox = false, listLine, listLineTrouble }) {
+function entry(tab, { bot, name, created, running = false, blockedReason, promptReceived, promptFile, resumed, noConversation, unclaimed, noMailbox = false, listLine, listLineTrouble, notLaunched }) {
   const made = { bot, name, title: tab.title, tabId: tab.tabId, terminal: tab.handle, created, harnessStarted: running };
+  // A tab whose shell was not ready for the launch line, and why: nothing was
+  // typed into it (#498).
+  if (notLaunched !== undefined) Object.assign(made, { launched: false, notLaunched });
   // Whether this run picked the session up where it was or started a new one.
   // Only for a tab this run opened: a tab that was already there was left alone.
   if (resumed !== undefined) made.resumed = resumed;

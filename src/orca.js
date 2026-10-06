@@ -633,6 +633,24 @@ function frontByOrca(handle) {
  * here ends in "cannot tell" rather than in an error or a guess.
  */
 function frontByPs(ptyId, readMs) {
+  const { pane, unreadable } = panePid(ptyId, readMs);
+  if (unreadable !== undefined) return { unreadable };
+
+  const own = psLine(pane);
+  if (own === undefined) return { unreadable: `ps could not read its pane, pid ${pane}` };
+  if (own.tpgid === pane) return { front: 'shell' };
+
+  const front = psLine(own.tpgid);
+  if (front === undefined) return { unreadable: `ps could not read the process in front, pid ${own.tpgid}` };
+  const shell = front.ppid === pane && path.basename(own.comm) === 'login';
+  return shell ? { front: 'shell' } : { front: 'program', command: path.basename(front.comm), pid: own.tpgid };
+}
+
+/**
+ * The pid of the pane `ptyId`, `{ pane }`, from `diagnostics memory`, or
+ * `{ unreadable: <why> }`.
+ */
+function panePid(ptyId, readMs) {
   let pane;
   try {
     pane = orca(['diagnostics', 'memory'], { timeoutMs: readMs }).worktrees
@@ -646,15 +664,72 @@ function frontByPs(ptyId, readMs) {
     return { unreadable: `Orca would not give the pane's pid: ${error.message}` };
   }
   if (!Number.isInteger(pane) || pane <= 0) return { unreadable: 'Orca gave no pid for its pane' };
+  return { pane };
+}
 
-  const own = psLine(pane);
-  if (own === undefined) return { unreadable: `ps could not read its pane, pid ${pane}` };
-  if (own.tpgid === pane) return { front: 'shell' };
+/** The `lsof` and `stty` this run asks. OBK_LSOF and OBK_STTY override them, as OBK_PS does `ps`. */
+const lsofCli = () => process.env.OBK_LSOF || '/usr/sbin/lsof';
+const sttyCli = () => process.env.OBK_STTY || '/bin/stty';
 
-  const front = psLine(own.tpgid);
-  if (front === undefined) return { unreadable: `ps could not read the process in front, pid ${own.tpgid}` };
-  const shell = front.ppid === pane && path.basename(own.comm) === 'login';
-  return shell ? { front: 'shell' } : { front: 'program', command: path.basename(front.comm), pid: own.tpgid };
+/**
+ * One look at the shell of a tab the kit has just opened, before anything is
+ * typed into it (#498): `{ ready: true }` when the shell is at a prompt that
+ * takes a line, `{ asking: true }` when the shell is in front and reading the
+ * tty some other way, `{ program }` when something else is in front, and
+ * `{ unsure: <why> }` when the kit cannot tell.
+ *
+ * A shell's line editor (zsh's, bash's readline, fish's) puts the tty in
+ * non-canonical mode with no echo while it waits at a prompt. A question asked
+ * in a start-up file (`read -k 1`, `read -p`) leaves echo on, and so does a
+ * shell still busy with its start-up files. Orca's daemon tells a ready shell
+ * the same way when its own mark does not come (tech notes, section 1). The
+ * shell's prompt itself is never read: it is the user's.
+ */
+export function shellInTab(handle) {
+  let shown;
+  try {
+    shown = orca(['terminal', 'show', '--terminal', handle]).terminal;
+  } catch (error) {
+    return { unsure: `Orca would not show the tab: ${error.message}` };
+  }
+  const front = frontOf(handle, shown?.ptyId);
+  if (front.unreadable !== undefined) return { unsure: front.unreadable };
+  if (front.front === 'program') return { program: front.command };
+  const { pane, unreadable } = panePid(shown?.ptyId);
+  if (unreadable !== undefined) return { unsure: unreadable };
+  const mode = ttyMode(pane);
+  if (mode.unreadable !== undefined) return { unsure: mode.unreadable };
+  return mode.lineEditor ? { ready: true } : { asking: true };
+}
+
+/**
+ * Whether the tty of the pane `pid` is in a line editor's mode, `{ lineEditor }`,
+ * or `{ unreadable: <why> }`. `lsof` names the tty on the standard input of the
+ * shell, and `stty` reads its flags; both run inside Codex's sandbox, where
+ * `ps` does not. The pane is `login`, which runs as root and whose files `lsof`
+ * cannot read, so the shell is found as the user's process whose parent it is,
+ * or as the pane itself where the pane is the shell.
+ */
+function ttyMode(pid) {
+  const listed = spawnSync(lsofCli(), ['-a', '-R', '-d', '0', '-u', String(process.getuid()), '-FpRn'], { encoding: 'utf8' });
+  if (listed.error || listed.status !== 0) return { unreadable: `lsof could not list the processes' ttys` };
+  // One record per process: `p<pid>`, `R<parent pid>`, `f0`, `n<name>`.
+  let record = {};
+  let tty;
+  for (const line of listed.stdout.split('\n')) {
+    if (line.startsWith('p')) record = { pid: Number(line.slice(1)) };
+    else if (line.startsWith('R')) record.ppid = Number(line.slice(1));
+    else if (line.startsWith('n/dev/') && (record.pid === pid || record.ppid === pid)) tty ??= line.slice(1);
+  }
+  if (tty === undefined) return { unreadable: `lsof named no tty for the shell of its pane, pid ${pid}` };
+
+  const read = spawnSync(sttyCli(), ['-a', '-f', tty], { encoding: 'utf8' });
+  if (read.error || read.status !== 0) return { unreadable: `stty could not read ${tty}` };
+  const words = read.stdout.split(/\s+/);
+  const flag = (name) => (words.includes(name) ? true : words.includes(`-${name}`) ? false : undefined);
+  const [icanon, echo] = [flag('icanon'), flag('echo')];
+  if (icanon === undefined || echo === undefined) return { unreadable: `stty gave no icanon and echo flags for ${tty}` };
+  return { lineEditor: !icanon && !echo };
 }
 
 /**

@@ -8,6 +8,9 @@
 //   <root>/bin/fake-osascript
 //                        fake osascript (helpers/fake-osascript.js), what
 //                        OBK_OSASCRIPT names
+//   <root>/bin/fake-lsof, <root>/bin/fake-stty
+//                        fake lsof and stty (helpers/fake-tty.js), what
+//                        OBK_LSOF and OBK_STTY name
 //   <root>/orca-fake/    the fake Orca's world: state.json and calls.log
 //   <root>/cwd           the working directory the CLI is spawned from
 //   <root>/home          HOME, so a stray write to the home dir shows up here
@@ -62,6 +65,7 @@ export const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 export const cliEntry = path.join(repoRoot, 'src', 'cli.js');
 const fakeOrcaEntry = fileURLToPath(new URL('./fake-orca.js', import.meta.url));
 const fakePsEntry = fileURLToPath(new URL('./fake-ps.js', import.meta.url));
+const fakeTtyEntry = fileURLToPath(new URL('./fake-tty.js', import.meta.url));
 const asPlatformEntry = fileURLToPath(new URL('./as-platform.js', import.meta.url));
 
 /** Where the fake Orca keeps its world, inside a sandbox. */
@@ -210,6 +214,25 @@ export async function createSandbox(t) {
   ].join('\n'));
   await chmod(fakePs, 0o755);
 
+  // The fake lsof and stty (#498), reading the same world: whether a new tab's
+  // shell is ready for the launch line is read off its tty. Not called `lsof`
+  // or `stty`, for the same reason as the fake ps; only OBK_LSOF and OBK_STTY
+  // name them. Left as they are, every tab's shell is at a ready prompt.
+  const fakeTty = {};
+  for (const [tool, run] of [['lsof', 'runLsof'], ['stty', 'runStty']]) {
+    fakeTty[tool] = path.join(bin, `fake-${tool}`);
+    await writeFile(fakeTty[tool], [
+      '#!/usr/bin/env node',
+      `process.env.OBK_FAKE_ORCA_DIR = ${JSON.stringify(fakeDir)};`,
+      `import(${JSON.stringify(pathToFileURL(fakeTtyEntry).href)}).then((tty) => tty.${run}()).catch((error) => {`,
+      `  process.stderr.write(\`fake ${tool}: \${error && error.stack || error}\\n\`);`,
+      '  process.exit(70);',
+      '});',
+      '',
+    ].join('\n'));
+    await chmod(fakeTty[tool], 0o755);
+  }
+
   // The fake osascript (#343): the kit reloads Orca's window through it, and
   // the real one would reach System Events and the real Orca's menu. Not called
   // `osascript`, for the same reason as the fake ps; only OBK_OSASCRIPT names it.
@@ -238,6 +261,8 @@ export async function createSandbox(t) {
     OBK_ORCA: fakeOrca,
     OBK_PS: fakePs,
     OBK_OSASCRIPT: fakeOsascript,
+    OBK_LSOF: fakeTty.lsof,
+    OBK_STTY: fakeTty.stty,
   };
 
   const readState = async () => JSON.parse(await readFile(stateFile, 'utf8'));
@@ -249,6 +274,19 @@ export async function createSandbox(t) {
     const next = `${stateFile}.${process.pid}.${saves++}.tmp`;
     await writeFile(next, `${JSON.stringify(state, null, 2)}\n`);
     await rename(next, stateFile);
+  };
+
+  /** One of the fake lsof's or stty's logs, `{ args, at }` per call, oldest first. */
+  const ttyLog = async (name) => {
+    try {
+      return (await readFile(path.join(fakeDir, name), 'utf8'))
+        .split('\n')
+        .filter((line) => line !== '')
+        .map((line) => JSON.parse(line));
+    } catch (error) {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    }
   };
 
   /** One of the fake osascript's logs, `{ args }` per call, oldest first. */
@@ -328,6 +366,13 @@ export async function createSandbox(t) {
         }
       },
     },
+    /**
+     * The fake lsof and stty (helpers/fake-tty.js): what each is, and every argv
+     * the kit handed it, `{ args, at }` in order. How a tab's tty reads is set
+     * through `orca.set`, as `tty` or under `byName`.
+     */
+    lsof: { cli: fakeTty.lsof, calls: () => ttyLog('lsof.log') },
+    stty: { cli: fakeTty.stty, calls: () => ttyLog('stty.log') },
     /**
      * The fake osascript (helpers/fake-osascript.js): what it is, every argv the
      * kit handed it, `{ args }` in order, and `answer`, which tells it what to

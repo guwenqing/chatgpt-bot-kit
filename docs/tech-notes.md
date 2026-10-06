@@ -107,9 +107,27 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
   busy with a question of its own swallows the first characters: with the owner's zsh asking
   `[oh-my-zsh] Would you like to update? [Y/n]`, `claude` arrived as `laude` and `exec codex` as
   `xec codex`. `tui-idle` cannot gate this: its answer for a shell says nothing about whether the
-  shell is ready (next entry). So the kit types the launch line into a new tab without waiting, then asks whether a harness
-  came up; a line the shell swallowed shows as no harness, and the caller answers the shell and opens
-  the tab again (SETUP.md, section 5). **verified** (live)
+  shell is ready (next entry). **verified** (live) A line can also land in the question whole: on
+  obk 0.25.0 a `temp make` line went into `[Y/n]`, the `obk session mailbox` part was lost and the
+  harness part ran (#498).
+- **Orca holds a new tab's typed text only until its shell is ready, or for 15 s.** Read in the
+  1.4.219 bundle (#498): the daemon queues input to a new pane until the shell prints Orca's
+  `ESC]777;orca-shell-ready` mark, which Orca's zsh wrapper prints from `zle-line-init`, so at the
+  first prompt and never during a start-up file. After 15 s (`shellReadyTimeoutMs`) it writes the
+  queue to the shell anyway: into a question that is still open. The state is the daemon's own; no
+  CLI command or runtime method gives it. Where the mark does not come, the daemon calls the shell
+  ready when the shell is in front and `stty -a -f <tty>` shows `-icanon` and `-echo`.
+- **A shell at a ready prompt has its tty at `-icanon -echo`; a start-up question does not.** Measured
+  on 2026-10-05 in a pty with `stty -a -f` (#498): zsh 5.9 at a prompt `-icanon -echo`, zsh in
+  `read -k 1` (oh-my-zsh's question) `-icanon echo`; bash 3.2 at its readline prompt `-icanon -echo`,
+  bash in `read -p` `icanon echo`; `/bin/sh` at its prompt `-icanon -echo`. The pane pid Orca gives is
+  `/usr/bin/login`, which runs as root, and `lsof -p <it>` shows nothing to the user; `lsof -a -R -d 0
+  -u <uid> -FpRn` lists the user's processes with their parents, and the shell, the pane's child, has
+  the tty on fd 0 (`p88639`, `R88620`, `f0`, `n/dev/ttys010`). Both that `lsof` and `stty` ran under
+  `codex sandbox` (0.160.0), where `ps` and `pgrep` do not. So before it types a launch line, the kit waits up to 15 s for the shell in front
+  with its tty in that mode, and otherwise types nothing and names the screen. A question asked with
+  echo off and one key read (`read -s -k 1`) would look ready; none is known. **verified** (live,
+  in a pty; the probe in an Orca tab is in #498's PR)
 - **A variable set on the launch line reaches the session's own shell tool, on both harnesses; a
   `PATH` entry does not.** The kit's launch line starts `OBK_CLI=<the running CLI> …`, and a Claude
   Code bot and a Codex bot each running `printenv OBK_CLI` wrote that path back exactly, a space in
@@ -126,7 +144,7 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
   All four answers seen live:
   - a tab running no TUI, sitting at a clean shell prompt: exit 1, `ok:false`,
     `error.code: "timeout"` — never satisfied, however long the timeout. So this is **not** a way to
-    ask whether a shell is ready for typing; there is no such way.
+    ask whether a shell is ready for typing; the tty's mode is (above, #498).
     **Except after Codex:** a shell that Codex has quit back to answers `ok:true`, `satisfied:true`,
     and went on answering so for more than 45 s and after an `echo` was run in it. A shell that Claude
     Code quit back to answers `timeout`. **verified** (live, 2026-09-24, Orca 1.4.209, Codex 0.156.1,

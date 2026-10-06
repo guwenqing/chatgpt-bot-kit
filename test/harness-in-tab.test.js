@@ -27,6 +27,8 @@ import test from 'node:test';
 
 import {
   createSandbox,
+  orcaCallsOf,
+  orcaCommand,
   recordSession,
   sessionIn,
   tabsOfBot,
@@ -383,26 +385,42 @@ test('a harness Orca says is waiting on a question is started, whoever the kit f
 // When who is in front cannot be read, `up` reports what Orca itself said: an
 // ok wait, or an `agentIdentity`, counts as up. It is a report only: `up` types
 // nothing more whatever it decides.
+//
+// Orca refuses its diagnostics here only once the launch line is typed: the
+// kit needs the pane pid to see that the new tab's shell is ready for the line
+// at all, and without it types nothing (#498, test/shell-ready-causes.test.js).
 for (const [label, state, started] of [
   ['an ok wait counts', { foreground: 'ps-fails', waitIdle: true, agentIdentity: null }, true],
   ['an agentIdentity counts, though the wait timed out', { foreground: 'ps-fails', waitIdle: 'busy' }, true],
   ['a timed-out wait and no agentIdentity is not started', { foreground: 'ps-fails', waitIdle: false, agentIdentity: null }, false],
-  ['Orca refusing its diagnostics does not stop the run', {
-    fail: { 'diagnostics memory': { code: 'runtime_error', message: 'diagnostics unavailable' } },
+  ['Orca refusing its diagnostics once the line is typed does not stop the run', async (box) => ({
+    fail: {
+      'diagnostics memory': {
+        code: 'runtime_error',
+        message: 'diagnostics unavailable',
+        since: 'terminal send',
+        sinceFrom: orcaCallsOf(await box.orca.calls(), 'terminal send').length,
+      },
+    },
     waitIdle: true,
     agentIdentity: null,
-  }, true],
+  }), true],
 ]) {
   test(`up falls back on Orca's own answers when the front of the tab cannot be read: ${label}`, async (t) => {
     const box = await createSandbox(t);
     const bots = await withSession(box);
-    await box.orca.set(state);
+    await box.orca.set(typeof state === 'function' ? await state(box) : state);
 
     const { entry, typed } = await upJson(box, bots);
 
     assert.equal(entry.harnessStarted, started);
     assert.equal(entry.promptReceived, false, 'whatever the look found, no record holds the prompt (#274)');
     assert.equal(typed.length, 1, `nothing is typed after the launch line, got: ${JSON.stringify(typed)}`);
+    if (typeof state === 'function') {
+      // The refusal was met: the kit asked for the diagnostics after it typed.
+      const asked = (await box.orca.calls()).map(orcaCommand);
+      assert.ok(asked.lastIndexOf('diagnostics memory') > asked.lastIndexOf('terminal send'), 'the diagnostics were asked for, and refused, after the line was typed');
+    }
   });
 }
 

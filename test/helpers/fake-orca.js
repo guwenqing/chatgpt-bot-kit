@@ -91,6 +91,13 @@
 //               left out, what the kit's launch line gave it; 'orca' for a
 //               harness Orca resumed by itself (helpers/fake-ps.js lists the
 //               rest). Orca never reports that either.
+//   tty         how every tab's tty reads, for the fake `lsof` and `stty`
+//               (#498): 'prompt', the default, is a shell ready for a launch
+//               line; helpers/fake-tty.js lists the rest. Orca never reports it.
+//   byName      { "<word>": { front, tty, screen } } — for the tab whose title
+//               ends with that word, a session's name, set before the kit makes
+//               it (#498): who is in front before anything is launched in it,
+//               how its tty reads, and its screen (helpers/fake-ps.js).
 //   screen      the rows `terminal read --screen` renders for every tab that has
 //               no `screen` of its own: one string per row, as Orca 1.4.212
 //               answered (captured live, #329; the captures in
@@ -100,8 +107,10 @@
 //               Code's for any other (helpers/screens.js, CODEX_IDLE and
 //               CLAUDE_IDLE). So a test that says nothing about screens means
 //               what it meant before. One terminal can carry a `screen` of its
-//               own, for that tab alone. Orca shows it only through `terminal
-//               read`, never in `list` or `show`.
+//               own, for that tab alone, or `screen` under its entry in
+//               `byName` (helpers/fake-ps.js), set before the kit makes it.
+//               Orca shows it only through `terminal read`, never in `list`
+//               or `show`.
 //   screenSource  the `source` `terminal read --screen` answers with: `screen`,
 //               the default, for the rendered screen, or `screen-unavailable`,
 //               Orca's word when a screen was asked for and none could be
@@ -201,6 +210,10 @@
 //               `since: "<other command>"` it goes through until that other
 //               command has been called, and fails every time after, which is
 //               how a test refuses the listing after a delete and not before.
+//               `sinceFrom` counts the calls of that other command made before
+//               the failure was set (0 if left out), as it does for `hang`, so
+//               a setup's own calls do not count (#498: diagnostics refused
+//               once a launch line is typed, and not before).
 //               With `times: n` only n calls fail, the first n after the `after`
 //               ones, and every call after them goes through again: a refusal
 //               that comes and goes, as `terminal_handle_stale` did live on
@@ -377,7 +390,7 @@ import { randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { foregroundOf, launchedIn, panePid } from './fake-ps.js';
+import { foregroundOf, launchedIn, panePid, settingsFor } from './fake-ps.js';
 import { CLAUDE_IDLE, CODEX_IDLE } from './screens.js';
 
 const dir = process.env.OBK_FAKE_ORCA_DIR;
@@ -512,7 +525,7 @@ if (
   planned
   && callsSoFar() > (planned.after ?? 0)
   && (planned.times === undefined || callsSoFar() <= (planned.after ?? 0) + planned.times)
-  && (planned.since === undefined || callsSoFar(planned.since) > 0)
+  && (planned.since === undefined || callsSoFar(planned.since) > (planned.sinceFrom ?? 0))
 ) {
   // A refused handle the test wants re-issued is handed out anew by the next listing.
   const refused = flag('--terminal');
@@ -796,7 +809,7 @@ if (command === 'terminal read') {
   const terminal = (state.terminals ?? []).find((entry) => entry.handle === flag('--terminal'));
   if (!terminal) fail('terminal_not_found', `no terminal with handle ${flag('--terminal')}`);
 
-  const tail = terminal.screen ?? state.screen ?? (launchedIn(terminal) === 'codex' ? CODEX_IDLE : CLAUDE_IDLE);
+  const tail = terminal.screen ?? settingsFor(state, terminal)?.screen ?? state.screen ?? (launchedIn(terminal) === 'codex' ? CODEX_IDLE : CLAUDE_IDLE);
   // A screen that draws late moves on once its reads are used (`then`, under `nextScreens`).
   if (terminal.thenScreen !== undefined) {
     terminal.readsBeforeThen -= 1;
