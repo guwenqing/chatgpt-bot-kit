@@ -106,12 +106,14 @@ test('the start prompt is the last word of the launch line, and the tab\'s one s
 });
 
 test('the tab is still asked afterwards whether a TUI came up', async (t) => {
-  // The send goes first and the wait is the check on it, as it always was: a
-  // tab still at a shell prompt is refused with `timeout` however long you wait.
-  // How many times the kit looks is its own business — it looks more than once,
-  // because a harness can come up and die — but nothing may come before the
-  // send, and nothing but looking may come after it. Asking Orca what it knows
-  // of the tab is looking too (#232), and so is reading what it shows (#329).
+  // The send is the one thing the kit does to the tab, and the wait is the
+  // check on it, as it always was: a tab still at a shell prompt is refused
+  // with `timeout` however long you wait. How many times the kit looks is its
+  // own business — it looks more than once, because a harness can come up and
+  // die — but nothing but looking may come before the send or after it. Asking
+  // Orca what it knows of the tab is looking too (#232), and so is reading what
+  // it shows (#329). Before the send the kit looks to see that the tab's shell
+  // is ready for the line (#498).
   const box = await createSandbox(t);
   const bots = await withSession(box, ['--prompt', PROMPT]);
 
@@ -120,10 +122,18 @@ test('the tab is still asked afterwards whether a TUI came up', async (t) => {
   const mine = (await box.orca.calls())
     .filter((call) => orcaFlag(call, '--terminal') === tab.handle)
     .map(orcaCommand);
-  assert.equal(mine[0], 'terminal send', `the line goes in first, got: ${JSON.stringify(mine)}`);
-  assert.ok(mine.slice(1).includes('terminal wait'), `and then the kit waits on the tab, got: ${JSON.stringify(mine)}`);
+  const looking = ['terminal wait', 'terminal show', 'terminal read'];
+  const at = mine.indexOf('terminal send');
+  assert.ok(at >= 0, `the line goes in, got: ${JSON.stringify(mine)}`);
+  assert.equal(mine.filter((command) => command === 'terminal send').length, 1, `once, got: ${JSON.stringify(mine)}`);
   assert.deepEqual(
-    mine.slice(1).filter((command) => !['terminal wait', 'terminal show', 'terminal read'].includes(command)),
+    mine.slice(0, at).filter((command) => !looking.includes(command)),
+    [],
+    `before it the kit only looks, got: ${JSON.stringify(mine)}`,
+  );
+  assert.ok(mine.slice(at + 1).includes('terminal wait'), `and then the kit waits on the tab, got: ${JSON.stringify(mine)}`);
+  assert.deepEqual(
+    mine.slice(at + 1).filter((command) => !looking.includes(command)),
     [],
     `and after it the kit only looks, got: ${JSON.stringify(mine)}`,
   );
