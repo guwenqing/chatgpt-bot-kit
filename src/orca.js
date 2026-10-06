@@ -231,7 +231,7 @@ export const tellWindow = (projectId) => askRuntime('project.update', { projectI
  * Orca's published interface, so anything that goes wrong is a quiet
  * undefined: it never throws and is never tried twice.
  */
-function askRuntime(method, params) {
+function askRuntime(method, params, killMs = CLIENT_KILL_MS) {
   try {
     // The CLI sits at <Orca.app>/Contents/Resources/bin/orca, often reached
     // through a link.
@@ -244,8 +244,8 @@ function askRuntime(method, params) {
 
     const asked = spawnSync(
       path.join(contents, 'MacOS', 'Orca'),
-      [RUNTIME_SCRIPT, client, method, JSON.stringify(params), String(CLIENT_WAIT_MS)],
-      { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: CLIENT_KILL_MS },
+      [RUNTIME_SCRIPT, client, method, JSON.stringify(params), String(Math.min(CLIENT_WAIT_MS, killMs))],
+      { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: Math.min(CLIENT_KILL_MS, killMs) },
     );
     if (asked.error !== undefined || asked.status !== 0) return undefined;
     return parse(asked.stdout) ?? undefined;
@@ -586,17 +586,21 @@ const psCli = () => process.env.OBK_PS || '/bin/ps';
  * Who holds the terminal of the tab `handle`, whose pane is `ptyId`:
  * `{ front: 'shell' }`, `{ front: 'program', command, pid }` with the name and,
  * where `ps` gave it, the pid of the process leading the group in front, or
- * `{ unreadable: <why> }`.
+ * `{ unreadable: <why> }`; each with `pane`, the pane's pid, where Orca gave it.
  *
  * `ps` is asked first. Where it cannot read the tab, as inside Codex's
  * sandbox, where it does not start at all, Orca's runtime is asked instead
- * (#298, ADR 0034).
+ * (#298, ADR 0034). `readMs` bounds each call: a number, or a function that
+ * says what is left of a wait, asked before each one (#498). A `ps` that runs
+ * out of it ends the look, `late`, with no runtime asked after it.
  */
 function frontOf(handle, ptyId, readMs) {
   const read = frontByPs(ptyId, readMs);
-  if (read.unreadable === undefined) return read;
-  const asked = frontByOrca(handle);
-  return { ...(asked.unreadable === undefined ? asked : { unreadable: `${read.unreadable}, and ${asked.unreadable}` }), psUnread: true };
+  if (read.unreadable === undefined || read.late === true) return read;
+  const asked = frontByOrca(handle, msOf(readMs));
+  // The pane's pid, where `diagnostics memory` gave it, goes on with the answer.
+  const pane = read.pane === undefined ? {} : { pane: read.pane };
+  return { ...(asked.unreadable === undefined ? asked : { unreadable: `${read.unreadable}, and ${asked.unreadable}` }), psUnread: true, ...pane };
 }
 
 /**
@@ -608,8 +612,8 @@ function frontOf(handle, ptyId, readMs) {
  * else is "cannot tell": for a moment after a harness quits, Orca can name
  * nothing and still see a child in front (read in the Orca 1.4.212 bundle).
  */
-function frontByOrca(handle) {
-  const seen = askRuntime('terminal.inspectProcess', { terminal: handle })?.result?.process;
+function frontByOrca(handle, readMs) {
+  const seen = askRuntime('terminal.inspectProcess', { terminal: handle }, readMs)?.result?.process;
   const evidence = seen?.foregroundProcessEvidence;
   if (evidence?.verdict !== 'live') {
     const why = typeof evidence?.reason === 'string' ? `: ${evidence.reason}` : '';
@@ -633,6 +637,29 @@ function frontByOrca(handle) {
  * here ends in "cannot tell" rather than in an error or a guess.
  */
 function frontByPs(ptyId, readMs) {
+  const { pane, unreadable } = panePid(ptyId, msOf(readMs));
+  if (unreadable !== undefined) return { unreadable };
+
+  const own = psLine(pane, msOf(readMs));
+  if (own?.late === true) return { unreadable: `ps did not answer in time for its pane, pid ${pane}`, late: true };
+  if (own === undefined) return { unreadable: `ps could not read its pane, pid ${pane}`, pane };
+  if (own.tpgid === pane) return { front: 'shell', pane };
+
+  const front = psLine(own.tpgid, msOf(readMs));
+  if (front?.late === true) return { unreadable: `ps did not answer in time for the process in front, pid ${own.tpgid}`, late: true };
+  if (front === undefined) return { unreadable: `ps could not read the process in front, pid ${own.tpgid}`, pane };
+  const shell = front.ppid === pane && path.basename(own.comm) === 'login';
+  return shell ? { front: 'shell', pane } : { front: 'program', command: path.basename(front.comm), pid: own.tpgid, pane };
+}
+
+/** A bound `frontOf` was given, as a number of milliseconds: asked now when it is a function. */
+const msOf = (readMs) => (typeof readMs === 'function' ? readMs() : readMs);
+
+/**
+ * The pid of the pane `ptyId`, `{ pane }`, from `diagnostics memory`, or
+ * `{ unreadable: <why> }`.
+ */
+function panePid(ptyId, readMs) {
   let pane;
   try {
     pane = orca(['diagnostics', 'memory'], { timeoutMs: readMs }).worktrees
@@ -646,15 +673,87 @@ function frontByPs(ptyId, readMs) {
     return { unreadable: `Orca would not give the pane's pid: ${error.message}` };
   }
   if (!Number.isInteger(pane) || pane <= 0) return { unreadable: 'Orca gave no pid for its pane' };
+  return { pane };
+}
 
-  const own = psLine(pane);
-  if (own === undefined) return { unreadable: `ps could not read its pane, pid ${pane}` };
-  if (own.tpgid === pane) return { front: 'shell' };
+/** The `lsof` and `stty` this run asks. OBK_LSOF and OBK_STTY override them, as OBK_PS does `ps`. */
+const lsofCli = () => process.env.OBK_LSOF || '/usr/sbin/lsof';
+const sttyCli = () => process.env.OBK_STTY || '/bin/stty';
 
-  const front = psLine(own.tpgid);
-  if (front === undefined) return { unreadable: `ps could not read the process in front, pid ${own.tpgid}` };
-  const shell = front.ppid === pane && path.basename(own.comm) === 'login';
-  return shell ? { front: 'shell' } : { front: 'program', command: path.basename(front.comm), pid: own.tpgid };
+/**
+ * One look at the shell of a tab the kit has just opened, before anything is
+ * typed into it (#498): `{ ready: true }` when the shell is at a prompt that
+ * takes a line, `{ asking: true }` when the shell is in front and reading the
+ * tty some other way, `{ program }` when something else is in front, and
+ * `{ unsure: <why> }` when the kit cannot tell, with `late` when a call ran out
+ * of the time left until `until`.
+ *
+ * A shell's line editor (zsh's, bash's readline) puts the tty in non-canonical
+ * mode with no echo and no literal-next key while it waits at a prompt. A
+ * question asked in a start-up file (`read -k 1`, `read -p`, `read -s -k 1`)
+ * leaves echo or the literal-next key on, and so does a shell still busy with
+ * its start-up files. Orca's daemon tells a ready shell
+ * the same way when its own mark does not come (tech notes, section 1). The
+ * shell's prompt itself is never read: it is the user's.
+ */
+export function shellInTab(handle, until) {
+  // Each call is given what is left until `until`, so a reader that hangs
+  // cannot hold the launch past its wait.
+  const left = () => Math.max(1, until - Date.now());
+  try {
+    let shown;
+    try {
+      shown = orca(['terminal', 'show', '--terminal', handle], { timeoutMs: left() }).terminal;
+    } catch (error) {
+      if (error.code === TIMED_OUT) throw error;
+      return { unsure: `Orca would not show the tab: ${error.message}` };
+    }
+    const front = frontOf(handle, shown?.ptyId, left);
+    if (front.unreadable !== undefined) return { unsure: front.unreadable, ...(front.late ? { late: true } : {}) };
+    if (front.front === 'program') return { program: front.command };
+    const { pane, unreadable } = front.pane === undefined ? panePid(shown?.ptyId, left()) : front;
+    if (unreadable !== undefined) return { unsure: unreadable };
+    const mode = ttyMode(pane, left);
+    if (mode.unreadable !== undefined) return { unsure: mode.unreadable, ...(mode.late ? { late: true } : {}) };
+    return mode.lineEditor ? { ready: true } : { asking: true };
+  } catch (error) {
+    if (error.code !== TIMED_OUT) throw error;
+    return { unsure: `Orca did not answer in time: ${error.message}`, late: true };
+  }
+}
+
+/**
+ * Whether the tty of the pane `pid` is in a line editor's mode, `{ lineEditor }`,
+ * or `{ unreadable: <why> }`. `lsof` names the tty on the standard input of the
+ * shell, and `stty` reads its flags; both run inside Codex's sandbox, where
+ * `ps` does not. The pane is `login`, which runs as root and whose files `lsof`
+ * cannot read, so the shell is found as the user's process whose parent it is,
+ * or as the pane itself where the pane is the shell.
+ */
+function ttyMode(pid, left) {
+  const listed = spawnSync(lsofCli(), ['-a', '-R', '-d', '0', '-u', String(process.getuid()), '-FpRn'], { encoding: 'utf8', timeout: left() });
+  if (listed.error?.code === 'ETIMEDOUT') return { unreadable: 'lsof did not answer in time', late: true };
+  if (listed.error || listed.status !== 0) return { unreadable: `lsof could not list the processes' ttys` };
+  // One record per process: `p<pid>`, `R<parent pid>`, `f0`, `n<name>`.
+  let record = {};
+  let tty;
+  for (const line of listed.stdout.split('\n')) {
+    if (line.startsWith('p')) record = { pid: Number(line.slice(1)) };
+    else if (line.startsWith('R')) record.ppid = Number(line.slice(1));
+    else if (line.startsWith('n/dev/') && (record.pid === pid || record.ppid === pid)) tty ??= line.slice(1);
+  }
+  if (tty === undefined) return { unreadable: `lsof named no tty for the shell of its pane, pid ${pid}` };
+
+  const read = spawnSync(sttyCli(), ['-a', '-f', tty], { encoding: 'utf8', timeout: left() });
+  if (read.error?.code === 'ETIMEDOUT') return { unreadable: `stty did not answer in time for ${tty}`, late: true };
+  if (read.error || read.status !== 0) return { unreadable: `stty could not read ${tty}` };
+  const words = read.stdout.split(/\s+/);
+  const flag = (name) => (words.includes(name) ? true : words.includes(`-${name}`) ? false : undefined);
+  const [icanon, echo] = [flag('icanon'), flag('echo')];
+  if (icanon === undefined || echo === undefined) return { unreadable: `stty gave no icanon and echo flags for ${tty}` };
+  // A line editor also turns off the literal-next key, which a question read
+  // with echo off (`read -s -k 1`) leaves on, as Orca's own test has it.
+  return { lineEditor: !icanon && !echo && /(?:^|[;\s])lnext\s*=\s*<undef>(?:;|\s|$)/.test(read.stdout) };
 }
 
 /**
@@ -670,9 +769,10 @@ export function wordsOfProcess(pid) {
   return asked.stdout.trim().split(/\s+/);
 }
 
-/** One process as `ps` gives it, read only: `{ ppid, tpgid, comm }`, or undefined. */
-function psLine(pid) {
-  const asked = spawnSync(psCli(), ['-o', 'pid=,ppid=,tpgid=,comm=', '-p', String(pid)], { encoding: 'utf8' });
+/** One process as `ps` gives it, read only: `{ ppid, tpgid, comm }`, `{ late: true }` past `readMs`, or undefined. */
+function psLine(pid, readMs) {
+  const asked = spawnSync(psCli(), ['-o', 'pid=,ppid=,tpgid=,comm=', '-p', String(pid)], { encoding: 'utf8', ...(readMs === undefined ? {} : { timeout: readMs }) });
+  if (asked.error?.code === 'ETIMEDOUT') return { late: true };
   if (asked.error || asked.status !== 0) return undefined;
   const line = /^\s*(\d+)\s+(\d+)\s+(-?\d+)\s+(.+?)\s*$/.exec(asked.stdout);
   if (line === null) return undefined;

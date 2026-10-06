@@ -472,7 +472,9 @@ async function run(argv) {
   const { answer, lines, code = 0 } = await commands[command](bots, values);
 
   process.stdout.write(values.json ? `${JSON.stringify(answer, null, 2)}\n` : `${lines.join('\n')}\n`);
-  return code;
+  // A session whose tab was opened and not launched is a command that stopped
+  // short, whichever command opened it (#498).
+  return answer?.tabs?.some((tab) => tab.launched === false) ? 1 : code;
 }
 
 /**
@@ -756,7 +758,9 @@ const commands = {
       lines: [
         ...(made.role === undefined ? [] : [`role       ${made.role.name}:${made.role.option}${made.role.for === undefined ? '' : `, for ${made.role.for}`}. Its options: ${optionsLine(made.role.options)}`]),
         ...Object.entries(made.chosen).map(([setting, one]) => `${setting.padEnd(9)}  ${one.value === undefined ? `the ${one.from}` : `${one.value}, from ${one.from === 'flag' ? `--${setting}` : `the ${one.from}`}`}`),
-        ...tabLines(answer, `Made ${made.bot}/${made.session}, a temporary session of ${made.maker}'s, working in work/${made.session}. Retire it when its work is done:  ${retire}`),
+        ...tabLines(answer, tabs.some((one) => one.launched === false)
+          ? `${made.bot}/${made.session}, a temporary session of ${made.maker}'s, is in bot.yaml and the book, and was not launched. Restart it once its tab is ready, or retire it:  ${retire}`
+          : `Made ${made.bot}/${made.session}, a temporary session of ${made.maker}'s, working in work/${made.session}. Retire it when its work is done:  ${retire}`),
       ],
     };
   },
@@ -1770,6 +1774,17 @@ function tabLines({ bots, created, completed, rules, skills, permissions = [], t
  */
 function harnessLines(tab, bots) {
   if (!tab.created || tab.name === null) return [];
+
+  // Nothing was typed into it, so there is nothing more to say about a harness
+  // (#498).
+  if (tab.launched === false) {
+    return [
+      `             not launched: ${tab.notLaunched}. Nothing was typed into it.`,
+      `             Look at it:  ${lookAt(tab.terminal)}`,
+      '             Answer it in the tab, then start the session again in a new tab:',
+      `               ${shellWord(ownCli())} restart --bots ${shellWord(bots)} --bot ${tab.bot} --session ${tab.name}`,
+    ];
+  }
 
   // What the line that was typed in asked for, and where the kit got it: the
   // session the book holds, one the harness itself still had on record, or a new

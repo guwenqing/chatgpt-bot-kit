@@ -147,14 +147,19 @@ their own edits included.
 ## 5. Answer what the tabs ask
 
 **How the tab got into this state**, because it decides what you do about it. A
-tab the kit has just made has no harness in it yet and nothing to wait for, so
-the kit types the launch line straight into the tab's shell and only then asks
-whether a harness came up. If that shell was busy with a question of its own, it
-swallowed the line. So two different things can be on the screen, and they need
-different answers.
+tab the kit has just made has no harness in it yet. The kit waits up to 15 s for
+the tab's shell to come to a ready prompt, types the launch line, and only then
+asks whether a harness came up. A shell that asks a question of its own as it
+starts gets nothing typed. So different things can be on the screen, and they
+need different answers.
 
 `obk init` tells you which, for every tab it opened:
 
+- *not launched: the shell is asking: …* — the shell asked a question as it
+  started, and the kit typed nothing. Answer the shell (the oh-my-zsh question
+  in the table below is the usual one), then run the `obk restart` command the
+  output gives for that session. It closes that tab and launches the session in
+  a new one. The command exits 1 while a session is not launched.
 - *the harness was typed in and is running. The kit cannot see whether a screen
   in it is waiting for an answer* — look at it: Orca does not flag every first-run
   screen, so it may still be asking something of its own. That is the table below.

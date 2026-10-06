@@ -32,7 +32,11 @@
 // What is in front of a tab is decided in this order:
 //
 //   - A tab nothing was launched in — no harness named by the first line typed
-//     into it, like Bot Father's ops tab — has its shell in front, always.
+//     into it, like Bot Father's ops tab — has its shell in front, unless
+//     `front` under its entry in `byName` (below) says otherwise: one of the
+//     words below, for the shell a tab opens with before the kit types into
+//     it (#498). 'program' there is `less` in front, as any program the
+//     shell's start-up ran would be.
 //   - `foreground` on one terminal in state.json, when a test set it, for
 //     that tab alone: one of the words below. It comes before the one for
 //     every tab, so one session's harness can quit beside a sibling's.
@@ -109,6 +113,10 @@
 //                    gives for a process whose environment it may not read
 //       'ps-fails'   the read fails: stderr, exit 1
 //
+// And it can be slow (#498): `psDelayMs` in state.json holds every answer back
+// that long, after the call is written to ps.log. A delay longer than the test
+// is a `ps` that never answers.
+//
 // And one way it answers nothing at all (#298): `ps` in state.json set to
 // 'not-permitted' is a `ps` that does not start, as inside Codex's
 // `workspace-write` sandbox, where /bin/ps gave `Operation not permitted` and
@@ -144,6 +152,18 @@ export function launchedIn(terminal) {
   return first === undefined ? undefined : /(?:^|\s)(claude|codex)(?=\s|$)/.exec(first)?.[1];
 }
 
+/**
+ * What a test said about one tab before the kit made it (#498): `byName` in
+ * state.json, keyed by the last word of a tab's title, which for a session's tab
+ * is the session's name. `{ front, tty, screen }`, any of them: who is in front
+ * before anything is launched in it (here), how its tty reads (helpers/fake-tty.js),
+ * and what its screen shows (helpers/fake-orca.js, as `screen` on one terminal).
+ */
+export function settingsFor(state, terminal) {
+  const word = /(\S+)\s*$/.exec(terminal.title ?? '')?.[1];
+  return word === undefined ? undefined : state.byName?.[word];
+}
+
 /** The number a terminal was made with: `term_7` is 7. */
 function numberOf(state, terminal) {
   const n = /(\d+)$/.exec(terminal.handle ?? '')?.[1];
@@ -170,7 +190,7 @@ function waitsSoFar(dir) {
 
 /** What is in front of a tab, as one of the words in the list above. */
 export function foregroundOf(state, terminal, dir) {
-  if (launchedIn(terminal) === undefined) return 'shell';
+  if (launchedIn(terminal) === undefined) return settingsFor(state, terminal)?.front ?? 'shell';
   if (terminal.foreground !== undefined) return terminal.foreground;
   if (state.foreground !== undefined) return state.foreground;
   const waits = waitsSoFar(dir) - (state.waitIdleFrom ?? 0);
@@ -184,7 +204,7 @@ export function foregroundOf(state, terminal, dir) {
  * The processes of one tab, as `ps` would find them: { pid, ppid, tpgid, comm }.
  * A tab whose pane cannot be read has none.
  */
-function processesOf(state, terminal, dir) {
+export function processesOf(state, terminal, dir) {
   const pane = panePid(state, terminal);
   const shell = pane + 1;
   const harness = pane + 2;
@@ -367,6 +387,12 @@ export function runPs() {
   appendFileSync(path.join(dir, 'ps.log'), `${JSON.stringify({ args })}\n`);
 
   const state = JSON.parse(readFileSync(path.join(dir, 'state.json'), 'utf8'));
+  // A `ps` slow to answer, or one that never does (#498, the review of PR
+  // #499): `psDelayMs` holds every answer back that long, the call written
+  // down first.
+  if (Number.isFinite(state.psDelayMs) && state.psDelayMs > 0) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, state.psDelayMs);
+  }
   if (state.ps === 'not-permitted') {
     process.stderr.write(`${process.argv[1]}: Operation not permitted\n`);
     process.exit(126);
