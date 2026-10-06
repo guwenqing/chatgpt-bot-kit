@@ -116,17 +116,21 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
   first prompt and never during a start-up file. After 15 s (`shellReadyTimeoutMs`) it writes the
   queue to the shell anyway: into a question that is still open. The state is the daemon's own; no
   CLI command or runtime method gives it. Where the mark does not come, the daemon calls the shell
-  ready when the shell is in front and `stty -a -f <tty>` shows `-icanon` and `-echo`.
-- **A shell at a ready prompt has its tty at `-icanon -echo`; a start-up question does not.** Measured
-  on 2026-10-05 in a pty with `stty -a -f` (#498): zsh 5.9 at a prompt `-icanon -echo`, zsh in
-  `read -k 1` (oh-my-zsh's question) `-icanon echo`; bash 3.2 at its readline prompt `-icanon -echo`,
-  bash in `read -p` `icanon echo`; `/bin/sh` at its prompt `-icanon -echo`. The pane pid Orca gives is
+  ready when the shell is in front and `stty -a -f <tty>` shows `-icanon`, `-echo` and `lnext =
+  <undef>` (shared/pty-slave-line-discipline-echo.js).
+- **A shell at a ready prompt has its tty at `-icanon -echo` with `lnext = <undef>`; a start-up
+  question does not.** Measured on 2026-10-05 and 10-06 in a pty with `stty -a -f` (#498): zsh 5.9 at
+  a prompt `-icanon -echo`, lnext `<undef>`; zsh in `read -k 1` (oh-my-zsh's question) `-icanon echo`,
+  lnext `^V`; zsh in `read -s -k 1` `-icanon -echo`, lnext `^V`; bash 3.2 at its readline prompt
+  `-icanon -echo`, lnext `<undef>`; bash in `read -p` `icanon echo`, lnext `^V`; `/bin/sh` at its
+  prompt `-icanon -echo`, lnext `<undef>`. The pane pid Orca gives is
   `/usr/bin/login`, which runs as root, and `lsof -p <it>` shows nothing to the user; `lsof -a -R -d 0
   -u <uid> -FpRn` lists the user's processes with their parents, and the shell, the pane's child, has
   the tty on fd 0 (`p88639`, `R88620`, `f0`, `n/dev/ttys010`). Both that `lsof` and `stty` ran under
   `codex sandbox` (0.160.0), where `ps` and `pgrep` do not. So before it types a launch line, the kit waits up to 15 s for the shell in front
-  with its tty in that mode, and otherwise types nothing and names the screen. A question asked with
-  echo off and one key read (`read -s -k 1`) would look ready; none is known. **verified** (live,
+  with its tty in that mode, and otherwise types nothing and names the screen. A question asked
+  through bash's readline (`read -e -p`) looks ready (`-icanon -echo`, lnext `<undef>`), to Orca as
+  well; none is known in a start-up file. The architect accepted that as a known limit (#498). **verified** (live,
   in a pty; the probe in an Orca tab is in #498's PR)
 - **A variable set on the launch line reaches the session's own shell tool, on both harnesses; a
   `PATH` entry does not.** The kit's launch line starts `OBK_CLI=<the running CLI> …`, and a Claude

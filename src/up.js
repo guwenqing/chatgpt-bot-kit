@@ -411,6 +411,12 @@ async function bringUpSession(bots, home, live, session, bot, title) {
 const SHELL_READY_MS = 15000;
 const SHELL_LOOK_MS = 250;
 
+/** The least a look is given: a wait with less left than that ends. */
+const LAST_LOOK_MS = 1000;
+
+/** How long the screen read for a refusal's words is given. */
+const SCREEN_READ_MS = 5000;
+
 /**
  * Undefined once the shell in the new tab `handle` is at a ready prompt, or,
  * when it is not within SHELL_READY_MS, a sentence that says why and names
@@ -419,16 +425,24 @@ const SHELL_LOOK_MS = 250;
 async function shellNotReady(handle) {
   const until = Date.now() + SHELL_READY_MS;
   let seen;
+  // The last look that was not cut short: what the refusal is about, when the
+  // last one ran out of time.
+  let answered;
   for (;;) {
-    seen = shellInTab(handle);
+    const look = shellInTab(handle, until);
+    seen = look.late === true ? answered ?? look : look;
+    if (look.late !== true) answered = look;
+    // The calls that decide a yes, lsof and stty last, end by `until`, so a
+    // yes is never late.
     if (seen.ready === true) return undefined;
-    if (Date.now() >= until) break;
+    // The last look ends the wait: one more would have no time to answer in.
+    if (until - Date.now() < SHELL_LOOK_MS + LAST_LOOK_MS) break;
     await pause(SHELL_LOOK_MS);
   }
   const wait = `it did not come to a ready prompt in ${SHELL_READY_MS / 1000} s`;
   if (seen.program !== undefined) return `${seen.program} is running in front of the shell, and ${wait}`;
   if (seen.unsure !== undefined) return `the kit could not tell whether the shell is ready (${seen.unsure})`;
-  const read = screenRows(handle);
+  const read = screenRows(handle, SCREEN_READ_MS);
   if (read.rows === undefined) return `the shell is asking something, and ${wait}; its screen could not be read (${read.unreadable})`;
   const last = read.rows.findLast((row) => row.trim() !== '');
   return last === undefined

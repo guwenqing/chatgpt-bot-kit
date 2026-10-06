@@ -636,11 +636,11 @@ function frontByPs(ptyId, readMs) {
   const { pane, unreadable } = panePid(ptyId, readMs);
   if (unreadable !== undefined) return { unreadable };
 
-  const own = psLine(pane);
+  const own = psLine(pane, readMs);
   if (own === undefined) return { unreadable: `ps could not read its pane, pid ${pane}` };
   if (own.tpgid === pane) return { front: 'shell' };
 
-  const front = psLine(own.tpgid);
+  const front = psLine(own.tpgid, readMs);
   if (front === undefined) return { unreadable: `ps could not read the process in front, pid ${own.tpgid}` };
   const shell = front.ppid === pane && path.basename(own.comm) === 'login';
   return shell ? { front: 'shell' } : { front: 'program', command: path.basename(front.comm), pid: own.tpgid };
@@ -676,30 +676,41 @@ const sttyCli = () => process.env.OBK_STTY || '/bin/stty';
  * typed into it (#498): `{ ready: true }` when the shell is at a prompt that
  * takes a line, `{ asking: true }` when the shell is in front and reading the
  * tty some other way, `{ program }` when something else is in front, and
- * `{ unsure: <why> }` when the kit cannot tell.
+ * `{ unsure: <why> }` when the kit cannot tell, with `late` when a call ran out
+ * of the time left until `until`.
  *
- * A shell's line editor (zsh's, bash's readline, fish's) puts the tty in
- * non-canonical mode with no echo while it waits at a prompt. A question asked
- * in a start-up file (`read -k 1`, `read -p`) leaves echo on, and so does a
- * shell still busy with its start-up files. Orca's daemon tells a ready shell
+ * A shell's line editor (zsh's, bash's readline) puts the tty in non-canonical
+ * mode with no echo and no literal-next key while it waits at a prompt. A
+ * question asked in a start-up file (`read -k 1`, `read -p`, `read -s -k 1`)
+ * leaves echo or the literal-next key on, and so does a shell still busy with
+ * its start-up files. Orca's daemon tells a ready shell
  * the same way when its own mark does not come (tech notes, section 1). The
  * shell's prompt itself is never read: it is the user's.
  */
-export function shellInTab(handle) {
-  let shown;
+export function shellInTab(handle, until) {
+  // Each call is given what is left until `until`, so a reader that hangs
+  // cannot hold the launch past its wait.
+  const left = () => Math.max(1, until - Date.now());
   try {
-    shown = orca(['terminal', 'show', '--terminal', handle]).terminal;
+    let shown;
+    try {
+      shown = orca(['terminal', 'show', '--terminal', handle], { timeoutMs: left() }).terminal;
+    } catch (error) {
+      if (error.code === TIMED_OUT) throw error;
+      return { unsure: `Orca would not show the tab: ${error.message}` };
+    }
+    const front = frontOf(handle, shown?.ptyId, left());
+    if (front.unreadable !== undefined) return { unsure: front.unreadable };
+    if (front.front === 'program') return { program: front.command };
+    const { pane, unreadable } = panePid(shown?.ptyId, left());
+    if (unreadable !== undefined) return { unsure: unreadable };
+    const mode = ttyMode(pane, left);
+    if (mode.unreadable !== undefined) return { unsure: mode.unreadable, ...(mode.late ? { late: true } : {}) };
+    return mode.lineEditor ? { ready: true } : { asking: true };
   } catch (error) {
-    return { unsure: `Orca would not show the tab: ${error.message}` };
+    if (error.code !== TIMED_OUT) throw error;
+    return { unsure: `Orca did not answer in time: ${error.message}`, late: true };
   }
-  const front = frontOf(handle, shown?.ptyId);
-  if (front.unreadable !== undefined) return { unsure: front.unreadable };
-  if (front.front === 'program') return { program: front.command };
-  const { pane, unreadable } = panePid(shown?.ptyId);
-  if (unreadable !== undefined) return { unsure: unreadable };
-  const mode = ttyMode(pane);
-  if (mode.unreadable !== undefined) return { unsure: mode.unreadable };
-  return mode.lineEditor ? { ready: true } : { asking: true };
 }
 
 /**
@@ -710,8 +721,9 @@ export function shellInTab(handle) {
  * cannot read, so the shell is found as the user's process whose parent it is,
  * or as the pane itself where the pane is the shell.
  */
-function ttyMode(pid) {
-  const listed = spawnSync(lsofCli(), ['-a', '-R', '-d', '0', '-u', String(process.getuid()), '-FpRn'], { encoding: 'utf8' });
+function ttyMode(pid, left) {
+  const listed = spawnSync(lsofCli(), ['-a', '-R', '-d', '0', '-u', String(process.getuid()), '-FpRn'], { encoding: 'utf8', timeout: left() });
+  if (listed.error?.code === 'ETIMEDOUT') return { unreadable: 'lsof did not answer in time', late: true };
   if (listed.error || listed.status !== 0) return { unreadable: `lsof could not list the processes' ttys` };
   // One record per process: `p<pid>`, `R<parent pid>`, `f0`, `n<name>`.
   let record = {};
@@ -723,13 +735,16 @@ function ttyMode(pid) {
   }
   if (tty === undefined) return { unreadable: `lsof named no tty for the shell of its pane, pid ${pid}` };
 
-  const read = spawnSync(sttyCli(), ['-a', '-f', tty], { encoding: 'utf8' });
+  const read = spawnSync(sttyCli(), ['-a', '-f', tty], { encoding: 'utf8', timeout: left() });
+  if (read.error?.code === 'ETIMEDOUT') return { unreadable: `stty did not answer in time for ${tty}`, late: true };
   if (read.error || read.status !== 0) return { unreadable: `stty could not read ${tty}` };
   const words = read.stdout.split(/\s+/);
   const flag = (name) => (words.includes(name) ? true : words.includes(`-${name}`) ? false : undefined);
   const [icanon, echo] = [flag('icanon'), flag('echo')];
   if (icanon === undefined || echo === undefined) return { unreadable: `stty gave no icanon and echo flags for ${tty}` };
-  return { lineEditor: !icanon && !echo };
+  // A line editor also turns off the literal-next key, which a question read
+  // with echo off (`read -s -k 1`) leaves on, as Orca's own test has it.
+  return { lineEditor: !icanon && !echo && /(?:^|[;\s])lnext\s*=\s*<undef>(?:;|\s|$)/.test(read.stdout) };
 }
 
 /**
@@ -746,8 +761,8 @@ export function wordsOfProcess(pid) {
 }
 
 /** One process as `ps` gives it, read only: `{ ppid, tpgid, comm }`, or undefined. */
-function psLine(pid) {
-  const asked = spawnSync(psCli(), ['-o', 'pid=,ppid=,tpgid=,comm=', '-p', String(pid)], { encoding: 'utf8' });
+function psLine(pid, readMs) {
+  const asked = spawnSync(psCli(), ['-o', 'pid=,ppid=,tpgid=,comm=', '-p', String(pid)], { encoding: 'utf8', ...(readMs === undefined ? {} : { timeout: readMs }) });
   if (asked.error || asked.status !== 0) return undefined;
   const line = /^\s*(\d+)\s+(\d+)\s+(-?\d+)\s+(.+?)\s*$/.exec(asked.stdout);
   if (line === null) return undefined;

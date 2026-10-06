@@ -32,10 +32,15 @@
 // which prints macOS `stty -a` output. Its `lflags:` line holds `icanon` or
 // `-icanon`, and `echo` or `-echo`, as whole words beside the other flags that
 // start with "echo" (`echoe`, `echok`, `echoke`, `-echonl`, `echoctl`,
-// `-echoprt`). Line-editor mode is `-icanon` and `-echo` together. Measured
-// live (#498): zsh at its prompt reads `-icanon … -echo`; zsh in oh-my-zsh's
-// update question (`read -k 1`) reads `-icanon … echo`; a plain `read` in bash
-// reads `icanon … echo`.
+// `-echoprt`). Its `cchars:` part holds `lnext = <undef>` or `lnext = ^V`,
+// among other characters that may be `<undef>` too (`eol`, `eol2`). Line-editor
+// mode is `-icanon`, `-echo` and `lnext = <undef>` together, which is Orca
+// 1.4.219's own test (shared/pty-slave-line-discipline-echo.js). Measured in a
+// pty (#498, the review of PR #499): zsh, bash and /bin/sh at their prompts
+// read `-icanon -echo`, lnext <undef>; zsh in oh-my-zsh's update question
+// (`read -k 1`) reads `-icanon echo`, lnext ^V; zsh `read -s -k 1`, a silent
+// one-key question, reads `-icanon -echo`, lnext ^V; bash `read -p` reads
+// `icanon echo`, lnext ^V.
 //
 // Any other call shape is refused with exit 70, as the fake `ps` refuses one.
 // Every call, refused or not, is written to lsof.log or stty.log in the fake
@@ -48,11 +53,18 @@
 // How a tab's tty reads, `tty` in state.json for every tab, or `tty` under the
 // tab's entry in `byName` (helpers/fake-ps.js) for that tab alone:
 //
-//   'prompt'      (default) zsh at its prompt: -icanon, -echo. Ready.
+//   'prompt'      (default) zsh at its prompt: -icanon, -echo, lnext <undef>.
+//                 Ready.
 //   'question'    a shell question read one key at a time, as oh-my-zsh's
-//                 "Would you like to update? [Y/n]": -icanon, echo
-//   'read'        a plain line read, as bash `read`: icanon, echo
-//   'secret'      a line read with the echo off, as `read -s`: icanon, -echo
+//                 "Would you like to update? [Y/n]": -icanon, echo, lnext ^V
+//   'silent-key'  a question read one key at a time with the echo off, as zsh
+//                 `read -s -k 1`: -icanon, -echo, lnext ^V. Only lnext tells
+//                 it from a prompt
+//   'read'        a plain line read, as bash `read`: icanon, echo, lnext ^V
+//   'secret'      a line read with the echo off, as `read -s`: icanon, -echo,
+//                 lnext ^V
+//   'no-lnext'    -icanon, -echo, and no lnext in cchars at all: what Orca
+//                 reads as neither, so not ready
 //   'stty-fails'  stty cannot read the tty: stderr, exit 1
 //   'lsof-fails'  lsof fails: stderr, exit 1, whichever tab it was asked for
 //   'no-tty'      the tab's processes have no tty on fd 0: their records
@@ -63,8 +75,20 @@
 // after it. ['question', 'question', 'prompt'] is a question the user answered
 // while the kit was looking. `lsof` reads a list the same way, by its own
 // calls, and answers as 'prompt' for any word that is not its own.
+//
+// And how long each takes to answer (#498, the review of PR #499): `lsofDelayMs`
+// in state.json holds every lsof answer back that long, and `sttyDelayMs`, in
+// state.json or under a tab's entry in `byName`, every stty answer for that
+// tab. The call is written down first, then the fake sleeps, then answers as
+// it would have. A delay longer than the test is an lsof or stty that never
+// answers. One that the kit kills takes its sleep with it.
 
 import { appendFileSync, readFileSync } from 'node:fs';
+
+/** Sleep `ms` before answering, the whole process held. */
+function holdBack(ms) {
+  if (Number.isFinite(ms) && ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
 import path from 'node:path';
 
 import { panePid, processesOf, settingsFor } from './fake-ps.js';
@@ -92,8 +116,11 @@ export function ttyModeOf(state, terminal, look) {
   return told[Math.min(Math.max(look - 1, 0), told.length - 1)];
 }
 
-/** What macOS `stty -a` prints for a tty, with its two flags as given. */
-export function sttyOutput({ icanon, echo }) {
+/**
+ * What macOS `stty -a` prints for a tty, with its two flags as given, and its
+ * lnext character: '<undef>', '^V', or null for none listed.
+ */
+export function sttyOutput({ icanon, echo, lnext }) {
   return [
     'speed 38400 baud; 50 rows; 200 columns;',
     `lflags: ${icanon ? 'icanon' : '-icanon'} isig iexten ${echo ? 'echo' : '-echo'} echoe echok echoke -echonl echoctl`,
@@ -105,19 +132,21 @@ export function sttyOutput({ icanon, echo }) {
     'cflags: cread cs8 -parenb -parodd hupcl -clocal -cstopb -crtscts -dsrflow',
     '\t-dtrflow -mdmbuf',
     'cchars: discard = ^O; dsusp = ^Y; eof = ^D; eol = <undef>;',
-    '\teol2 = <undef>; erase = ^?; intr = ^C; kill = ^U; lnext = ^V;',
+    `\teol2 = <undef>; erase = ^?; intr = ^C; kill = ^U;${lnext === null ? '' : ` lnext = ${lnext};`}`,
     '\tmin = 1; quit = ^\\; reprint = ^R; start = ^Q; status = ^T;',
     '\tstop = ^S; susp = ^Z; time = 0; werase = ^W;',
     '',
   ].join('\n');
 }
 
-/** The two flags of each word stty answers. */
+/** The two flags and the lnext character of each word stty answers. */
 const FLAGS = {
-  prompt: { icanon: false, echo: false },
-  question: { icanon: false, echo: true },
-  read: { icanon: true, echo: true },
-  secret: { icanon: true, echo: false },
+  prompt: { icanon: false, echo: false, lnext: '<undef>' },
+  question: { icanon: false, echo: true, lnext: '^V' },
+  'silent-key': { icanon: false, echo: false, lnext: '^V' },
+  read: { icanon: true, echo: true, lnext: '^V' },
+  secret: { icanon: true, echo: false, lnext: '^V' },
+  'no-lnext': { icanon: false, echo: false, lnext: null },
 };
 
 /** The fake's world, and a call written down. */
@@ -168,6 +197,7 @@ export function runLsof() {
   // As macOS lsof does for a user with no processes: nothing, and exit 1.
   if (Number(args[5]) !== process.getuid()) process.exit(1);
 
+  holdBack(state.lsofDelayMs);
   const look = callsSoFar(dir, 'lsof', () => true);
   const terminals = state.terminals ?? [];
   if (terminals.some((terminal) => ttyModeOf(state, terminal, look) === 'lsof-fails')) {
@@ -198,6 +228,7 @@ export function runStty() {
     process.stderr.write(`stty: ${tty}: No such file or directory\n`);
     process.exit(1);
   }
+  holdBack(settingsFor(state, terminal)?.sttyDelayMs ?? state.sttyDelayMs);
   const look = callsSoFar(dir, 'stty', (one) => one[2] === tty);
   const mode = ttyModeOf(state, terminal, look);
   if (mode === 'stty-fails') {

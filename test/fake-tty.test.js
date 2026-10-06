@@ -54,6 +54,14 @@ function ttyFrom(done, pane) {
 }
 
 /** The words of stty's lflags, the continuation rows included. */
+/** The lnext character stty's cchars give, or undefined when none is listed. */
+function lnextOf(done) {
+  assert.equal(done.status, 0, `stty should have read the tty: ${done.stderr}`);
+  const at = done.stdout.indexOf('cchars:');
+  assert.ok(at >= 0, `stty -a prints a cchars part, got:\n${done.stdout}`);
+  return /(?:^|[;\s])lnext\s*=\s*([^;\s]+)/.exec(done.stdout.slice(at))?.[1];
+}
+
 function lflagsOf(done) {
   assert.equal(done.status, 0, `stty should have read the tty: ${done.stderr}`);
   const rows = done.stdout.split('\n');
@@ -125,18 +133,24 @@ test('the fake tty reads as each shell state a test names, for every tab or for 
   const ttyNight = ttyFrom(lsof(box), night.pid);
   assert.notEqual(ttyDaily, ttyNight, 'each tab has its own tty');
 
+  // As measured in a pty (#498, the review of PR #499).
   const cases = [
-    ['question', { icanon: '-icanon', echo: 'echo' }],
-    ['read', { icanon: 'icanon', echo: 'echo' }],
-    ['secret', { icanon: 'icanon', echo: '-echo' }],
-    ['prompt', { icanon: '-icanon', echo: '-echo' }],
+    ['question', { icanon: '-icanon', echo: 'echo', lnext: '^V' }],
+    ['silent-key', { icanon: '-icanon', echo: '-echo', lnext: '^V' }],
+    ['read', { icanon: 'icanon', echo: 'echo', lnext: '^V' }],
+    ['secret', { icanon: 'icanon', echo: '-echo', lnext: '^V' }],
+    ['no-lnext', { icanon: '-icanon', echo: '-echo', lnext: undefined }],
+    ['prompt', { icanon: '-icanon', echo: '-echo', lnext: '<undef>' }],
   ];
   for (const [mode, want] of cases) {
     await box.orca.set({ byName: { night: { tty: mode } } });
-    const flags = lflagsOf(stty(box, ttyNight));
+    const read = stty(box, ttyNight);
+    const flags = lflagsOf(read);
     assert.ok(flags.includes(want.icanon) && flags.includes(want.echo), `${mode}: got ${flags.join(' ')}`);
-    const other = lflagsOf(stty(box, ttyDaily));
-    assert.ok(other.includes('-icanon') && other.includes('-echo'), `the other tab stays at its prompt: ${other.join(' ')}`);
+    assert.equal(lnextOf(read), want.lnext, `${mode}: lnext`);
+    const other = stty(box, ttyDaily);
+    assert.ok(lflagsOf(other).includes('-icanon') && lflagsOf(other).includes('-echo'), `the other tab stays at its prompt: ${lflagsOf(other).join(' ')}`);
+    assert.equal(lnextOf(other), '<undef>', 'with lnext <undef>');
   }
 
   await box.orca.set({ byName: {}, tty: 'question' });
@@ -163,6 +177,22 @@ test('the fake lsof lists a pane that is the shell itself as the record with the
   assert.ok(pane, `the pane is the user's shell, so it is listed, got: ${JSON.stringify(records)}`);
   assert.match(pane.name, /^\/dev\/ttys\d{3}$/);
   assert.equal(records.some((one) => one.ppid === pid), false, 'and nothing runs under it');
+});
+
+test('the fake lsof and stty answer as late as a test says, and answer as ever', async (t) => {
+  const box = await createSandbox(t);
+  const { pid } = oneTab(box, 'Coder daily');
+  await box.orca.set({ lsofDelayMs: 1500, byName: { daily: { sttyDelayMs: 1500 } } });
+
+  let from = Date.now();
+  const tty = ttyFrom(lsof(box), pid);
+  assert.ok(Date.now() - from >= 1400, 'lsof held its answer back');
+  assert.match(tty, /^\/dev\/ttys\d{3}$/);
+
+  from = Date.now();
+  const read = stty(box, tty);
+  assert.ok(Date.now() - from >= 1400, 'stty held its answer back');
+  assert.ok(lflagsOf(read).includes('-echo') && lnextOf(read) === '<undef>', 'and then answered a ready prompt');
 });
 
 test('the fake lsof and stty fail the ways a test names', async (t) => {

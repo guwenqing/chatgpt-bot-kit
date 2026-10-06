@@ -11,7 +11,8 @@
 //   - Before it types, the kit reads the new tab's tty: `lsof -a -R -d 0 -u
 //     <uid> -FpRn` for the tty of the shell under the pane, then `stty -a -f
 //     <tty>`. Ready is the shell in front and the tty in line-editor mode,
-//     `-icanon` and `-echo` together.
+//     `-icanon`, `-echo` and `lnext = <undef>` together, Orca 1.4.219's own
+//     test.
 //   - A ready prompt gets the line, once. A shell that becomes ready while the
 //     kit looks gets it once, as soon as it is ready.
 //   - A shell still not ready 15 s after the tab was opened gets nothing typed.
@@ -35,6 +36,7 @@ import {
   ASKING_ROW,
   ASKING_SCREEN,
   answerIn,
+  COULD_NOT_TELL,
   assertInBook,
   assertLaunched,
   assertNotLaunched,
@@ -130,9 +132,17 @@ describe('#498 up and a new tab\'s shell', { concurrency: true }, () => {
     assert.ok(lastLook <= READY_WAIT_MS + 10000, `and stopped looking soon after, its last look came ${lastLook} ms after the tab was opened`);
   });
 
-  for (const [mode, what] of [['read', 'a plain line read, with the echo on'], ['secret', 'a line read with the echo off']]) {
+  for (const [mode, what] of [
+    ['read', 'a plain line read, with the echo on'],
+    ['secret', 'a line read with the echo off'],
+    // -icanon and -echo, as at a prompt, but lnext ^V (the review of PR #499).
+    ['silent-key', 'a silent one-key question, as zsh `read -s -k 1`'],
+    // The flags were read, so this is the shell asking, not "could not tell".
+    ['no-lnext', 'a tty whose control characters list no lnext'],
+  ]) {
     test(`#498 ${what} is not a ready prompt either: nothing is typed`, async (t) => {
-      // Line-editor mode is -icanon and -echo together: one of the two is not enough.
+      // Line-editor mode is -icanon, -echo and lnext <undef> together: two of
+      // the three are not enough.
       const box = await createSandbox(t);
       await fleet(box);
       await box.orca.set({ byName: { review: { tty: mode } } });
@@ -142,6 +152,7 @@ describe('#498 up and a new tab\'s shell', { concurrency: true }, () => {
       assert.equal(result.code, 1, result.stderr);
       const why = await assertNotLaunched(box, entryOf(result, 'coder', 'review'));
       assert.match(why, SHELL_ASKING);
+      assert.doesNotMatch(why, COULD_NOT_TELL, `the tty was read, got: ${why}`);
     });
   }
 
