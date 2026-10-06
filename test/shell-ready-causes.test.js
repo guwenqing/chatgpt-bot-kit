@@ -54,7 +54,9 @@ async function heldBack(t, settings, state = {}) {
   return why;
 }
 
-describe('#498 why a new tab was not launched', { concurrency: true }, () => {
+// Four at a time: each run starts dozens of Node fakes, and with many more at once
+// a loaded machine leaves the kit too little of its 15 s to read even a ready shell.
+describe('#498 why a new tab was not launched', { concurrency: 4 }, () => {
   test('#498 the shell is asking: the reason gives the last row of the screen that is not empty', async (t) => {
     const why = await heldBack(t, { tty: 'question', screen: ASKING_SCREEN });
 

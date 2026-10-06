@@ -231,7 +231,7 @@ export const tellWindow = (projectId) => askRuntime('project.update', { projectI
  * Orca's published interface, so anything that goes wrong is a quiet
  * undefined: it never throws and is never tried twice.
  */
-function askRuntime(method, params) {
+function askRuntime(method, params, killMs = CLIENT_KILL_MS) {
   try {
     // The CLI sits at <Orca.app>/Contents/Resources/bin/orca, often reached
     // through a link.
@@ -244,8 +244,8 @@ function askRuntime(method, params) {
 
     const asked = spawnSync(
       path.join(contents, 'MacOS', 'Orca'),
-      [RUNTIME_SCRIPT, client, method, JSON.stringify(params), String(CLIENT_WAIT_MS)],
-      { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: CLIENT_KILL_MS },
+      [RUNTIME_SCRIPT, client, method, JSON.stringify(params), String(Math.min(CLIENT_WAIT_MS, killMs))],
+      { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: Math.min(CLIENT_KILL_MS, killMs) },
     );
     if (asked.error !== undefined || asked.status !== 0) return undefined;
     return parse(asked.stdout) ?? undefined;
@@ -586,17 +586,21 @@ const psCli = () => process.env.OBK_PS || '/bin/ps';
  * Who holds the terminal of the tab `handle`, whose pane is `ptyId`:
  * `{ front: 'shell' }`, `{ front: 'program', command, pid }` with the name and,
  * where `ps` gave it, the pid of the process leading the group in front, or
- * `{ unreadable: <why> }`.
+ * `{ unreadable: <why> }`; each with `pane`, the pane's pid, where Orca gave it.
  *
  * `ps` is asked first. Where it cannot read the tab, as inside Codex's
  * sandbox, where it does not start at all, Orca's runtime is asked instead
- * (#298, ADR 0034).
+ * (#298, ADR 0034). `readMs` bounds each call: a number, or a function that
+ * says what is left of a wait, asked before each one (#498). A `ps` that runs
+ * out of it ends the look, `late`, with no runtime asked after it.
  */
 function frontOf(handle, ptyId, readMs) {
   const read = frontByPs(ptyId, readMs);
-  if (read.unreadable === undefined) return read;
-  const asked = frontByOrca(handle);
-  return { ...(asked.unreadable === undefined ? asked : { unreadable: `${read.unreadable}, and ${asked.unreadable}` }), psUnread: true };
+  if (read.unreadable === undefined || read.late === true) return read;
+  const asked = frontByOrca(handle, msOf(readMs));
+  // The pane's pid, where `diagnostics memory` gave it, goes on with the answer.
+  const pane = read.pane === undefined ? {} : { pane: read.pane };
+  return { ...(asked.unreadable === undefined ? asked : { unreadable: `${read.unreadable}, and ${asked.unreadable}` }), psUnread: true, ...pane };
 }
 
 /**
@@ -608,8 +612,8 @@ function frontOf(handle, ptyId, readMs) {
  * else is "cannot tell": for a moment after a harness quits, Orca can name
  * nothing and still see a child in front (read in the Orca 1.4.212 bundle).
  */
-function frontByOrca(handle) {
-  const seen = askRuntime('terminal.inspectProcess', { terminal: handle })?.result?.process;
+function frontByOrca(handle, readMs) {
+  const seen = askRuntime('terminal.inspectProcess', { terminal: handle }, readMs)?.result?.process;
   const evidence = seen?.foregroundProcessEvidence;
   if (evidence?.verdict !== 'live') {
     const why = typeof evidence?.reason === 'string' ? `: ${evidence.reason}` : '';
@@ -633,18 +637,23 @@ function frontByOrca(handle) {
  * here ends in "cannot tell" rather than in an error or a guess.
  */
 function frontByPs(ptyId, readMs) {
-  const { pane, unreadable } = panePid(ptyId, readMs);
+  const { pane, unreadable } = panePid(ptyId, msOf(readMs));
   if (unreadable !== undefined) return { unreadable };
 
-  const own = psLine(pane, readMs);
-  if (own === undefined) return { unreadable: `ps could not read its pane, pid ${pane}` };
-  if (own.tpgid === pane) return { front: 'shell' };
+  const own = psLine(pane, msOf(readMs));
+  if (own?.late === true) return { unreadable: `ps did not answer in time for its pane, pid ${pane}`, late: true };
+  if (own === undefined) return { unreadable: `ps could not read its pane, pid ${pane}`, pane };
+  if (own.tpgid === pane) return { front: 'shell', pane };
 
-  const front = psLine(own.tpgid, readMs);
-  if (front === undefined) return { unreadable: `ps could not read the process in front, pid ${own.tpgid}` };
+  const front = psLine(own.tpgid, msOf(readMs));
+  if (front?.late === true) return { unreadable: `ps did not answer in time for the process in front, pid ${own.tpgid}`, late: true };
+  if (front === undefined) return { unreadable: `ps could not read the process in front, pid ${own.tpgid}`, pane };
   const shell = front.ppid === pane && path.basename(own.comm) === 'login';
-  return shell ? { front: 'shell' } : { front: 'program', command: path.basename(front.comm), pid: own.tpgid };
+  return shell ? { front: 'shell', pane } : { front: 'program', command: path.basename(front.comm), pid: own.tpgid, pane };
 }
+
+/** A bound `frontOf` was given, as a number of milliseconds: asked now when it is a function. */
+const msOf = (readMs) => (typeof readMs === 'function' ? readMs() : readMs);
 
 /**
  * The pid of the pane `ptyId`, `{ pane }`, from `diagnostics memory`, or
@@ -699,10 +708,10 @@ export function shellInTab(handle, until) {
       if (error.code === TIMED_OUT) throw error;
       return { unsure: `Orca would not show the tab: ${error.message}` };
     }
-    const front = frontOf(handle, shown?.ptyId, left());
-    if (front.unreadable !== undefined) return { unsure: front.unreadable };
+    const front = frontOf(handle, shown?.ptyId, left);
+    if (front.unreadable !== undefined) return { unsure: front.unreadable, ...(front.late ? { late: true } : {}) };
     if (front.front === 'program') return { program: front.command };
-    const { pane, unreadable } = panePid(shown?.ptyId, left());
+    const { pane, unreadable } = front.pane === undefined ? panePid(shown?.ptyId, left()) : front;
     if (unreadable !== undefined) return { unsure: unreadable };
     const mode = ttyMode(pane, left);
     if (mode.unreadable !== undefined) return { unsure: mode.unreadable, ...(mode.late ? { late: true } : {}) };
@@ -760,9 +769,10 @@ export function wordsOfProcess(pid) {
   return asked.stdout.trim().split(/\s+/);
 }
 
-/** One process as `ps` gives it, read only: `{ ppid, tpgid, comm }`, or undefined. */
+/** One process as `ps` gives it, read only: `{ ppid, tpgid, comm }`, `{ late: true }` past `readMs`, or undefined. */
 function psLine(pid, readMs) {
   const asked = spawnSync(psCli(), ['-o', 'pid=,ppid=,tpgid=,comm=', '-p', String(pid)], { encoding: 'utf8', ...(readMs === undefined ? {} : { timeout: readMs }) });
+  if (asked.error?.code === 'ETIMEDOUT') return { late: true };
   if (asked.error || asked.status !== 0) return undefined;
   const line = /^\s*(\d+)\s+(\d+)\s+(-?\d+)\s+(.+?)\s*$/.exec(asked.stdout);
   if (line === null) return undefined;

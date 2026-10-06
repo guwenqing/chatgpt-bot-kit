@@ -14,17 +14,25 @@
 //   - So the command ends: it exits 1, with nothing typed into the tab, about
 //     15 s after the tab was opened plus a few seconds (the refusal may read the
 //     tab's screen once more, for about 5 s at most).
+//   - Each call gets what is left of the wait when it starts, not a budget
+//     measured once per look: several reads that are each slow, and each
+//     answer inside a bound of their own, still end by the deadline (the
+//     reviewer's second case: diagnostics after 3 s, each of two ps calls
+//     after 13 s, and `up` ended 30 s after the tab was opened).
+//   - A ps that does not answer in time ends the look as "could not tell"; it
+//     does not go on to ask Orca's runtime, which would spend more time.
 //   - A reader that is slow but answers well inside the wait is not cut off.
 //
 // The fake lsof and stty hold their answers back by `lsofDelayMs` and
-// `sttyDelayMs` (helpers/fake-tty.js); the fake Orca holds back one command's
+// `sttyDelayMs` (helpers/fake-tty.js), the fake ps by `psDelayMs`
+// (helpers/fake-ps.js); the fake Orca holds back one command's
 // answers with `hang` (helpers/fake-orca.js). Each refusal costs the wait in
 // real time, so the tests run side by side.
 
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
-import { createSandbox, orcaCallsOf, orcaFlag } from './helpers/cli.js';
+import { createSandbox, orcaApp, orcaCallsOf, orcaFlag } from './helpers/cli.js';
 import {
   assertInBook,
   assertLaunched,
@@ -75,17 +83,19 @@ async function refusedInTime(t, state) {
   return why;
 }
 
-/** Orca holds back every answer to `command` from the next `terminal create` on: a call on the new tab that hangs. */
-const hangOnTheNewTab = (command) => async (box) => ({
+/** Orca holds back every answer to `command` from the next `terminal create` on, `ms` long: a call on the new tab that hangs. */
+const hangOnTheNewTab = (command, ms = 60000) => async (box) => ({
   hang: {
     command,
-    ms: 60000,
+    ms,
     since: 'terminal create',
     sinceFrom: orcaCallsOf(await box.orca.calls(), 'terminal create').length,
   },
 });
 
-describe('#498 the wait for a ready shell is bounded, whatever its readers do', { concurrency: true }, () => {
+// Four at a time: each run starts dozens of Node fakes, and with many more at once
+// a loaded machine leaves the kit too little of its 15 s to read even a ready shell.
+describe('#498 the wait for a ready shell is bounded, whatever its readers do', { concurrency: 4 }, () => {
   test('#498 an stty that answers "ready" only after the wait: nothing is typed, and up ends in time', async (t) => {
     // The reviewer's case: 18 s, longer than the whole wait.
     const why = await refusedInTime(t, { byName: { review: { sttyDelayMs: 18000 } } });
@@ -106,6 +116,35 @@ describe('#498 the wait for a ready shell is bounded, whatever its readers do', 
       assert.match(why, /orca|diagnostics|terminal show/i, `with the reason, got: ${why}`);
     });
   }
+
+  test('#498 slow reads that each answer inside their own bound still end by the deadline: diagnostics after 3 s, ps after 13 s a call', async (t) => {
+    // The reviewer's second case. Both delays are set just before `up`, so the
+    // setup's own calls are not slowed.
+    const why = await refusedInTime(t, async (box) => ({ ...await hangOnTheNewTab('diagnostics memory', 3000)(box), psDelayMs: 13000 }));
+
+    assert.match(why, /\bps\b|time/i, `with the reason, got: ${why}`);
+  });
+
+  test('#498 a ps that never answers: nothing is typed, up ends in time, and Orca\'s runtime is not asked in its place', async (t) => {
+    const box = await createSandbox(t);
+    const bots = await fleet(box);
+    const app = await orcaApp(box);
+    await box.orca.set({ psDelayMs: 60000 });
+
+    const result = await reported(box, ['up', '--bots', 'bots', '--bot', 'coder', '--json']);
+    const ended = Date.now();
+
+    assert.equal(result.code, 1, `a tab that was not launched makes the run fail, got ${result.code}:\n${result.stderr}`);
+    const entry = entryOf(result, 'coder', 'review');
+    const why = await assertNotLaunched(box, entry);
+    await assertInBook(bots, entry);
+    const took = ended - await createdAt(box, entry);
+    assert.ok(took <= BOUND_MS, `up ended ${took} ms after the tab was opened; the wait is ${READY_WAIT_MS} ms`);
+    assert.match(why, COULD_NOT_TELL_AT_ALL, `the kit could not tell in time, got: ${why}`);
+    assert.match(why, /\bps\b|time/i, `with the reason, got: ${why}`);
+    const asked = (await app.calls()).filter((call) => call.method === 'terminal.inspectProcess' && call.params?.terminal === entry.terminal);
+    assert.deepEqual(asked, [], 'a ps that did not answer in time does not send the kit on to Orca\'s runtime for that tab');
+  });
 
   test('#498 an stty that is slow but answers well inside the wait: the line is typed, as ever', async (t) => {
     const box = await createSandbox(t);

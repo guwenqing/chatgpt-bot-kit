@@ -195,6 +195,18 @@ test('the fake lsof and stty answer as late as a test says, and answer as ever',
   assert.ok(lflagsOf(read).includes('-echo') && lnextOf(read) === '<undef>', 'and then answered a ready prompt');
 });
 
+test('the fake ps answers as late as a test says, and answers as ever', async (t) => {
+  const box = await createSandbox(t);
+  const { pid } = oneTab(box);
+  await box.orca.set({ psDelayMs: 1500 });
+
+  const from = Date.now();
+  const read = spawnSync(box.ps.cli, ['-o', 'pid=,ppid=,tpgid=,comm=', '-p', String(pid)], { env: box.env, encoding: 'utf8' });
+  assert.ok(Date.now() - from >= 1400, 'ps held its answer back');
+  assert.equal(read.status, 0, read.stderr);
+  assert.match(read.stdout, /\/usr\/bin\/login/);
+});
+
 test('the fake lsof and stty fail the ways a test names', async (t) => {
   const box = await createSandbox(t);
   const { pid } = oneTab(box);

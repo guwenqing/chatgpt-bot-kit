@@ -70,7 +70,9 @@ async function createdAt(box, entry) {
   return clock[at].at;
 }
 
-describe('#498 up and a new tab\'s shell', { concurrency: true }, () => {
+// Four at a time: each run starts dozens of Node fakes, and with many more at once
+// a loaded machine leaves the kit too little of its 15 s to read even a ready shell.
+describe('#498 up and a new tab\'s shell', { concurrency: 4 }, () => {
   test('#498 a ready prompt gets the launch line, and the kit read the tab\'s tty before it typed', async (t) => {
     const box = await createSandbox(t);
     await fleet(box);

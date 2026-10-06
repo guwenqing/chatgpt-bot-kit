@@ -113,6 +113,10 @@
 //                    gives for a process whose environment it may not read
 //       'ps-fails'   the read fails: stderr, exit 1
 //
+// And it can be slow (#498): `psDelayMs` in state.json holds every answer back
+// that long, after the call is written to ps.log. A delay longer than the test
+// is a `ps` that never answers.
+//
 // And one way it answers nothing at all (#298): `ps` in state.json set to
 // 'not-permitted' is a `ps` that does not start, as inside Codex's
 // `workspace-write` sandbox, where /bin/ps gave `Operation not permitted` and
@@ -383,6 +387,12 @@ export function runPs() {
   appendFileSync(path.join(dir, 'ps.log'), `${JSON.stringify({ args })}\n`);
 
   const state = JSON.parse(readFileSync(path.join(dir, 'state.json'), 'utf8'));
+  // A `ps` slow to answer, or one that never does (#498, the review of PR
+  // #499): `psDelayMs` holds every answer back that long, the call written
+  // down first.
+  if (Number.isFinite(state.psDelayMs) && state.psDelayMs > 0) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, state.psDelayMs);
+  }
   if (state.ps === 'not-permitted') {
     process.stderr.write(`${process.argv[1]}: Operation not permitted\n`);
     process.exit(126);

@@ -62,7 +62,9 @@ async function sessionsInBotYaml(bots, bot) {
   return (doc.sessions ?? []).map((one) => one?.name);
 }
 
-describe('#498 every command that launches a session holds the line back from a shell that asks', { concurrency: true }, () => {
+// Four at a time: each run starts dozens of Node fakes, and with many more at once
+// a loaded machine leaves the kit too little of its 15 s to read even a ready shell.
+describe('#498 every command that launches a session holds the line back from a shell that asks', { concurrency: 4 }, () => {
   test('#498 temp make: nothing is typed into the new tab, the JSON says it was not launched, and the session stays to be restarted or retired', async (t) => {
     const box = await createSandbox(t);
     const { bots, terminal } = await makerUp(box);
