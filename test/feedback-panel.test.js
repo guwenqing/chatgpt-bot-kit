@@ -140,6 +140,59 @@ const OTHER_BOX = CLAUDE_FEEDBACK_PANEL_GONE.flatMap((row, at) => (at === 0
 /** The panel above an input line that is the pointer alone, as the 2.1.289 capture CLAUDE_TEACH_LIST draws an empty one. */
 const PANEL_BARE_POINTER = CLAUDE_FEEDBACK_PANEL.map((row) => (row === '❯ ' ? '❯' : row));
 
+/** The question to turn the drafts off, on its one row, as CLAUDE_FEEDBACK_TURN_OFF draws it. */
+const TURN_OFF_ROW = '  Turn off Claude-drafted feedback? 0 to turn off · Esc to keep';
+
+/**
+ * The bottom of Claude Code's screen with its input line empty: the last four
+ * rows of the captured CLAUDE_ANSWERED.
+ */
+const INPUT_BOX = CLAUDE_ANSWERED.slice(-4);
+
+/**
+ * CLAUDE_FEEDBACK_TURN_OFF in a pane narrower than the question: its row
+ * wrapped onto `rows`, with the blank row Claude Code draws above it, right
+ * above the input box. Claude Code 2.1.291 draws the question as ordinary
+ * wrapping text with a margin of one row above it (the reviewer of #502). A
+ * reconstruction: no narrow pane was captured, and where the rows break is
+ * made up here.
+ */
+const turnOffWrapped = (rows) => CLAUDE_FEEDBACK_TURN_OFF.flatMap((row) => (row === TURN_OFF_ROW ? ['', ...rows] : [row]));
+
+/** The question wrapped onto two rows. A reconstruction. */
+const TURN_OFF_TWO_ROWS = turnOffWrapped(['  Turn off Claude-drafted feedback? 0 to turn off ·', '  Esc to keep']);
+
+/** The question wrapped onto three rows. A reconstruction. */
+const TURN_OFF_THREE_ROWS = turnOffWrapped(['  Turn off Claude-drafted', '  feedback? 0 to turn off ·', '  Esc to keep']);
+
+/**
+ * Not the panel: the question quoted in the history, wrapped onto two rows,
+ * another row of the answer after it in the same block, and the empty input
+ * box right below. A reconstruction on the captured input box.
+ */
+const TURN_OFF_WRAPPED_IN_HISTORY = [
+  '❯ What did Claude Code ask after the drafts were dismissed?',
+  '⏺ It asked, right above its input box:',
+  '  Turn off Claude-drafted feedback? 0 to turn off ·',
+  '  Esc to keep',
+  '  A typed line would answer it, so the kit typed nothing.',
+  ...INPUT_BOX,
+];
+
+/**
+ * Not the panel: the question quoted in the history, wrapped onto two rows
+ * that end the block right above the input box, the block starting with other
+ * rows, so "Turn off Claude-drafted feedback?" is not its first row. A
+ * reconstruction on the captured input box.
+ */
+const TURN_OFF_QUOTED_LAST = [
+  '❯ What does Claude Code ask after the drafts are dismissed?',
+  '⏺ It asks this, right above its input box, and a typed line answers it:',
+  '  Turn off Claude-drafted feedback? 0 to turn off ·',
+  '  Esc to keep',
+  ...INPUT_BOX,
+];
+
 // The premises of the reconstructions: each changed what it says, and only that.
 test('the panel screens here are the capture with one change each', () => {
   assert.ok(TITLE_ROW.startsWith('│ ✻ Bug report drafted: '), `the captured title row, got: ${TITLE_ROW}`);
@@ -157,6 +210,12 @@ test('the panel screens here are the capture with one change each', () => {
   assert.ok(CLAUDE_FEEDBACK_PANEL_GONE.every((row) => !/^[╭│╰]/.test(row)), 'the panel gone has no row of the box');
   assert.deepEqual(OTHER_BOX.filter((row) => !CLAUDE_FEEDBACK_PANEL_GONE.includes(row)).map((row) => row.length), [TITLE_ROW.length, TITLE_ROW.length, TITLE_ROW.length], 'the other box is three rows of the panel\'s width, added above the input box');
   assert.ok(!OTHER_BOX.some((row) => row.includes(' drafted: ')), 'and holds no draft\'s title');
+  for (const [label, screen, rows] of [['two rows', TURN_OFF_TWO_ROWS, 2], ['three rows', TURN_OFF_THREE_ROWS, 3]]) {
+    const at = screen.indexOf('');
+    assert.equal(screen.length, CLAUDE_FEEDBACK_TURN_OFF.length + rows, `${label}: the one row became a blank row and ${rows} rows`);
+    assert.equal(screen.slice(at + 1, at + 1 + rows).map((row) => row.trim()).join(' '), TURN_OFF_ROW.trim(), `${label}: the rows read the question, word for word`);
+    assert.ok(/^─/.test(screen[at + 1 + rows]), `${label}: right above the input box's top rule`);
+  }
 });
 
 // ------------------------------------------------------------- the gate itself
@@ -196,6 +255,35 @@ for (const [label, screen] of [
 test('feedbackPanelIn: "Turn off Claude-drafted feedback? 0 to turn off · Esc to keep" right above the input box is the panel', () => {
   assert.equal(feedbackPanelIn(CLAUDE_FEEDBACK_TURN_OFF), true);
 });
+
+// Covers requirement 1: the same question in a narrow pane, wrapped, with the
+// blank row Claude Code draws above it.
+for (const [label, screen] of [
+  ['two rows', TURN_OFF_TWO_ROWS],
+  ['three rows', TURN_OFF_THREE_ROWS],
+]) {
+  test(`feedbackPanelIn: the question to turn the drafts off, wrapped onto ${label} right above the input box, is the panel`, () => {
+    assert.equal(feedbackPanelIn(screen), true);
+  });
+  test(`questionIn: the question to turn the drafts off, wrapped onto ${label} right above the input box, is a question to the gate`, () => {
+    assert.equal(orca.questionIn(screen), true);
+  });
+}
+
+// Covers requirement 4 for the wrapped question: its rows in the history stay
+// no panel and no question, with a row after them in the same block, or with
+// other rows before them in the block right above the input box.
+for (const [label, screen] of [
+  ['the question quoted in the history, wrapped onto two rows, a row of the answer after it', TURN_OFF_WRAPPED_IN_HISTORY],
+  ['the question quoted in the history, wrapped onto two rows, ending a block that starts with other rows', TURN_OFF_QUOTED_LAST],
+]) {
+  test(`feedbackPanelIn: ${label}, is no panel`, () => {
+    assert.equal(feedbackPanelIn(screen), false);
+  });
+  test(`questionIn: ${label}, is no question`, () => {
+    assert.equal(orca.questionIn(screen), false);
+  });
+}
 
 // Covers requirement 4. The first row is the presence for every test above:
 // the same screen with the panel taken out is no panel, so a true above comes
@@ -303,6 +391,7 @@ for (const [label, screen] of [
   ['the panel above its empty input line', CLAUDE_FEEDBACK_PANEL],
   ['the panel asking to confirm a send', PANEL_CONFIRM_SEND],
   ['the question to turn the drafts off', CLAUDE_FEEDBACK_TURN_OFF],
+  ['the question to turn the drafts off, wrapped onto two rows', TURN_OFF_TWO_ROWS],
 ]) {
   test(`a Claude tab showing ${label}, Orca calling it idle, gets no nudge, and the answer says blocked: feedback-drafts-panel`, async (t) => {
     const box = await createSandbox(t);
