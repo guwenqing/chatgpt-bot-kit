@@ -462,8 +462,8 @@ export const FEEDBACK_PANEL = 'feedback-drafts-panel';
 /** The first row in the panel's box, as Claude Code 2.1.291 draws it: `✻ Bug report drafted: <title>`. */
 const PANEL_TITLE = /^ *│ +(?:\S+ +)?(?:Bug report|Product feedback|Feature request|Feedback) drafted: /;
 
-/** What Claude Code 2.1.291 asks in the panel's place after a `0`. */
-const PANEL_TURN_OFF = /^Turn off Claude-drafted feedback\?/;
+/** What Claude Code 2.1.291 asks in the panel's place after a `0`, its keys' foot last: `… 0 to turn off · Esc to keep`. */
+const PANEL_TURN_OFF = /^Turn off Claude-drafted feedback\? .*\bto keep$/i;
 
 /**
  * Whether the rows of a rendered screen show Claude Code's panel of feedback
@@ -481,7 +481,7 @@ export function feedbackPanelIn(rows) {
   const end = rows.slice(0, at - 1).findLastIndex((row) => row.trim() !== '');
   if (end < 0) return false;
   // The question is plain text, which a narrow pane wraps onto rows of its
-  // own, with a blank row above it: it starts the block that ends there.
+  // own, with a blank row above it: it is the whole block that ends there.
   const start = rows.slice(0, end).findLastIndex((row) => row.trim() === '') + 1;
   if (PANEL_TURN_OFF.test(rows.slice(start, end + 1).map((row) => row.trim()).join(' '))) return true;
   if (!/^ *╰─/.test(rows[end])) return false;
