@@ -1,7 +1,7 @@
 # ADR 0030: Native messaging Claude to Claude; the Orca mailbox for everything else
 
 Date: 2026-09-27.
-Status: accepted.
+Status: superseded by [ADR 0035](0035-messaging-transport.md).
 Decided by: the owner, in his design session of 2026-09-19 and on 2026-09-19 in #51; the coordinator, for the sentences marked as the coordinator's, where the owner was told and may overrule; the architect, for #394 and #402, for the sentences marked so, where the owner may overrule. Consulted: the slice 08 developer and reviewer, whose runs the Orca road rests on. A sentence marked (proposed) is not decided yet.
 Supersedes: [ADR 0018](0018-messaging-transport.md).
 

@@ -555,7 +555,7 @@ verdict: which of these matter, and in what order, is for you or for Bot Father.
 ## Sessions and bots that talk
 
 Ask the kit how to reach a session, and it answers with the road and the
-address ([ADR 0030](docs/adr/0030-messaging-transport.md)):
+address ([ADR 0035](docs/adr/0035-messaging-transport.md)):
 
 ```sh
 obk message to    --bots /path/to/my-bots --to api-bot/daily
