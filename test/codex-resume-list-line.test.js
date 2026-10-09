@@ -65,7 +65,7 @@ import {
   tabsOfBot,
   typedInto,
 } from './helpers/cli.js';
-import { CLAUDE_TEACH_LIST, CLAUDE_TEACH_LIST_GONE, CODEX_UPDATE_OFFER } from './helpers/screens.js';
+import { CLAUDE_FEEDBACK_PANEL, CLAUDE_FEEDBACK_PANEL_GONE, CLAUDE_TEACH_LIST, CLAUDE_TEACH_LIST_GONE, CODEX_UPDATE_OFFER } from './helpers/screens.js';
 
 /** The line the kit types, word for word, as the architect ruled it on #226. */
 const LIST_LINE = 'obk: this session was resumed in a new tab, and this line is only so Orca lists it. Reply "ok"; nothing else is asked.';
@@ -287,6 +287,37 @@ test('#491: a resumed Codex tab showing the same capture with the list taken out
   const entry = entryOf(await run(box, 'up'));
 
   await assertListLineTyped(box, bots, entry, 'the capture with the list taken out');
+});
+
+// #502: Claude Code's panel of feedback drafts above the input box
+// (helpers/screens.js CLAUDE_FEEDBACK_PANEL, built on a capture) takes single
+// keys from the input line, and one of them sends a draft to Anthropic. The
+// list line goes only into Codex, and Codex draws no such panel; the gate
+// reads the rows and not the harness, as the #491 test above says. The kit's
+// word for the panel is `feedback-drafts-panel` on a Claude Code tab; on this
+// Codex tab the answer may name the panel or a question.
+test('#502: a resumed Codex tab showing the panel of feedback drafts above the input box gets nothing typed, and the answer says what is waiting', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await closedWithConversation(box);
+  await box.orca.set({ screen: CLAUDE_FEEDBACK_PANEL });
+
+  const entry = entryOf(await run(box, 'up'));
+
+  assert.equal(entry.harnessStarted, true, `the premise: the harness came up, got: ${JSON.stringify(entry)}`);
+  await assertListLineNotTyped(box, bots, entry, 'the panel above the input box');
+  assert.match(entry.listLineTrouble, /feedback.drafts|question/i, `it says the panel or a question is waiting, got: ${entry.listLineTrouble}`);
+});
+
+// #502, the presence beside it: the same screen with the panel taken out is
+// no panel, and the line is typed. Passes before the change.
+test('#502: a resumed Codex tab showing the same screen with the panel taken out gets the list line', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await closedWithConversation(box);
+  await box.orca.set({ screen: CLAUDE_FEEDBACK_PANEL_GONE });
+
+  const entry = entryOf(await run(box, 'up'));
+
+  await assertListLineTyped(box, bots, entry, 'the panel screen with the panel taken out');
 });
 
 test('a gate that lets the line through only after the 20 s are up is too late: nothing is typed, and the answer says the wait ran out', async (t) => {

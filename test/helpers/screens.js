@@ -41,6 +41,12 @@
 // own `❯` stays the lowest pointer row (#491). So a numbered choice list with
 // the pointer on one, or a foot row, counts too when it is the last thing
 // drawn right above the box's top rule. With anything after it, it is history.
+//
+// Claude Code's panel of feedback drafts is no list and has no pointer, but it
+// takes single keys from the input line, and one of them sends a draft to
+// Anthropic (#502). So for the kit it counts as well, when it is the last thing
+// drawn right above the input box's top rule; its words higher up, with
+// anything after them, are history. The look below does not see it.
 
 /**
  * Claude Code 2.1.283 at its idle input line, showing its placeholder: a
@@ -523,6 +529,108 @@ export const NUMBERED_TURN_ECHOED = [
   '  2. Run them and read the failures',
   '⏺ Both are done: the tests are in test/fake.test.js, and they fail as expected.',
   '✻ Cooked for 1s · done 4:14 AM',
+  ...CLAUDE_INPUT_LINE,
+];
+
+// Claude Code's panel of feedback drafts (#502). Claude Code can draft feedback
+// about itself and show the drafts in a rounded box (╭ ╮ │ ╰ ╯), drawn as the
+// last thing right above its input box's top rule. Inside, the first row is
+// `✻ <Label> drafted: <title>`, the label one of "Bug report", "Product
+// feedback", "Feature request", or "Feedback"; then a few dimmed preview
+// rows; then a foot. While the panel is open the slash menu does not come up,
+// and the panel takes single keys from the input line: `1` opens review, `2`
+// and `2` again sends a draft to Anthropic, `0` dismisses. After a `0` Claude
+// Code may ask instead, with no box and no title row, "Turn off Claude-drafted
+// feedback? 0 to turn off · Esc to keep", and a typed line answers that too.
+// It draws nothing of the panel while a turn is running. The words are Claude
+// Code 2.1.291's own, as the arch-panel architect read them for #502; only the
+// first screen below is a capture.
+
+/**
+ * The panel open above Claude Code's input box, `/compact` typed into the
+ * input line and not entered, and the rows of the slash menu above the panel:
+ * a capture. It is the end of the screen as the kit's refusal of a compact
+ * quoted it, in arch-panel's architect session on 2026-10-07, passed on by
+ * Bot Father (#502): the last twelve rows that were not blank, each with its
+ * trailing spaces cut off, split where the refusal joined them with " ⏎ ".
+ * The rows above them were not quoted. Its foot is the panel's at rest, with
+ * three more drafts queued.
+ */
+export const CLAUDE_FEEDBACK_PANEL_TYPED = [
+  '  /autocompact                                             Set how full the context gets before auto-summarizing',
+  '  /computer-use                                            Read this skill before the first step of any request to do something in an app on the person\'s own computer (Notes,',
+  '                                                           Finder, System Settings, any desktop app), to look at their screen, or for "computer use". Computer use (desktop con…',
+  `╭${'─'.repeat(161)}╮`,
+  '│ ✻ Bug report drafted: Auto-mode classifier refused owner-approved routine steps (self-merge follow-up, recording owner\'s words)                                 │',
+  '│ │ - What happened: In auto mode, two routine steps were refused. (1) "[Self-Approval]": after the session merged its own spec PR (owner had chosen the exact n… │',
+  '│ 1 to review · 2 to send · 0 to dismiss · +3 more queued                                                                                                         │',
+  `╰${'─'.repeat(161)}╯`,
+  `${'─'.repeat(146)} arch-panel.architect.htm4ra2v ─`,
+  '❯\u00a0/compact',
+  '─'.repeat(178),
+  '  ⏵⏵ auto mode on (shift+tab to cycle) · 4 feedback drafts',
+];
+
+/** CLAUDE_FEEDBACK_PANEL_TYPED from the top of the panel's box down: the slash menu's rows above it taken out. */
+const FEEDBACK_PANEL_DOWN = CLAUDE_FEEDBACK_PANEL_TYPED.slice(CLAUDE_FEEDBACK_PANEL_TYPED.findIndex((row) => row.startsWith('╭')));
+
+/**
+ * The panel open above Claude Code's empty input line, as the kit finds it
+ * before it types: the capture with the slash menu's rows above the panel
+ * taken out and `/compact` taken out of the input line, which keeps its
+ * pointer and the non-breaking space after it. A reconstruction: the screen
+ * with the input line empty was not captured.
+ */
+export const CLAUDE_FEEDBACK_PANEL = FEEDBACK_PANEL_DOWN.map((row) => (row === '❯ /compact' ? '❯ ' : row));
+
+/**
+ * CLAUDE_FEEDBACK_PANEL once the drafts are dealt with: the panel's box taken
+ * out, and " · 4 feedback drafts" taken out of the status row, every other
+ * row as it was. No panel. A reconstruction: what Claude Code draws once the
+ * drafts are gone was not captured.
+ */
+export const CLAUDE_FEEDBACK_PANEL_GONE = CLAUDE_FEEDBACK_PANEL
+  .filter((row) => !/^[╭│╰]/.test(row))
+  .map((row) => row.replace(' · 4 feedback drafts', ''));
+
+/**
+ * After a `0`: Claude Code's question whether to turn its drafts off, on one
+ * row in the place of the box, right above the input box's top rule, every
+ * other row as in CLAUDE_FEEDBACK_PANEL. A typed line answers it, so it counts
+ * as the panel. A reconstruction: the words are Claude Code 2.1.291's, the
+ * layout (one row, two spaces in) is made up.
+ */
+export const CLAUDE_FEEDBACK_TURN_OFF = CLAUDE_FEEDBACK_PANEL.flatMap((row) => {
+  if (row.startsWith('╭')) return ['  Turn off Claude-drafted feedback? 0 to turn off · Esc to keep'];
+  return /^[│╰]/.test(row) ? [] : [row];
+});
+
+/**
+ * Not the panel: the captured panel's box, row for row, in the history, the
+ * way a bot working on issue #502 has it on its screen, with a turn after it
+ * (the user's next line and the model's answer) and the empty input box back
+ * below. A reconstruction on the captured input line.
+ */
+export const FEEDBACK_PANEL_IN_HISTORY = [
+  '❯ What did Claude Code draw above its input box?',
+  '⏺ Its panel of feedback drafts, as issue #502 quotes it:',
+  ...FEEDBACK_PANEL_DOWN.filter((row) => /^[╭│╰]/.test(row)),
+  '❯ Leave the drafts to the owner and go on with the issue.',
+  '⏺ I will leave them alone.',
+  '✻ Cooked for 1s · done 4:14 AM',
+  ...CLAUDE_INPUT_LINE,
+];
+
+/**
+ * Not the panel: the question to turn the drafts off, quoted in the history,
+ * a row of the model's answer after it and the empty input box back below. A
+ * reconstruction on the captured input line.
+ */
+export const FEEDBACK_TURN_OFF_IN_HISTORY = [
+  '❯ What did Claude Code ask after the drafts were dismissed?',
+  '⏺ It asked, right above its input box:',
+  '  Turn off Claude-drafted feedback? 0 to turn off · Esc to keep',
+  '  A typed line would answer it, so the kit typed nothing.',
   ...CLAUDE_INPUT_LINE,
 ];
 

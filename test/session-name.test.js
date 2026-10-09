@@ -101,6 +101,7 @@ import {
   throughAHarness,
 } from './helpers/cli.js';
 import {
+  CLAUDE_FEEDBACK_PANEL,
   CLAUDE_TEACH_LIST,
   CODEX_ANSWERED,
   CODEX_DRAFT,
@@ -616,6 +617,28 @@ test('#491: the Teach list drawn above the input box comes up after two characte
   await changeTab(box, tab.tabId, { nextScreens: [CODEX_SLASH_TYPED, CLAUDE_TEACH_LIST] });
 
   assertQuiet(await nameHook(box, bots, tab), 'the Teach list partway');
+
+  assert.deepEqual(
+    await sendsInto(box, tab.tabId),
+    [...typed('/r'), { text: backspaces('/r'), enter: false }],
+    'the two characters typed, then exactly those two taken back, and nothing more',
+  );
+});
+
+// #502: Claude Code's panel of feedback drafts above the input box
+// (helpers/screens.js CLAUDE_FEEDBACK_PANEL, built on a capture) takes single
+// keys from the input line, and one of them sends a draft to Anthropic. It
+// stops the typing as a question does. The naming types only into Codex, and
+// Codex draws no such panel; the gate reads the rows and not the harness, as
+// the #491 test above says. The two characters typed before it came are the
+// presence: the path was typing.
+test('#502: the panel of feedback drafts comes up after two characters: the typing stops, the two are taken back in one send, and nothing is entered', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await running(box);
+  const tab = await liveTab(box, bots);
+  await changeTab(box, tab.tabId, { nextScreens: [CODEX_SLASH_TYPED, CLAUDE_FEEDBACK_PANEL] });
+
+  assertQuiet(await nameHook(box, bots, tab), 'the panel partway');
 
   assert.deepEqual(
     await sendsInto(box, tab.tabId),
