@@ -201,6 +201,16 @@ const TURN_OFF_QUOTED_LAST = [
  */
 const TURN_OFF_PARAGRAPH_IN_HISTORY = FEEDBACK_TURN_OFF_IN_HISTORY.flatMap((row) => (row === TURN_OFF_ROW ? ['', row] : [row]));
 
+/**
+ * Not the panel: TURN_OFF_PARAGRAPH_IN_HISTORY with its answer's row after the
+ * question reading "  Press Esc to keep", with no full stop, so the block
+ * right above the input box starts with the question and ends with "to keep"
+ * but holds more than the question. A reconstruction.
+ */
+const TURN_OFF_PRESS_ESC_IN_HISTORY = TURN_OFF_PARAGRAPH_IN_HISTORY.map((row) => (
+  row === '  A typed line would answer it, so the kit typed nothing.' ? '  Press Esc to keep' : row
+));
+
 /** The same, with the quoted question wrapped onto two rows, the answer's row still after it. A reconstruction. */
 const TURN_OFF_PARAGRAPH_WRAPPED_IN_HISTORY = TURN_OFF_PARAGRAPH_IN_HISTORY.flatMap((row) => (
   row === TURN_OFF_ROW ? ['  Turn off Claude-drafted feedback? 0 to turn off ·', '  Esc to keep'] : [row]
@@ -233,6 +243,8 @@ test('the panel screens here are the capture with one change each', () => {
   assert.deepEqual(TURN_OFF_PARAGRAPH_IN_HISTORY.filter((row) => row !== ''), FEEDBACK_TURN_OFF_IN_HISTORY.filter((row) => row !== ''), 'and that row is blank');
   assert.equal(TURN_OFF_PARAGRAPH_IN_HISTORY[TURN_OFF_PARAGRAPH_IN_HISTORY.indexOf(TURN_OFF_ROW) - 1], '', 'right before the quoted question');
   assert.equal(TURN_OFF_PARAGRAPH_IN_HISTORY[TURN_OFF_PARAGRAPH_IN_HISTORY.indexOf(TURN_OFF_ROW) + 1], '  A typed line would answer it, so the kit typed nothing.', 'with the answer\'s row right after it');
+  assert.deepEqual(TURN_OFF_PRESS_ESC_IN_HISTORY.filter((row, at) => row !== TURN_OFF_PARAGRAPH_IN_HISTORY[at]), ['  Press Esc to keep'], 'press Esc: only the answer\'s row changed');
+  assert.equal(TURN_OFF_PRESS_ESC_IN_HISTORY[TURN_OFF_PRESS_ESC_IN_HISTORY.indexOf(TURN_OFF_ROW) + 1], '  Press Esc to keep', 'and it is right after the question');
   assert.deepEqual(TURN_OFF_PARAGRAPH_WRAPPED_IN_HISTORY.slice(3, 6).map((row) => row.trim()), ['Turn off Claude-drafted feedback? 0 to turn off ·', 'Esc to keep', 'A typed line would answer it, so the kit typed nothing.'], 'wrapped: the two rows, then the answer\'s row');
 });
 
@@ -296,6 +308,7 @@ for (const [label, screen] of [
   ['the question quoted in the history, wrapped onto two rows, ending a block that starts with other rows', TURN_OFF_QUOTED_LAST],
   ['the question quoted in the history as a paragraph of its own, a blank row before it and a row of the answer after it', TURN_OFF_PARAGRAPH_IN_HISTORY],
   ['the question quoted in the history as a paragraph of its own, wrapped onto two rows, a row of the answer after it', TURN_OFF_PARAGRAPH_WRAPPED_IN_HISTORY],
+  ['the question quoted in the history as a paragraph of its own, then a row of the answer, "Press Esc to keep"', TURN_OFF_PRESS_ESC_IN_HISTORY],
 ]) {
   test(`feedbackPanelIn: ${label}, is no panel`, () => {
     assert.equal(feedbackPanelIn(screen), false);
@@ -449,6 +462,7 @@ for (const [label, screen] of [
   ['the captured panel\'s box in the history, a turn after it', FEEDBACK_PANEL_IN_HISTORY],
   ['a box right above the input box whose row is no draft\'s title', OTHER_BOX],
   ['the question to turn the drafts off quoted in the history as a paragraph of its own, a row of the answer after it', TURN_OFF_PARAGRAPH_IN_HISTORY],
+  ['the question to turn the drafts off quoted in the history as a paragraph of its own, then "Press Esc to keep"', TURN_OFF_PRESS_ESC_IN_HISTORY],
 ]) {
   test(`a Claude tab showing ${label}: no panel, and it is nudged as ever`, async (t) => {
     const box = await createSandbox(t);
