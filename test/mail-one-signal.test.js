@@ -12,6 +12,9 @@
 //       its own hook tells it when its turn ends (`signal: "hook"`, `because:
 //       "busy"`); a Codex receiver gets the line (`signal: "line"`, `because:
 //       "busy"`), since Codex takes a line typed during a turn into that turn.
+//       But where the record shows Orca's notice for its mailbox, written
+//       after the send, the tab is busy with that notice's turn: nothing is
+//       typed on either harness (`signal: "orca"`), as R1 says (seen live).
 //   S2  Idle: the send watches the tab for up to 8 s.
 //         - Orca's notice for the receiver's mailbox shows up in the receiver's
 //           own record of its turns (a user turn, written after the send,
@@ -46,7 +49,8 @@
 // fake Orca. Nothing here reaches the real Orca or a real harness.
 
 import assert from 'node:assert/strict';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, rm, writeFile } from 'node:fs/promises';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, test } from 'node:test';
 
 import {
@@ -224,6 +228,100 @@ test('S1 S5 the plain answer for a busy Claude Code receiver says nothing was ty
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /nothing was typed|no line was typed/i, `it says nothing was typed, got:\n${result.stdout}`);
   assert.match(result.stdout, /hook/i, `and that its hook tells it, got:\n${result.stdout}`);
+  await assertNothingTyped(box);
+});
+
+// ------------------- S1: busy at the first look because Orca's notice started a turn
+//
+// Seen live (Orca 1.4.223, Codex 0.162.0, the #509 live run): Orca typed its
+// notice into an idle tab at once after the post, the harness started a turn
+// on it, and the send's first look already found the tab busy; the kit then
+// typed its line as for a busy Codex, and the receiver had two signals. R1
+// holds whatever the first look finds: the kit types nothing when the record
+// shows Orca's notice for the mailbox, written after the send.
+
+/**
+ * The receiver, played by the test while the send runs: once the mail is in
+ * Orca's world, `afterMs` later, Orca's notice for its mailbox goes into its
+ * record as a user turn, in its harness's shape. Answers a promise that is
+ * done when it has written, or when `stop()` was called first.
+ */
+function noticeLater(box, fleet, receiver, afterMs) {
+  let stopped = false;
+  const done = (async () => {
+    while (!stopped && (await box.orca.messages()).length === 0) await sleep(50);
+    if (stopped) return;
+    await sleep(afterMs);
+    const text = `You have 1 orchestration message. Run \`orca orchestration check --run ${fleet.mailboxes[receiver.bot]}\``;
+    const at = new Date().toISOString();
+    const line = receiver.harness === 'codex'
+      ? { timestamp: at, type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } }
+      : { type: 'user', message: { role: 'user', content: text }, timestamp: at };
+    await appendFile(fleet.records[receiver.bot], `${JSON.stringify(line)}\n`);
+  })();
+  return { done, stop: () => { stopped = true; } };
+}
+
+for (const receiver of Object.values(RECEIVERS)) {
+  test(`S1 a ${receiver.harness} receiver found busy at the first look because Orca's notice started its turn gets nothing typed: signal orca`, async (t) => {
+    // The notice and the turn it starts are there from the first look on.
+    const box = await createSandbox(t);
+    const fleet = await fleetIn(box);
+    await reacts(box, fleet, receiver, { waits: 1 });
+
+    const answer = answerOf(await send(box, receiver));
+
+    const fired = (await box.orca.terminals()).find((one) => one.tabId === fleet.tabs[receiver.bot]).afterMail?.fired;
+    assert.equal(fired, true, `the premise: the first look found the turn Orca's notice started: ${JSON.stringify(answer)}`);
+    assertSignal(answer, 'orca');
+    await assertNothingTyped(box);
+  });
+
+  test(`S1 a ${receiver.harness} receiver busy at the first look whose record shows Orca's notice a moment later gets nothing typed: signal orca, well inside 8 s`, async (t) => {
+    // The tab is busy at the first look, and the notice is in the record
+    // 700 ms after the post: the send reads the record a short while before
+    // it decides.
+    const box = await createSandbox(t);
+    const fleet = await fleetIn(box);
+    await busy(box, fleet, receiver);
+    const notice = noticeLater(box, fleet, receiver, 700);
+
+    let result;
+    try {
+      result = await send(box, receiver);
+    } finally {
+      notice.stop();
+      await notice.done;
+    }
+
+    const answer = answerOf(result);
+    assertSignal(answer, 'orca');
+    assert.ok(result.tookMs < WATCH_MS, `it did not wait out the 8 s watch, took ${result.tookMs} ms`);
+    await assertNothingTyped(box);
+  });
+}
+
+test('S1 a Codex receiver busy at the first look whose record shows Orca\'s notice for another mailbox still gets the line: signal line, because busy', async (t) => {
+  // The contrast: a notice that is not for this mailbox is no signal for this mail.
+  const box = await createSandbox(t);
+  const fleet = await fleetIn(box);
+  await reacts(box, fleet, RECEIVERS.codex, { waits: 1, text: 'You have 1 orchestration message. Run `orca orchestration check --run run_elsewhere`' });
+
+  const answer = answerOf(await send(box, RECEIVERS.codex));
+
+  assertSignal(answer, 'line', 'busy');
+  await assertOneLine(box, fleet, RECEIVERS.codex);
+});
+
+test('S1 a Claude Code receiver busy at the first look with a turn that wrote nothing to the record: signal hook, because busy', async (t) => {
+  // The contrast on Claude: busy, and no notice in the record, is the hook.
+  const box = await createSandbox(t);
+  const fleet = await fleetIn(box);
+  await reacts(box, fleet, RECEIVERS.claude, { waits: 1, text: null });
+
+  const answer = answerOf(await send(box, RECEIVERS.claude));
+
+  assertSignal(answer, 'hook', 'busy');
   await assertNothingTyped(box);
 });
 
