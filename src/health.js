@@ -96,7 +96,7 @@ export function orcaSettingFindings() {
 const unreadableSettings = (where) => finding(
   'orca',
   where,
-  `The kit could not read Orca's own settings at ${where}, so it cannot say whether Orca adds default launch arguments of its own. When those carry a permission bypass, every session Orca launches, relaunches or resumes runs in that mode whatever approval level the kit asked for.`,
+  `The kit could not read Orca's own settings at ${where}, so it cannot say whether Orca adds default launch arguments of its own. It looks for them in profile-state.db in each Orca profile, or in orca-data.json for an older Orca. When those carry a permission bypass, every session Orca launches, relaunches or resumes runs in that mode whatever approval level the kit asked for.`,
 );
 
 /** Whether a line of arguments carries `flag` as a word of its own. */
