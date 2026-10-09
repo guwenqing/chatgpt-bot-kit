@@ -95,7 +95,10 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
   A SQLite open of the live db, read-only included, writes reader marks into Orca's `-shm`, and is refused
   while a writer holds the db in exclusive locking mode. **verified** on a test db, not on Orca's own. So
   `obk health` reads a copy of the `-wal` and the db in a private temporary folder, and removes it at once
-  (#507).
+  (#507). A copy that Orca changed during the copy is thrown away: a part of the `-wal` over a db that was
+  just checkpointed reads as older settings. On macOS `copyFileSync` does not return when its source is
+  truncated during the copy, as a checkpoint truncates the `-wal`; `readFileSync` does return.
+  **verified** (a 600 MB file truncated during each copy, and a test db checkpointed during the kit's copy)
 
 ### Terminal commands (verified from help)
 

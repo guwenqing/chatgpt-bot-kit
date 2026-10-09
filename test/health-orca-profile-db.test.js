@@ -25,6 +25,9 @@
 //   4. A copy of the db, if the kit makes one, is made in a folder of its own
 //      under TMPDIR and removed right after the read, on every path.     P10
 //   5. `obk init` reports the same finding.                               P11
+//   6. Orca checkpoints while the kit copies: health still ends in bounded
+//      time, and never reports settings older than the ones committed before
+//      it started; it reports the current ones or says it could not read.  P12
 //
 // Out of scope, and so not pinned: how the db is read, the wording, and what
 // health does with the answer (an empty string is no arguments; a harness with
@@ -35,8 +38,12 @@
 
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { readdirSync, statSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
+import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import { createSandbox, snapshot } from './helpers/cli.js';
 import {
@@ -434,4 +441,112 @@ test('P11 init says nothing about Orca\'s setting when profile-state.db carries 
     'Orca\'s settings in the db carry no bypass, and they were read',
   );
   assert.ok(Array.isArray(answer.tabs) && answer.tabs.length > 0, `init still answers about its tabs, got: ${result.stdout}`);
+});
+
+// ---------------------------------------------------------------------------
+// P12 — Orca checkpoints the db while the kit is copying it.
+// ---------------------------------------------------------------------------
+
+/** Harmless changes written to the -wal before the bypass: some 160 MB of -wal, so a copy takes a while. */
+const CHURN = 40000;
+
+/** How many fresh fixtures to try before the test says the race never landed. */
+const ATTEMPTS = 5;
+
+/** The size of a file now, or undefined when it is gone. */
+function sizeOf(file) {
+  try {
+    return statSync(file).size;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Start `obk health --json` on a profile whose -wal is big, and checkpoint
+ * (TRUNCATE) Orca's db while the kit is partway through copying the -wal.
+ *
+ * The test watches TMPDIR, every millisecond, for an entry that was not there
+ * before the run: the kit's own temp folder, made for its copy. The checkpoint
+ * runs as soon as it appears. The race has landed when the checkpoint ran
+ * while the run was still going. A fixture where the kit finished first is
+ * rebuilt and tried again. How far the copy had got is only reported, since
+ * how the kit copies is its own.
+ */
+async function checkpointDuringTheCopy(t, box) {
+  const dir = profileOf(box);
+  const file = path.join(dir, 'profile-state.db');
+  for (let attempt = 1; attempt <= ATTEMPTS; attempt += 1) {
+    const { db } = await orcaProfileDb(t, dir, {
+      settledSettings: HARMLESS,
+      walChurn: CHURN,
+      walSettings: { claude: BYPASS.claude, codex: '' },
+    });
+    const walSize = sizeOf(`${file}-wal`);
+    const tmpBefore = await snapshot(box.tmp);
+    const namesBefore = new Set(readdirSync(box.tmp));
+
+    let done = false;
+    const run = bounded(box, ['health', '--bots', 'bots', '--json']).then((result) => { done = true; return result; });
+    let checkpoint;
+    while (!done && checkpoint === undefined) {
+      const fresh = readdirSync(box.tmp).filter((one) => !namesBefore.has(one));
+      if (fresh.length > 0) {
+        const [result] = db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').all();
+        let copied = [];
+        try {
+          copied = readdirSync(path.join(box.tmp, fresh[0])).map((one) => `${one} ${sizeOf(path.join(box.tmp, fresh[0], one))}`);
+        } catch {
+          // Not a folder, or gone already: nothing to say about how far it got.
+        }
+        checkpoint = { folder: fresh[0], copied, busy: result.busy, walAfter: sizeOf(`${file}-wal`), runStillGoing: !done };
+      }
+      if (checkpoint === undefined) await sleep(1);
+    }
+    const filesAfterCheckpoint = checkpoint === undefined ? undefined : await filesIn(dir);
+    const result = await run;
+
+    if (checkpoint !== undefined && checkpoint.runStillGoing) {
+      t.diagnostic(`the race landed on attempt ${attempt} of ${ATTEMPTS}: checkpoint once ${checkpoint.folder} appeared, holding [${checkpoint.copied.join(', ')}], with a -wal of ${walSize} bytes`);
+      return { result, checkpoint, filesAfterCheckpoint, tmpBefore, dir };
+    }
+    // A run that was killed is a finding, whether or not the race landed.
+    if (result.signal !== null) return { result, checkpoint, filesAfterCheckpoint, tmpBefore, dir };
+    t.diagnostic(`the race did not land on attempt ${attempt}; the kit finished first`);
+    db.close();
+    for (const one of ['', '-wal', '-shm']) await rm(`${file}${one}`, { force: true });
+  }
+  return assert.fail(`the checkpoint never landed during the kit's copy in ${ATTEMPTS} attempts, so this test cannot say anything`);
+}
+
+test('P12 Orca checkpoints during the copy: health ends in bounded time and never reports the older settings', async (t) => {
+  const box = await createSandbox(t);
+  await seeded(box);
+  await onlyTheDb(box);
+
+  const { result, checkpoint, filesAfterCheckpoint, tmpBefore, dir } = await checkpointDuringTheCopy(t, box);
+
+  // 1. Bounded time.
+  assert.equal(result.signal, null, `health did not end within ${RUN_BOUND_MS} ms after Orca checkpointed during its copy; it was killed`);
+  assert.equal(checkpoint.busy, 0, 'the fixture: the checkpoint ran to the end');
+  assert.equal(checkpoint.walAfter, 0, 'the fixture: the checkpoint emptied the -wal');
+
+  // 2. The current settings carry a claude bypass. Health says so, or says it
+  //    could not read; it never says there is nothing to report.
+  assert.equal(result.stderr, '', `a health run reports on stdout, and put this on stderr: ${result.stderr}`);
+  const answer = JSON.parse(result.stdout);
+  const orca = answer.found.filter((one) => one.kind === 'orca');
+  assert.ok(orca.length > 0, 'the committed settings carry a bypass, so "nothing to report" is the older settings');
+  const saysTheBypass = orca.some((one) => wordsOf(one).includes(BYPASS.claude));
+  if (!saysTheBypass) {
+    assert.equal(orca.length, 1, `no bypass reported, so this is the one "could not read" finding, got: ${show(orca)}`);
+    assert.ok(/Application Support\/orca/.test(wordsOf(orca[0])), `it says where it looked, got: ${show(orca[0])}`);
+    for (const bypass of Object.values(BYPASS)) {
+      assert.ok(!wordsOf(orca[0]).includes(bypass), `and it does not read as a bypass it found, got: ${show(orca[0])}`);
+    }
+  }
+
+  // 3. Orca's files as the checkpoint left them, and nothing left in TMPDIR.
+  assert.deepEqual(await filesIn(dir), filesAfterCheckpoint, 'Orca\'s profile folder is Orca\'s: the kit writes nothing there');
+  assert.deepEqual(await snapshot(box.tmp), tmpBefore, 'the kit\'s copy is removed after the read, whatever happened during it');
 });

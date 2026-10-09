@@ -8,7 +8,7 @@
 // handed to Orca on the command line.
 
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -194,26 +194,58 @@ function argsOfProfile(profile) {
  * reader marks into its `-shm` and is refused while Orca holds the db in
  * exclusive mode. So the kit reads a copy: the `-wal` and then the db, into a
  * private folder of its own (0700, as mkdtemp makes it), removed straight after
- * on every path. The `-wal` goes first so that a checkpoint Orca runs between
- * the two copies leaves the db copy holding what the `-wal` copy holds, not
- * missing it.
+ * on every path.
+ *
+ * A copy Orca changed under it is thrown away: a part of the `-wal` laid over a
+ * db Orca has just checkpointed reads as older settings than Orca's own. So the
+ * two files are noted before and after, and a copy is read only when neither
+ * moved; after COPY_TRIES copies that all moved, the db counts as unreadable.
+ * The bytes are read whole and written out rather than copied with
+ * `copyFileSync`, which on macOS never returns when its source is truncated
+ * under it, as a checkpoint truncates the `-wal` (#507).
  */
 function settingsPayloadIn(db) {
   const copyDir = mkdtempSync(path.join(tmpdir(), 'obk-orca-'));
   try {
     const copy = path.join(copyDir, path.basename(db));
-    if (existsSync(`${db}-wal`)) copyFileSync(`${db}-wal`, `${copy}-wal`);
-    copyFileSync(db, copy);
+    for (let tries = 0; tries < COPY_TRIES; tries += 1) {
+      const before = stateOf(db);
+      const wal = bytesIfThere(`${db}-wal`);
+      rmSync(`${copy}-wal`, { force: true });
+      if (wal !== undefined) writeFileSync(`${copy}-wal`, wal);
+      writeFileSync(copy, readFileSync(db));
+      if (stateOf(db) !== before) continue;
 
-    const store = new DatabaseSync(copy);
-    try {
-      const row = store.prepare("SELECT payload FROM profile_state_documents WHERE domain = 'settings'").get();
-      return row === undefined ? null : row.payload;
-    } finally {
-      store.close();
+      const store = new DatabaseSync(copy);
+      try {
+        const row = store.prepare("SELECT payload FROM profile_state_documents WHERE domain = 'settings'").get();
+        return row === undefined ? null : row.payload;
+      } finally {
+        store.close();
+      }
     }
+    throw new Error(`${db} changed during each of ${COPY_TRIES} copies`);
   } finally {
     rmSync(copyDir, { recursive: true, force: true });
+  }
+}
+
+/** How many copies of Orca's db the kit makes before it gives up on one that keeps changing. */
+const COPY_TRIES = 3;
+
+/** Where Orca's db and its `-wal` stand: one string that changes whenever either file does. */
+const stateOf = (db) => [db, `${db}-wal`].map((file) => {
+  const stat = statSync(file, { bigint: true, throwIfNoEntry: false });
+  return stat === undefined ? 'none' : `${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+}).join('|');
+
+/** The bytes of `file`, or undefined when there is no such file. */
+function bytesIfThere(file) {
+  try {
+    return readFileSync(file);
+  } catch (error) {
+    if (error.code === 'ENOENT') return undefined;
+    throw error;
   }
 }
 

@@ -58,10 +58,15 @@ const hashOf = (text) => createHash('sha256').update(text).digest('hex');
  * - `exclusive`: the writer holds the db in `locking_mode = EXCLUSIVE`, so any
  *   other SQLite open of this file is refused, and no `-shm` is made.
  *
+ * - `walChurn`: that many more changes to the settings document, each one
+ *   harmless and committed on its own, written to the `-wal` before
+ *   `walSettings`. About 4 KB of `-wal` each, so 40000 make a `-wal` of some
+ *   160 MB, which takes the kit a while to copy.
+ *
  * Pass `{ absent: true }` as either settings argument for a settings document
  * that has no `agentDefaultArgs` in it at all.
  */
-export async function orcaProfileDb(t, dir, { settledSettings = null, walSettings, exclusive = false } = {}) {
+export async function orcaProfileDb(t, dir, { settledSettings = null, walSettings, exclusive = false, walChurn = 0 } = {}) {
   await mkdir(dir, { recursive: true });
   const file = path.join(dir, DB_NAME);
   const db = new DatabaseSync(file);
@@ -70,6 +75,8 @@ export async function orcaProfileDb(t, dir, { settledSettings = null, walSetting
   db.exec('PRAGMA journal_mode = WAL');
   if (exclusive) db.exec('PRAGMA locking_mode = EXCLUSIVE');
   db.exec('PRAGMA wal_autocheckpoint = 0');
+  // Only the fixture's own speed: nothing here survives a crash anyway.
+  if (walChurn > 0) db.exec('PRAGMA synchronous = OFF');
   db.exec(TABLE);
   // Another domain beside the settings, as a real store has.
   db.prepare('INSERT INTO profile_state_documents VALUES (?, ?, 1, 1, ?, ?)')
@@ -80,6 +87,14 @@ export async function orcaProfileDb(t, dir, { settledSettings = null, walSetting
       .run('settings', payload, Date.now(), hashOf(payload));
   }
   db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').all();
+
+  if (walChurn > 0) {
+    assert.ok(settledSettings !== null, 'the fixture: churn changes a settings row, so it needs one');
+    const churn = db.prepare("UPDATE profile_state_documents SET payload = ?, revision = ? WHERE domain = 'settings'");
+    for (let i = 0; i < walChurn; i += 1) {
+      churn.run(JSON.stringify({ theme: 'system', agentDefaultArgs: argsOf(settledSettings), churn: i }), i + 2);
+    }
+  }
 
   if (walSettings !== undefined) {
     const payload = documentOf(argsOf(walSettings));
