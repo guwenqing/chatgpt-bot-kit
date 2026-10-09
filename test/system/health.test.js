@@ -58,14 +58,14 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFile, mkdtemp, readdir, readFile, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, realpath, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import test from '../helpers/system.js';
 import { setTimeout } from 'node:timers/promises';
 
 import { cliEntry } from '../helpers/cli.js';
+import { settingsInDb } from '../helpers/orca-db-copy.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
 
@@ -209,43 +209,6 @@ async function recordedLaunchArgs() {
     + ', and the test cannot say which one Orca is running on. Look at it before trusting this run.',
   );
   return { file: files[0].file, args: files[0].args };
-}
-
-/**
- * The settings document in one profile's profile-state.db, or undefined when
- * there is no db or no settings document in it.
- *
- * Orca holds the live db open in WAL mode, and its current settings may be in
- * the -wal alone. So this never opens Orca's own file: it copies the db and its
- * -wal into a throwaway folder, reads the copy, and removes the copy, however
- * the read ends. Copying only reads Orca's files.
- */
-async function settingsInDb(db) {
-  const scratch = await mkdtemp(path.join(os.tmpdir(), 'obk-system-orca-db-'));
-  try {
-    const copy = path.join(scratch, 'profile-state.db');
-    try {
-      await copyFile(db, copy);
-    } catch {
-      return undefined;
-    }
-    try {
-      await copyFile(`${db}-wal`, `${copy}-wal`);
-    } catch {
-      // No -wal: everything is in the db file.
-    }
-    const reader = new DatabaseSync(copy, { readOnly: true });
-    try {
-      const row = reader.prepare("SELECT payload FROM profile_state_documents WHERE domain = 'settings'").get();
-      return row === undefined ? undefined : JSON.parse(row.payload);
-    } finally {
-      reader.close();
-    }
-  } catch {
-    return undefined;
-  } finally {
-    await rm(scratch, { recursive: true, force: true });
-  }
 }
 
 /**
