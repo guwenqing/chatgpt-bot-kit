@@ -114,12 +114,13 @@ const mailCommand = (box, fleet) => [box.cli, 'session', 'mail', '--bots', fleet
 
 /**
  * A turn end of the reader's session: the hook, run as Claude Code runs it in
- * the session's own tab. `tab` and `handle` stand in for another tab's.
+ * the session's own tab. `tab` and `handle` stand in for another tab's; `null`
+ * for either leaves that variable out (a default would fill in `undefined`).
  */
 const turnEnds = (box, fleet, { active = false, command = mailCommand(box, fleet), tab = fleet.tab, handle = fleet.terminal.handle, env } = {}) => throughAHarness(box, command, {
-  tab,
+  tab: tab ?? undefined,
   stdin: stopEvent(fleet, { active }),
-  env: { ...(env ?? box.env), ORCA_TERMINAL_HANDLE: handle, ...kitLaunchMark(box, fleet.terminal) },
+  env: { ...(env ?? box.env), ...(handle === null ? {} : { ORCA_TERMINAL_HANDLE: handle }), ...kitLaunchMark(box, fleet.terminal) },
 });
 
 /** A turn end that tells: exit 0, one JSON object on stdout, a block with its reason. */
@@ -453,7 +454,11 @@ test('T5 a tab the book does not hold, or none at all: nothing on stdout, exit 0
   await mail(box, 'coder', 'the staging host');
 
   assertSilent(await turnEnds(box, fleet, { tab: 'tab_nobody_has', handle: 'term_nobody_has' }), 'a tab nobody in the book has');
-  assertSilent(await turnEnds(box, fleet, { tab: undefined }), 'no tab at all');
+  // Run outside any Orca tab: no ORCA_TAB_ID, and so no ORCA_TERMINAL_HANDLE either.
+  const outside = { ...box.env };
+  delete outside.ORCA_TAB_ID;
+  delete outside.ORCA_TERMINAL_HANDLE;
+  assertSilent(await turnEnds(box, fleet, { tab: null, handle: null, env: outside }), 'no tab at all');
   // The contrast: in its own tab the same mail is told.
   toldIn(await turnEnds(box, fleet));
 });
