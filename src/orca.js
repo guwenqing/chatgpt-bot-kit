@@ -324,6 +324,23 @@ export const retitleTab = (handle, title) =>
   orca(['terminal', 'rename', '--terminal', handle, '--title', title]).rename;
 
 /**
+ * One quick look at whether the harness in a tab is at rest, for a caller that
+ * already knows a harness is there and is watching for a turn to start (#509):
+ * `idle` when Orca's tui-idle answers ok, `busy` when it times out, and
+ * `unknown` when Orca refuses or does not answer within `waitMs` and a second
+ * more. Never throws.
+ */
+export function idleNow(handle, waitMs) {
+  try {
+    const answer = ask(['terminal', 'wait', '--terminal', handle, '--for', 'tui-idle', '--timeout-ms', String(waitMs)], waitMs + 1000);
+    if (answer.ok === true) return answer.result?.wait?.blockedReason === undefined ? 'idle' : 'unknown';
+    return answer.error?.code === 'timeout' ? 'busy' : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
  * What can be learned about the harness in a tab: what Orca says, and who is
  * in front of the tab's terminal.
  *
