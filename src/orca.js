@@ -427,6 +427,7 @@ const ON_A_CHOICE = /^( *[›❯] +)\d+\. /;
  * line, lined up with it, and by its layout that is one.
  */
 export function questionIn(rows) {
+  if (feedbackPanelIn(rows)) return true;
   const at = rows.findLastIndex((row) => POINTER_ROW.test(row));
   // A form of the harness's own has no numbers but a foot that says how to
   // answer it: Claude Code 2.1.283's "Teach auto mode" ends `Enter to continue
@@ -453,6 +454,39 @@ export function questionIn(rows) {
     if (pointedChoiceAt(rows, row)) return true;
   }
   return false;
+}
+
+/** The gate's answer for Claude Code's panel of feedback drafts (#502). */
+export const FEEDBACK_PANEL = 'feedback-drafts-panel';
+
+/** The first row in the panel's box, as Claude Code 2.1.291 draws it: `✻ Bug report drafted: <title>`. */
+const PANEL_TITLE = /^ *│ +(?:\S+ +)?(?:Bug report|Product feedback|Feature request|Feedback) drafted: /;
+
+/** What Claude Code 2.1.291 asks in the panel's place after a `0`, its keys' foot last: `… 0 to turn off · Esc to keep`. */
+const PANEL_TURN_OFF = /^Turn off Claude-drafted feedback\? 0 to turn off · Esc to keep$/i;
+
+/**
+ * Whether the rows of a rendered screen show Claude Code's panel of feedback
+ * drafts (#502). It has no pointer and no numbers, but it reads single keys
+ * from the input line, and `2` twice sends a draft to Anthropic. Claude Code
+ * 2.1.291 draws it as a box, its title row first, as the last thing above its
+ * input box's top rule; after a `0`, the question whether to turn the drafts
+ * off stands in its place, wrapped as the pane needs, and a typed line answers
+ * that too. The same words
+ * with anything after them are history.
+ */
+export function feedbackPanelIn(rows) {
+  const at = rows.findLastIndex((row) => POINTER_ROW.test(row));
+  if (at < 1 || !RULE_ROW.test(rows[at - 1])) return false;
+  const end = rows.slice(0, at - 1).findLastIndex((row) => row.trim() !== '');
+  if (end < 0) return false;
+  // The question is plain text, which a narrow pane wraps onto rows of its
+  // own, with a blank row above it: it is the whole block that ends there.
+  const start = rows.slice(0, end).findLastIndex((row) => row.trim() === '') + 1;
+  if (PANEL_TURN_OFF.test(rows.slice(start, end + 1).map((row) => row.trim()).join(' '))) return true;
+  if (!/^ *╰─/.test(rows[end])) return false;
+  const top = rows.slice(0, end).findLastIndex((row) => /^ *╭─/.test(row));
+  return top >= 0 && PANEL_TITLE.test(rows[top + 1]);
 }
 
 /** A rule Claude Code draws right across, as the top of its input box: `─` or `▔`. */
@@ -538,7 +572,7 @@ export function tabToTypeInto(home, tabId, timeoutMs) {
   // Orca's reason does not cover every question: it called Codex's update
   // offer idle, and a return typed into it took "Update now" (#329). So the
   // screen is read too, and one that cannot be read is not a reason to type.
-  if (seen.question === true) return { blocked: QUESTION_ON_SCREEN };
+  if (seen.question === true) return { blocked: feedbackPanelIn(seen.rows) ? FEEDBACK_PANEL : QUESTION_ON_SCREEN };
   if (seen.question === undefined) {
     return { unsure: `the kit could not tell whether a question is waiting on its screen (${seen.screenUnreadable}), so nothing was typed` };
   }

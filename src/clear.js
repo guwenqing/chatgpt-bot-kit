@@ -19,7 +19,7 @@ import { botDir, readBot } from './bot.js';
 import { claudeTranscript, codexRollout } from './conversations.js';
 import { harnessOf, ownCli, shellWord } from './launch.js';
 import { eachLine, firstLine } from './lines.js';
-import { findProject, orca, QUESTION_ON_SCREEN, questionIn, screenRows, tabs, tabToTypeInto, TIMED_OUT } from './orca.js';
+import { FEEDBACK_PANEL, feedbackPanelIn, findProject, orca, QUESTION_ON_SCREEN, questionIn, screenRows, tabs, tabToTypeInto, TIMED_OUT } from './orca.js';
 import { botsNamed, sessionsOf, typeListLine } from './up.js';
 
 /** The harness's own command for each, as typed into its input line. Codex's clear is `/new` (tech notes, section 3). */
@@ -201,7 +201,7 @@ async function enter(it, verb, before = () => {}) {
         if (typing === undefined) throw new Error(`${it.name}: ${TYPING_HELD}. Run this again in a moment.`);
         before();
       },
-      cannot: (wrong) => (verb === 'compact' && wrong.menu ? ` ${harnessName(it.harness)} here cannot compact: its menu does not offer ${COMMANDS[verb][it.harness]}.` : ''),
+      cannot: (wrong) => (verb === 'compact' && wrong.menu && it.harness === 'codex' ? ` ${harnessName(it.harness)} here cannot compact: its menu does not offer ${COMMANDS[verb][it.harness]}.` : ''),
     });
     return { ...typed, typing };
   } catch (error) {
@@ -350,8 +350,8 @@ function lookAt(it, { idle = true } = {}) {
   const found = tabToTypeInto(it.home, it.tabId, idle ? LOOK_MS : CHAR_LOOK_MS);
   if (found.blocked !== undefined) {
     return {
-      why: found.blocked === QUESTION_ON_SCREEN
-        ? 'a question of its harness\'s own is on its screen'
+      why: found.blocked === FEEDBACK_PANEL ? PANEL_WHY
+        : found.blocked === QUESTION_ON_SCREEN ? 'a question of its harness\'s own is on its screen'
         : `a question is waiting on its screen: Orca says ${found.blocked}`,
     };
   }
@@ -390,10 +390,18 @@ async function typedWrong(handle, harness, command, version, check) {
   }
 }
 
+/**
+ * Why nothing goes in while Claude Code's panel of feedback drafts is open
+ * (#502): it reads single keys from the input line, and one sends a draft to
+ * Anthropic, so only the user answers it.
+ */
+const PANEL_WHY = 'its panel of feedback drafts is open above its input box, and the kit does not answer it, since a draft sent from it goes to Anthropic: it clears once the user reviews, sends or dismisses the drafts in that tab';
+
 /** Why `rows` say not to type now, as the look says it, or undefined: a turn at work, or a question. */
 function signalIn(rows) {
   const working = rows.find((row) => AT_WORK.some((marker) => marker.test(row)));
   if (working !== undefined) return `it is busy with a turn: its screen shows "${working.trim()}"`;
+  if (feedbackPanelIn(rows)) return PANEL_WHY;
   if (questionIn(rows)) return 'a question of its harness\'s own is on its screen';
   return undefined;
 }

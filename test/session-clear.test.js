@@ -117,6 +117,9 @@ import {
   CLAUDE_CLEAR_TYPED,
   CLAUDE_COMPACT_TYPED,
   CLAUDE_AT_WORK,
+  CLAUDE_FEEDBACK_PANEL,
+  CLAUDE_FEEDBACK_PANEL_GONE,
+  CLAUDE_FEEDBACK_PANEL_TYPED,
   CLAUDE_IDLE,
   CLAUDE_TEACH_AUTO,
   CLAUDE_TEACH_LIST,
@@ -779,6 +782,94 @@ test('#491: clear on Claude Code from the 2.1.289 capture with the list taken ou
   assert.deepEqual(answer.cleared, { bot: BOT, session: 'daily', harness: 'claude', was: 'sess-daily', now: 'sess-cleared' });
 });
 
+// #502: Claude Code's panel of feedback drafts (helpers/screens.js
+// CLAUDE_FEEDBACK_PANEL_TYPED, a capture) stops the slash menu, and takes
+// single keys from the input line: `1` reviews, `2` and `2` sends a draft to
+// Anthropic, `0` dismisses. A refusal names the panel as the cause and says
+// what clears it: the user reviews, sends or dismisses the drafts. It does not
+// say Claude Code cannot compact; Claude Code has /compact.
+
+/**
+ * What a refusal says with every row of `screen` it quotes taken out, so the
+ * words left are the kit's own: the capture's status row says "4 feedback
+ * drafts", and its foot "1 to review · 2 to send · 0 to dismiss".
+ */
+const ownWords = (said, screen) => screen
+  .filter((row) => row.trim() !== '')
+  .reduce((rest, row) => rest.replaceAll(row.trimEnd(), '').replaceAll(row.trim(), ''), said);
+
+/** The refusal names the panel and what clears it, in the kit's own words, and does not say the harness cannot compact. */
+function assertNamesThePanel(said, screen, what) {
+  const own = ownWords(said, screen);
+  assert.match(own, /feedback drafts/i, `${what}: the refusal names the panel of feedback drafts, got:\n${said}`);
+  for (const word of [/\breview/i, /\bsend/i, /\bdismiss/i]) {
+    assert.match(own, word, `${what}: and says the user reviews, sends or dismisses the drafts, got:\n${said}`);
+  }
+  assert.doesNotMatch(said, /can(?:not|'t|’t) compact/i, `${what}: and does not say the harness cannot compact, got:\n${said}`);
+}
+
+// #502, the issue's own screen: the panel shows with /compact typed under it,
+// as the kit's refusal on arch-panel quoted it. The eight characters typed
+// before it showed are the kit's own, and are taken back; nothing else goes in.
+test('#502: the panel of feedback drafts shows once /compact is typed: no return, the eight taken back in one send, and the refusal names the panel and what clears it, not that Claude Code cannot compact', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await running(box);
+  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('claude', COMPACT, CLAUDE_FEEDBACK_PANEL_TYPED, CLAUDE_FEEDBACK_PANEL) });
+
+  const said = assertRefused(await sessionCommand(box, 'compact'));
+
+  assert.deepEqual(
+    await sendsInto(box, bots),
+    [...typed(COMPACT), { text: backspaces(COMPACT), enter: false }],
+    'the eight characters typed, then exactly those eight taken back, and nothing more: no return, no Esc, no key for the panel',
+  );
+  assertNamesThePanel(said, CLAUDE_FEEDBACK_PANEL_TYPED, 'compact');
+});
+
+// #502: the panel draws late, after the gate's look that follows the last
+// character: that look finds the menu and no panel, and only the read that
+// decides on the return shows the panel (the fake Orca's `then`, as the
+// late-draw tests further down use it). The refusal there names the panel,
+// not just a question.
+test('#502: the panel of feedback drafts draws only on the read that decides on the return: no return, the eight taken back, and the refusal names the panel and what clears it', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await running(box);
+  await changeTab(box, (await liveTab(box, bots)).tabId, {
+    nextScreens: [...whileTyping('claude', COMPACT), { screen: CLAUDE_COMPACT_TYPED, then: CLAUDE_FEEDBACK_PANEL_TYPED }, CLAUDE_FEEDBACK_PANEL],
+  });
+
+  const said = assertRefused(await sessionCommand(box, 'compact'));
+
+  assert.deepEqual(
+    await sendsInto(box, bots),
+    [...typed(COMPACT), { text: backspaces(COMPACT), enter: false }],
+    'the eight characters typed, then exactly those eight taken back: no return',
+  );
+  assertNamesThePanel(said, CLAUDE_FEEDBACK_PANEL_TYPED, 'compact, the panel drawn late');
+});
+
+// #502, the presence beside the refusals: the same screen with the panel
+// taken out is no panel, and the clear goes through from it. Passes before the
+// change.
+test('#502: clear on Claude Code from the panel screen with the panel taken out: /clear typed, entered, and the new conversation is the answer', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await running(box);
+  await changeTab(box, (await liveTab(box, bots)).tabId, {
+    screen: CLAUDE_FEEDBACK_PANEL_GONE,
+    nextScreens: screensFor('claude', '/clear', CLAUDE_CLEAR_TYPED, CLAUDE_FEEDBACK_PANEL_GONE),
+  });
+
+  const { result, played } = await runPlaying(box, bots, 'clear', {
+    when: (sends) => sends.some((one) => one.text === '\r'),
+    then: () => hookReports(box, bots, 'sess-cleared', 'clear'),
+  });
+
+  const answer = answered(result, 'the clear');
+  assert.ok(played, 'the premise: the return was sent and the hook reported the new conversation');
+  assert.deepEqual(await sendsInto(box, bots), [...typed('/clear'), { text: '\r', enter: false }]);
+  assert.deepEqual(answer.cleared, { bot: BOT, session: 'daily', harness: 'claude', was: 'sess-daily', now: 'sess-cleared' });
+});
+
 // ------------------------------------------------ after live run 4 (ruling 2026-10-03)
 //
 // Live run 4 of #391. Claude Code 2.1.288 puts a non-breaking space after its
@@ -1034,6 +1125,30 @@ test('compact on a harness whose slash menu does not offer /compact: taken back 
   assert.match(said, /can(?:not|'t|’t) compact/i, `it says this harness cannot compact, got:\n${said}`);
 });
 
+/**
+ * `/compact` typed into Claude Code's input line, no menu above the box and no
+ * panel either: CLAUDE_CLEAR_NO_MENU with /compact in place of /clear. A
+ * reconstruction.
+ */
+const CLAUDE_COMPACT_NO_MENU = CLAUDE_CLEAR_NO_MENU.map((row) => (row === '❯\u00a0/clear' ? '❯\u00a0/compact' : row));
+
+// #502: the "cannot compact" line above is for Codex alone. Claude Code has
+// /compact, so a compact refused there because no menu came up says so plainly
+// and shows how the screen ended, with no claim about the harness.
+test('#502: compact on Claude Code with no slash menu above its input box: taken back with eight backspaces, nothing entered, the refusal says no menu came up and shows the screen\'s end, and not that Claude Code cannot compact', async (t) => {
+  assert.equal(CLAUDE_COMPACT_NO_MENU.filter((row, at) => row !== CLAUDE_CLEAR_NO_MENU[at]).length, 1, 'the premise: only the input line changed');
+  const box = await createSandbox(t);
+  const bots = await running(box);
+  await changeTab(box, (await liveTab(box, bots)).tabId, { nextScreens: screensFor('claude', COMPACT, CLAUDE_COMPACT_NO_MENU, CLAUDE_IDLE) });
+
+  const said = assertRefused(await sessionCommand(box, 'compact'));
+
+  assert.deepEqual(await sendsInto(box, bots), [...typed(COMPACT), { text: backspaces(COMPACT), enter: false }]);
+  assert.match(said, /no menu/i, `it says no menu came up, got:\n${said}`);
+  assert.ok(said.includes('auto mode on (shift+tab to cycle)'), `it shows the screen's last rows, got:\n${said}`);
+  assert.doesNotMatch(said, /can(?:not|'t|’t) compact/i, `it does not say Claude Code cannot compact, got:\n${said}`);
+});
+
 // ---------------------------------------------------- the waits that run out
 //
 // Each of these costs its whole wait in real time, so they run side by side.
@@ -1123,6 +1238,24 @@ describe('the waits that run out, side by side', { concurrency: true }, () => {
 
       assert.match(said, /question/i, `it says a question is waiting, got:\n${said}`);
       await assertNothingTyped(box, before, `${verb} with the Teach list on screen`);
+      assert.equal((await sessionIn(bots, BOT, 'daily')).session, 'sess-daily', 'the book is as it was');
+    });
+  }
+
+  // #502: the panel of feedback drafts on screen the whole time, for clear
+  // and for compact. Not a key goes in: no character, no Esc, no return, and
+  // no backspace, since nothing was typed.
+  for (const verb of VERBS) {
+    it(`#502: the panel of feedback drafts above Claude Code's input box, Orca calling it idle: ${verb} refused, nothing typed, and the refusal names the panel and what clears it`, async (t) => {
+      const box = await createSandbox(t);
+      const bots = await running(box);
+      await changeTab(box, (await liveTab(box, bots)).tabId, { screen: CLAUDE_FEEDBACK_PANEL });
+      const before = await typedEverywhere(box);
+
+      const said = assertRefused(await sessionCommand(box, verb));
+
+      await assertNothingTyped(box, before, `${verb} with the panel on screen`);
+      assertNamesThePanel(said, CLAUDE_FEEDBACK_PANEL, verb);
       assert.equal((await sessionIn(bots, BOT, 'daily')).session, 'sess-daily', 'the book is as it was');
     });
   }

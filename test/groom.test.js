@@ -61,7 +61,7 @@ import {
   snapshot,
   spellingsOf,
 } from './helpers/cli.js';
-import { CLAUDE_TEACH_LIST, CLAUDE_TEACH_LIST_GONE } from './helpers/screens.js';
+import { CLAUDE_FEEDBACK_PANEL, CLAUDE_FEEDBACK_PANEL_GONE, CLAUDE_TEACH_LIST, CLAUDE_TEACH_LIST_GONE } from './helpers/screens.js';
 
 // ------------------------------------------------------------------ time
 
@@ -1387,6 +1387,37 @@ test('G10 a grooming tab showing Claude Code 2.1.289\'s Teach list above its inp
   await assertNothingTyped(box, before, 'the Teach list on the grooming tab');
 
   await showing(CLAUDE_TEACH_LIST_GONE);
+  const back = await sendsByTab(box);
+  await groom(box, '--now');
+  await theLineTyped(box, bots, back);
+});
+
+// #502: Claude Code's panel of feedback drafts above the input box
+// (helpers/screens.js CLAUDE_FEEDBACK_PANEL, built on a capture) takes single
+// keys from the input line, and one of them sends a draft to Anthropic. The
+// refusal names the panel; the panel's own rows say "feedback drafts" too, so
+// they are taken out of what is checked. The same screen with the panel taken
+// out is the presence: the line goes in.
+test('G10 a grooming tab showing Claude Code\'s panel of feedback drafts above its input box is refused every flag that types, naming the panel; with the panel gone, it types (#502)', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await fleet(box);
+  await oneJob(box, bots);
+  const tab = await groomingTab(bots);
+  const showing = async (screen) => box.orca.set({
+    terminals: (await box.orca.terminals()).map((one) => (one.tabId === tab ? { ...one, screen } : one)),
+  });
+  await showing(CLAUDE_FEEDBACK_PANEL);
+  const before = await sendsByTab(box);
+
+  for (const flags of TYPING) {
+    const result = await run(box, ...flags);
+    assertRefused(result, `${flags.join(' ')} with the panel on the grooming tab's screen`);
+    const own = CLAUDE_FEEDBACK_PANEL.filter((row) => row.trim() !== '').reduce((rest, row) => rest.replaceAll(row.trimEnd(), '').replaceAll(row.trim(), ''), result.stderr);
+    assert.match(own, /feedback.drafts/i, `${flags.join(' ')}: the refusal names the panel of feedback drafts, got: ${result.stderr}`);
+  }
+  await assertNothingTyped(box, before, 'the panel on the grooming tab');
+
+  await showing(CLAUDE_FEEDBACK_PANEL_GONE);
   const back = await sendsByTab(box);
   await groom(box, '--now');
   await theLineTyped(box, bots, back);
