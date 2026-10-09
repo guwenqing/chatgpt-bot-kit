@@ -463,7 +463,7 @@ export const FEEDBACK_PANEL = 'feedback-drafts-panel';
 const PANEL_TITLE = /^ *│ +(?:\S+ +)?(?:Bug report|Product feedback|Feature request|Feedback) drafted: /;
 
 /** What Claude Code 2.1.291 asks in the panel's place after a `0`, its keys' foot last: `… 0 to turn off · Esc to keep`. */
-const PANEL_TURN_OFF = /^Turn off Claude-drafted feedback\? .*\bto keep$/i;
+const PANEL_TURN_OFF = /^Turn off Claude-drafted feedback\? 0 to turn off · Esc to keep$/i;
 
 /**
  * Whether the rows of a rendered screen show Claude Code's panel of feedback
