@@ -127,6 +127,16 @@ const PANEL_RETRY = panelWithFoot('1 to review & retry');
  */
 const COUNT_ONLY = CLAUDE_FEEDBACK_PANEL.filter((row) => !/^[╭│╰]/.test(row));
 
+/**
+ * A rounded box of the panel's width right above the input box, its one row
+ * not a draft's title: no panel, since the panel is known by its title row,
+ * `✻ <Label> drafted: <title>`. The status row is CLAUDE_FEEDBACK_PANEL_GONE's.
+ * A reconstruction: no such box was seen, and its words are made up.
+ */
+const OTHER_BOX = CLAUDE_FEEDBACK_PANEL_GONE.flatMap((row, at) => (at === 0
+  ? [`╭${'─'.repeat(TITLE_ROW.length - 2)}╮`, boxRow('Did you know? /statusline sets up a status line of your own.'), `╰${'─'.repeat(TITLE_ROW.length - 2)}╯`, row]
+  : [row]));
+
 /** The panel above an input line that is the pointer alone, as the 2.1.289 capture CLAUDE_TEACH_LIST draws an empty one. */
 const PANEL_BARE_POINTER = CLAUDE_FEEDBACK_PANEL.map((row) => (row === '❯ ' ? '❯' : row));
 
@@ -145,6 +155,8 @@ test('the panel screens here are the capture with one change each', () => {
   }
   assert.ok(!CLAUDE_FEEDBACK_PANEL.some((row) => row.includes('/compact')), 'the idle panel has nothing in its input line');
   assert.ok(CLAUDE_FEEDBACK_PANEL_GONE.every((row) => !/^[╭│╰]/.test(row)), 'the panel gone has no row of the box');
+  assert.deepEqual(OTHER_BOX.filter((row) => !CLAUDE_FEEDBACK_PANEL_GONE.includes(row)).map((row) => row.length), [TITLE_ROW.length, TITLE_ROW.length, TITLE_ROW.length], 'the other box is three rows of the panel\'s width, added above the input box');
+  assert.ok(!OTHER_BOX.some((row) => row.includes(' drafted: ')), 'and holds no draft\'s title');
 });
 
 // ------------------------------------------------------------- the gate itself
@@ -191,6 +203,7 @@ test('feedbackPanelIn: "Turn off Claude-drafted feedback? 0 to turn off · Esc t
 for (const [label, screen] of [
   ['the panel screen with the panel taken out', CLAUDE_FEEDBACK_PANEL_GONE],
   ['the panel screen with the box taken out, the status row still counting the drafts', COUNT_ONLY],
+  ['a box right above the input box whose row is no draft\'s title', OTHER_BOX],
   ['the captured panel\'s box in the history, a turn after it', FEEDBACK_PANEL_IN_HISTORY],
   ['the question to turn the drafts off quoted in the history, a row after it', FEEDBACK_TURN_OFF_IN_HISTORY],
   ['Claude Code 2.1.283\'s idle input line, captured', CLAUDE_IDLE],
@@ -325,6 +338,7 @@ test('the plain report for a Claude tab showing the panel names feedback-drafts-
 for (const [label, screen] of [
   ['the panel screen with the panel taken out', CLAUDE_FEEDBACK_PANEL_GONE],
   ['the captured panel\'s box in the history, a turn after it', FEEDBACK_PANEL_IN_HISTORY],
+  ['a box right above the input box whose row is no draft\'s title', OTHER_BOX],
 ]) {
   test(`a Claude tab showing ${label}: no panel, and it is nudged as ever`, async (t) => {
     const box = await createSandbox(t);

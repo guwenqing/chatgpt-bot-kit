@@ -826,6 +826,28 @@ test('#502: the panel of feedback drafts shows once /compact is typed: no return
   assertNamesThePanel(said, CLAUDE_FEEDBACK_PANEL_TYPED, 'compact');
 });
 
+// #502: the panel draws late, after the gate's look that follows the last
+// character: that look finds the menu and no panel, and only the read that
+// decides on the return shows the panel (the fake Orca's `then`, as the
+// late-draw tests further down use it). The refusal there names the panel,
+// not just a question.
+test('#502: the panel of feedback drafts draws only on the read that decides on the return: no return, the eight taken back, and the refusal names the panel and what clears it', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await running(box);
+  await changeTab(box, (await liveTab(box, bots)).tabId, {
+    nextScreens: [...whileTyping('claude', COMPACT), { screen: CLAUDE_COMPACT_TYPED, then: CLAUDE_FEEDBACK_PANEL_TYPED }, CLAUDE_FEEDBACK_PANEL],
+  });
+
+  const said = assertRefused(await sessionCommand(box, 'compact'));
+
+  assert.deepEqual(
+    await sendsInto(box, bots),
+    [...typed(COMPACT), { text: backspaces(COMPACT), enter: false }],
+    'the eight characters typed, then exactly those eight taken back: no return',
+  );
+  assertNamesThePanel(said, CLAUDE_FEEDBACK_PANEL_TYPED, 'compact, the panel drawn late');
+});
+
 // #502, the presence beside the refusals: the same screen with the panel
 // taken out is no panel, and the clear goes through from it. Passes before the
 // change.
