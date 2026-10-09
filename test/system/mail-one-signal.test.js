@@ -1,0 +1,712 @@
+// A system test, and the live check for #509: one signal for each fleet mail,
+// against the real Claude Code and Codex in the real Orca on this machine
+// (written for Claude Code 2.1.296, Codex 0.162.0 and Orca 1.4.223). Run it
+// alone with `npm run test:system -- --yes test/system/mail-one-signal.test.js`;
+// `npm test` cannot, and no CI machine could.
+//
+// The rule under test (ADR 0035, the architect's rulings for #509): Orca's own
+// notice is the first signal and the kit's typed line a fallback only. An idle
+// receiver is watched for up to 8 s; the kit types its line only when Orca's
+// notice did not show in the receiver's own record and no turn started. A busy
+// Claude Code gets nothing typed, and its own Stop hook tells it of mail still
+// unread at its turn end, once for each message. A busy Codex gets the line,
+// which it takes into the running turn as a steer.
+//
+// What is ASSERTED, each case judged from the receiver's own record of its
+// turns (the Claude transcript `~/.claude/projects/<slug>/<id>.jsonl`, the
+// Codex rollout `~/.codex/sessions/…/rollout-…-<id>.jsonl`, found by the
+// conversation id the book holds), read only:
+//
+//   1. IDLE CLAUDE. One mail to an idle Claude session. The send's `signal` is
+//      "orca" or "line" (with `because: "no-turn"`), and the record holds
+//      exactly one signal for the mail, of that kind: Orca's notice for its
+//      mailbox and no kit line, or the kit's line and no Orca notice, watched
+//      for LATE_MS after the signal. It reads the mail with `obk message check`.
+//   2. BUSY CLAUDE. A Claude session busy with a shell loop its start prompt
+//      gives it. Each send says `signal: "hook"`, `because: "busy"`, nothing
+//      typed. While the loop runs, nothing that looks like the kit's line is on
+//      its screen. When the loop's turn ends, the kit's Stop hook tells it: its
+//      record gets the hook's reason, with "still unread", after the send; then
+//      it reads the mail, after the loop's last line. Afterwards its input box
+//      holds no kit line and no Orca notice.
+//   3. TWO MAILS. Case 2 sends two mails in the one busy turn: one reason names
+//      both, it is given once, and the receiver reads both.
+//   4. IDLE CODEX. One mail to an idle Codex session: one signal, Orca's notice
+//      or the kit's line, never both, judged from its rollout, and of the kind
+//      the send said; watched for LATE_MS after the signal. It reads the mail.
+//   5. BUSY CODEX. A Codex session busy with a shell loop (sleep tool off). The
+//      send says `signal: "line"`, `because: "busy"`. The rollout shows the
+//      line as a user message inside the running turn (no turn start between
+//      the loop's call and the line; the line before the loop's last line);
+//      it reads the mail in that turn; after the turn ends its input box holds
+//      no kit line, and no Orca notice for the mail lands in its rollout within
+//      LATE_MS of the turn's end.
+//   6. RETIRE. A Claude session told to ignore its mail gets one; `obk retire
+//      --session` of it says `unread: { count: 1, from: [the sender] }`.
+//
+//   Also asserted: no Claude session here showed a hooks question of Claude
+//   Code's own at its start (the new Stop hook is a new entry in the bot's
+//   `.claude/settings.json`; the tech notes read 2.1.296 as asking nothing).
+//
+// What is OBSERVED, NOT JUDGED (printed as diagnostics): every send's answer;
+// in case 2, whether Orca typed its own notice into the busy Claude tab after
+// its turn ended (out of #509's scope: "Orca's own notice when Orca itself
+// types it into a busy tab"); in cases 1 and 4, which signal went.
+//
+// What it cannot show live:
+//   - A Codex session's hooks review for the kit's hooks: every system test's
+//     Codex is launched with `--dangerously-bypass-hook-trust`
+//     (test/helpers/codex-trust.js). That `.codex/hooks.json` is unchanged is
+//     the ordinary suite's (test/mail-turn-end-hook.test.js, T2).
+//   - Which way an idle receiver is reached is Orca's choice, not the test's:
+//     a tab the window has not loaded gets no notice, so case 1 and case 4
+//     accept either signal and judge only that there is exactly one.
+//   - The kit's record in the system temp folder: the ordinary suite's.
+//
+// The receivers: bot `mail-claude` (Claude Code) with sessions `idle`, `busy`
+// and `quiet`; bot `mail-codex` (Codex) with sessions `idle` and `busy`. Mail to
+// a Claude session is sent `--from mail-codex/idle`, and mail to a Codex session
+// `--from mail-claude/idle`, so every mail takes the Orca road: Claude to Claude
+// in one approval class goes by Claude's own messaging. The busy sessions are
+// brought up only when their case starts, so their loops cannot end early; the
+// folder's trust, answered for `idle`, covers them.
+//
+// Every word a check waits for is one its tab was never told: each mail's
+// subject and body word are in no start prompt, and no prompt says "still
+// unread", "Fleet mail from" or "orchestration check". Each bot reads its mail
+// with the kit's own check, its shell writing the time and the answer to a file
+// in its own folder, so what was read is the kit's answer and when is a time
+// its own shell wrote down.
+//
+// The machine it runs on is someone's working machine, with their own tabs
+// open. So this test, like the ones beside it:
+//
+//   - works in a throwaway bots folder under the system temp directory;
+//   - writes down every terminal and workspace Orca already had, before it
+//     creates anything;
+//   - runs this checkout's `src/cli.js` by its full path, never the machine's
+//     `obk`;
+//   - types into no tab: the only lines that go in are the kit's launch lines,
+//     its lines for mail, and Orca's own notices;
+//   - closes only its own tabs, through the tab guard, then deletes its own
+//     workspaces, whatever happened;
+//   - signals no process.
+//
+// `orca terminal close --worktree … --all` is never run here, and the helper
+// refuses to run it at all. The runner (scripts/test-system.js) keeps and puts
+// back ~/.claude.json and ~/.codex/config.toml. It leaves behind what every
+// system test does: the Run mailboxes Orca cannot delete, and offline entries
+// in Claude Code's Remote Control list.
+//
+// **It is attended.** What to expect, in order:
+//
+//   1. `Mail Claude idle`: Claude Code's folder trust, once for the folder
+//      (`<tmp>/obk-system-one-signal-*/bots/mail-claude`). Its selection starts
+//      on `No, exit`: a down-arrow, then return. `Mail Claude quiet` and
+//      `Mail Claude busy` are in the same folder and should not ask again.
+//   2. Any Claude tab after its first turn: "Teach auto mode about your
+//      environment?". Esc cancels it.
+//   3. Any Claude tab: if Claude Code asks before it runs a command its start
+//      prompt gives it, or the kit's check, allow it.
+//   4. The Codex tabs should ask nothing (trust given at launch). If Codex
+//      offers an update, accept it (PRD 6.5).
+//   5. `Bot Father daily`, if it is opened: leave it.
+//
+// Every wait says what the tab is showing when it runs out, so a run that was
+// left alone names the screen that stopped it.
+//
+// It takes about ten minutes, fifteen at the most: five sessions, two idle
+// cases side by side, a quiet one and a retire, then two busy cases side by
+// side around 75 s loops, and LATE_MS watches after each signal.
+
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { mkdtemp, readdir, readFile, realpath, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import test from '../helpers/system.js';
+import { setTimeout } from 'node:timers/promises';
+import { parse } from 'yaml';
+
+import { cliEntry } from '../helpers/cli.js';
+import { codexTrustArgs } from '../helpers/codex-trust.js';
+import { rolloutFilesOf } from '../helpers/codex-rollout.js';
+import { waitingOn } from '../helpers/screens.js';
+import { tabGuard } from '../helpers/tab-guard.js';
+import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
+
+/** The Orca CLI that works for a normal user (tech notes, section 1). */
+const ORCA = process.env.OBK_ORCA || '/Applications/Orca.app/Contents/Resources/bin/orca';
+
+/** How long a tab is given to get past the screens of its own, a person answering them. */
+const READY_MS = 180000;
+
+/** How long a bot is given to do something: read its mail, end its turn. */
+const ANSWER_MS = 240000;
+
+/** How long after a signal the record is watched for a second one. */
+const LATE_MS = 60000;
+
+/** How long a line the kit typed is given to show in the record. */
+const RECORD_MS = 30000;
+
+/** The busy loop: this many lines, one a second. */
+const LOOP_STEPS = 75;
+const PART_WAY = 'STEP-03';
+const LAST_STEP = `STEP-${LOOP_STEPS}`;
+
+/** Claude Code's and Codex's own records (tech notes, sections 2 and 3): read only. */
+const CLAUDE_PROJECTS = path.join(os.homedir(), '.claude', 'projects');
+const CODEX_SESSIONS = path.join(os.homedir(), '.codex', 'sessions');
+
+/** The start of the kit's line, as src/message.js types it and test/message-nudge.test.js pins it. */
+const KIT_LINE = /Fleet mail from [^\s:]+: /;
+
+/** A hooks question of a harness's own: Codex's words as captured (helpers/screens.js), and the like. */
+const HOOKS_QUESTION = /hooks? (?:is|are) new or changed|hooks need review|review hooks|hooks? (?:have )?changed/i;
+
+const guard = tabGuard(ORCA);
+const { orca } = guard;
+
+// ------------------------------------------------------------- Orca and the kit
+
+/** Every terminal Orca knows about right now. */
+function allTerminals() {
+  const answer = orca(['terminal', 'list']);
+  assert.equal(answer.ok, true, `orca terminal list failed: ${JSON.stringify(answer.error)}`);
+  return answer.result.terminals;
+}
+
+/** The terminals in one workspace, by the path they were opened in. */
+const terminalsAt = (home) => allTerminals().filter((terminal) => terminal.worktreePath === home);
+
+/** The tabs Orca lists at `home` once it has caught up with what was closed. */
+async function terminalsAfterClosing(home, closed, within = 5000) {
+  const stop = Date.now() + within;
+  let left = terminalsAt(home);
+  while (left.some((terminal) => closed.includes(terminal.handle)) && Date.now() < stop) {
+    await setTimeout(250);
+    left = terminalsAt(home);
+  }
+  return left;
+}
+
+/** Every workspace Orca knows about right now. */
+function allSetups() {
+  const answer = orca(['project', 'setups']);
+  assert.equal(answer.ok, true, `orca project setups failed: ${JSON.stringify(answer.error)}`);
+  return answer.result.setups;
+}
+
+/** Run this checkout's `obk`, by its full path (#217, #220). */
+function obk(args) {
+  const done = spawnSync(process.execPath, [cliEntry, ...args], { encoding: 'utf8', cwd: os.tmpdir() });
+  assert.equal(done.error, undefined, `could not run \`obk\`: ${done.error?.message}`);
+  assert.ok(!/worktree/i.test(done.stdout + done.stderr), `obk said "worktree": ${done.stdout}${done.stderr}`);
+  return done;
+}
+
+/** Run `obk ... --json` and read the answer it printed. A tab it says it opened is this test's own. */
+function obkJson(args) {
+  const done = obk([...args, '--json']);
+  assert.equal(done.status, 0, `obk ${args.join(' ')} failed: ${done.stdout}${done.stderr}`);
+  try {
+    return guard.openedByKit(JSON.parse(done.stdout));
+  } catch {
+    return assert.fail(`obk ${args.join(' ')} --json did not print JSON: ${done.stdout}`);
+  }
+}
+
+/** The entry for one tab in an `obk --json` answer. */
+function tabOf(answer, name) {
+  const found = (answer.tabs ?? []).filter((entry) => entry.name === name);
+  assert.equal(found.length, 1, `one entry should be the ${name} tab, got: ${JSON.stringify(answer.tabs)}`);
+  return found[0];
+}
+
+/** What the book says about one session right now. */
+async function sessionIn(home, name) {
+  const book = parse(await readFile(path.join(home, 'sessions.yaml'), 'utf8')) ?? {};
+  return book.sessions?.[name] ?? {};
+}
+
+/** Keep asking until `look` gives something other than undefined, or the time runs out; `note` says what was seen. */
+async function until(what, within, look, note = () => '') {
+  const stop = Date.now() + within;
+  for (;;) {
+    const found = await look();
+    if (found !== undefined) return found;
+    assert.ok(Date.now() < stop, `gave up waiting for ${what} after ${within}ms.${note()}`);
+    await setTimeout(1000);
+  }
+}
+
+/** The rows the tab is rendering right now, or [] when Orca would not say. */
+function rowsOf(handle) {
+  const answer = orca(['terminal', 'read', '--terminal', handle, '--screen']);
+  return answer.ok === true && Array.isArray(answer.result?.terminal?.tail) ? answer.result.terminal.tail.map(String) : [];
+}
+
+/** What the tab is showing, for the message of a wait that ran out. */
+function whatIsUp(handle) {
+  const answer = orca(['terminal', 'wait', '--terminal', handle, '--for', 'tui-idle', '--timeout-ms', '2000']);
+  const blocked = answer.ok === true ? answer.result?.wait?.blockedReason : undefined;
+  return `${blocked === undefined ? '' : ` Orca says the tab is waiting on: ${blocked}.`} This test answers nothing a tab asks; answer it in Orca.\n  orca terminal read --terminal ${handle} --screen\n  ${rowsOf(handle).join('\n  ').slice(-3000)}`;
+}
+
+/** Whether Orca calls the tab idle right now, with nothing to answer on it. */
+function idleNow(handle) {
+  const answer = orca(['terminal', 'wait', '--terminal', handle, '--for', 'tui-idle', '--timeout-ms', '2000']);
+  return answer.ok === true && answer.result?.wait?.satisfied === true && answer.result?.wait?.blockedReason === undefined
+    && waitingOn(orca, handle) === undefined;
+}
+
+/** Every screen of a tab that showed a hooks question while it started, kept for the check at the end. */
+const hooksScreens = [];
+
+/** Note a screen with a hooks question on it, whoever answered it after. */
+function noteHooksQuestion(title, handle) {
+  const rows = rowsOf(handle);
+  if (rows.some((row) => HOOKS_QUESTION.test(row))) hooksScreens.push(`${title}:\n  ${rows.join('\n  ')}`);
+}
+
+/** Wait until a tab can be written to: a TUI up, nothing to answer, its start turn over. */
+async function readyAndIdle(title, handle, within = READY_MS) {
+  await until(`${title} to be past its screens and idle`, within, async () => {
+    noteHooksQuestion(title, handle);
+    return idleNow(handle) ? true : undefined;
+  }, () => whatIsUp(handle));
+}
+
+// ------------------------------------------------------------- the records
+
+/** The whole lines of a JSONL file, as JSON; a line being written, or not JSON, is left out. */
+function entriesOf(file) {
+  let text;
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch {
+    return [];
+  }
+  return text.split('\n').flatMap((raw) => {
+    try {
+      return [JSON.parse(raw)];
+    } catch {
+      return [];
+    }
+  });
+}
+
+/** Every string anywhere under a value. */
+function stringsIn(value) {
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value)) return value.flatMap(stringsIn);
+  if (value !== null && typeof value === 'object') return Object.values(value).flatMap(stringsIn);
+  return [];
+}
+
+/** When a record line was written, in ms. */
+const atOf = (entry) => Date.parse(entry?.timestamp ?? '');
+
+/** Claude Code's transcript of the conversation `id` that ran in `home` (a realpath). */
+const claudeRecordOf = (home, id) => path.join(CLAUDE_PROJECTS, home.replaceAll(/[^A-Za-z0-9]/g, '-'), `${id}.jsonl`);
+
+/** A Codex conversation's rollout, by its id. */
+const codexRecordOf = (id) => rolloutFilesOf(CODEX_SESSIONS, id)[0];
+
+/**
+ * The user turns of a record, `{ at, text, index }`: Claude's `type: "user"`
+ * lines that are not meta (text, or text blocks), Codex's `response_item`
+ * messages with `role: "user"` (`input_text` blocks).
+ */
+function userTurnsOf(harness, entries) {
+  return entries.flatMap((entry, index) => {
+    if (harness === 'claude') {
+      if (entry?.type !== 'user' || entry.isMeta === true) return [];
+      const content = entry.message?.content;
+      const text = typeof content === 'string'
+        ? content
+        : Array.isArray(content) ? content.filter((block) => block?.type === 'text').map((block) => String(block.text)).join('\n') : '';
+      return text === '' ? [] : [{ at: atOf(entry), text, index }];
+    }
+    const item = entry?.type === 'response_item' ? entry.payload : undefined;
+    if (item?.type !== 'message' || item.role !== 'user' || !Array.isArray(item.content)) return [];
+    const text = item.content.filter((block) => block?.type === 'input_text').map((block) => String(block.text)).join('\n');
+    return [{ at: atOf(entry), text, index }];
+  });
+}
+
+/** The signals for one mail in a record since `since`: Orca's notices for `mailbox`, the kit's lines for `subject`. */
+function signalsIn(harness, entries, { since, mailbox, subject }) {
+  const turns = userTurnsOf(harness, entries).filter((turn) => turn.at >= since);
+  return {
+    notices: turns.filter((turn) => turn.text.includes(`orchestration check --run ${mailbox}`)),
+    lines: turns.filter((turn) => KIT_LINE.test(turn.text) && turn.text.includes(subject)),
+  };
+}
+
+/**
+ * The kit's Stop hook reasons in a Claude transcript since `since` that name
+ * `subject`: lines that are not the assistant's holding "still unread" and the
+ * subject, gathered into tellings (lines within 2 s of each other are one
+ * telling written down more than once).
+ */
+function tellingsIn(entries, { since, subject }) {
+  const found = entries.filter((entry) => entry?.type !== 'assistant' && atOf(entry) >= since)
+    .filter((entry) => stringsIn(entry).some((text) => text.includes('still unread') && text.includes(subject)));
+  const tellings = [];
+  for (const entry of found) {
+    const last = tellings.at(-1);
+    if (last !== undefined && atOf(entry) - atOf(last.at(-1)) <= 2000) last.push(entry);
+    else tellings.push([entry]);
+  }
+  return tellings;
+}
+
+/** The last lines of a record, short, for a failure message. */
+function tailOf(entries, count = 20) {
+  return entries.slice(-count).map((entry) => {
+    const kind = entry?.type === 'response_item' || entry?.type === 'event_msg' ? `${entry.type}/${entry.payload?.type}` : entry?.type;
+    return `${entry?.timestamp ?? '?'} ${kind}: ${stringsIn(entry?.message ?? entry?.payload ?? {}).join(' ').replaceAll('\n', ' ').slice(0, 300)}`;
+  }).join('\n  ');
+}
+
+/** Codex's turn starts and ends in a rollout: `event_msg`s by their type. */
+const isTurnStart = (entry) => entry?.type === 'event_msg' && ['task_started', 'turn_started'].includes(entry.payload?.type);
+const isTurnEnd = (entry) => entry?.type === 'event_msg' && ['task_complete', 'turn_complete', 'turn_aborted'].includes(entry.payload?.type);
+
+// ------------------------------------------------------------- the screens
+
+/** Claude's input box: the rows between its last two rules. */
+function claudeInputOf(rows) {
+  const rules = rows.flatMap((row, at) => (/^─{8,}/.test(row.trim()) ? [at] : []));
+  if (rules.length < 2) return rows.slice(-4).join('\n');
+  return rows.slice(rules.at(-2) + 1, rules.at(-1)).join('\n');
+}
+
+/** Codex's input line: its lowest row that starts with `›`, and the rows wrapped under it. */
+function codexInputOf(rows) {
+  const at = rows.findLastIndex((row) => row.startsWith('›'));
+  return at === -1 ? '' : rows.slice(at, at + 3).join('\n');
+}
+
+// ------------------------------------------------------------- the fleet
+
+/** How a bot here starts the kit: by the variable its launch line set, this checkout's CLI (#220). */
+const KIT = '"$OBK_CLI"';
+
+const CLAUDE = 'mail-claude';
+const CODEX = 'mail-codex';
+
+/** The file a session's shell writes its mail check to, and its loop's file. */
+const mailFileOf = (home, session) => path.join(home, `mail-${session}.txt`);
+const stepsFileOf = (home, session) => path.join(home, `steps-${session}.txt`);
+
+/** A shell loop of LOOP_STEPS seconds that writes a numbered line and the time to `file` each second. */
+const loop = (file) => `for i in $(seq 1 ${LOOP_STEPS}); do sleep 1; printf 'STEP-%02d %s\\n' "$i" "$(date +%s)" >> ${file}; done`;
+
+/** What every bot here is told first. */
+const aBotOf = (bots) => [
+  'You are a system test\'s bot and you own nothing.',
+  `Your bots folder is ${bots}.`,
+  'Do nothing that is not written here: read no file, and run no command but the ones below.',
+];
+
+/** How a session reads its mail: the kit's check, its shell writing the time and the answer to its file. */
+const readsItsMail = (bots, bot, session, home) => [
+  'Whenever anything tells you that you have fleet mail or orchestration messages, new or not yet read,',
+  'do not run the command it names. Run exactly this command instead, and then say nothing else:',
+  `{ date +%s; ${KIT} message check --bots ${bots} --bot ${bot} --session ${session} --json; } >> ${mailFileOf(home, session)}`,
+  'The files these commands write in your folder are the only thing you write.',
+];
+
+/** Each session's whole part, in its start prompt. Nothing here types at a bot. */
+function promptOf(bots, bot, session) {
+  const home = path.join(bots, 'bots', bot);
+  if (session === 'quiet') {
+    return [...aBotOf(bots), 'Write nothing.', 'If anything tells you that you have mail or messages, ignore it: run no command and say nothing.', 'Say nothing now and wait.'].join(' ');
+  }
+  const reads = readsItsMail(bots, bot, session, home);
+  if (session === 'busy') {
+    return [
+      ...aBotOf(bots), ...reads,
+      'As soon as you are running, run exactly this command, once, in the foreground, and wait for it to finish:',
+      loop(stepsFileOf(home, session)),
+      'Then say nothing else and wait.',
+    ].join(' ');
+  }
+  return [...aBotOf(bots), ...reads, 'Say nothing now and wait.'].join(' ');
+}
+
+/** Send one mail, the kit's own way, and read its answer. */
+function send(bots, { to, from, subject, word }) {
+  const answer = obkJson([
+    'message', 'send', '--bots', bots, '--to', to, '--from', from,
+    '--subject', subject, '--text', `${word} — nothing to do, just read this.`,
+  ]);
+  assert.equal(answer.sent, true, `the premise: the mail to ${to} is queued: ${JSON.stringify(answer)}`);
+  return answer;
+}
+
+/** What a session's shell wrote of its mail checks: the first time, and the whole text. */
+async function mailReadIn(file) {
+  const text = await readFile(file, 'utf8').catch(() => '');
+  const first = /^(\d+)$/m.exec(text);
+  return { text, at: first === null ? undefined : Number(first[1]) * 1000 };
+}
+
+/** The loop's last line and its time, in ms, or undefined while it runs. */
+async function loopEndIn(file) {
+  const found = new RegExp(`${LAST_STEP} (\\d+)`).exec(await readFile(file, 'utf8').catch(() => ''));
+  return found === null ? undefined : Number(found[1]) * 1000;
+}
+
+/**
+ * Run cases side by side and wait for every one, so each reports what it saw;
+ * then fail with every failure there was.
+ */
+async function together(t, cases) {
+  const settled = await Promise.allSettled(Object.values(cases).map((one) => one()));
+  const failed = settled.flatMap((one, at) => (one.status === 'rejected' ? [`${Object.keys(cases)[at]}: ${one.reason?.message ?? one.reason}`] : []));
+  for (const line of failed) t.diagnostic(line);
+  assert.deepEqual(failed, [], `${failed.length} case(s) failed:\n${failed.join('\n\n')}`);
+}
+
+// ------------------------------------------------------------- the cases
+
+/**
+ * Cases 1 and 4: one mail to an idle session, and exactly one signal for it in
+ * its record, of the kind the send said, watched LATE_MS after the signal.
+ */
+async function idleCase(t, { bots, title, harness, handle, recordOf, mailbox, mailFile, to, from, subject, word }) {
+  const since = Date.now() - 1000;
+  const answer = send(bots, { to, from, subject, word });
+  const { signal, because, nudged, nudgeUnseen, nudgeTrouble, blocked, watchedMs } = answer;
+  t.diagnostic(`${title}: the send said ${JSON.stringify({ signal, because, nudged, watchedMs, nudgeUnseen, nudgeTrouble, blocked })}`);
+  assert.ok(signal === 'orca' || (signal === 'line' && because === 'no-turn'), `${title}: an idle receiver gets Orca's notice or the kit's line after the watch, got: ${JSON.stringify(answer)}.${whatIsUp(handle)}`);
+
+  const record = () => entriesOf(recordOf());
+  const seen = await until(`${title}'s record to show the ${signal === 'orca' ? 'Orca notice' : 'kit line'}`, RECORD_MS, async () => {
+    const found = signalsIn(harness, record(), { since, mailbox, subject });
+    const mine = signal === 'orca' ? found.notices : found.lines;
+    return mine.length > 0 ? mine[0] : undefined;
+  }, () => `\n  the record's tail:\n  ${tailOf(record())}${whatIsUp(handle)}`);
+
+  const read = await until(`${title} to read its mail`, ANSWER_MS, async () => {
+    const found = await mailReadIn(mailFile);
+    return found.text.includes(word) ? found : undefined;
+  }, () => `\n  the record's tail:\n  ${tailOf(record())}${whatIsUp(handle)}`);
+  t.diagnostic(`${title}: the ${signal} signal showed ${Math.round((seen.at - since) / 1000)} s after the send; the mail was read ${Math.round((read.at - since) / 1000)} s after it`);
+
+  await setTimeout(Math.max(0, seen.at + LATE_MS - Date.now()));
+  const found = signalsIn(harness, record(), { since, mailbox, subject });
+  assert.deepEqual(
+    { notices: found.notices.length, lines: found.lines.length },
+    signal === 'orca' ? { notices: 1, lines: 0 } : { notices: 0, lines: 1 },
+    `${title}: exactly one signal for the mail, the one the send said (${signal}), in the ${LATE_MS / 1000} s after it.\n  the record's tail:\n  ${tailOf(record())}`,
+  );
+  if (harness === 'claude') {
+    assert.deepEqual(tellingsIn(record(), { since, subject }), [], `${title}: and no turn-end reminder for mail it had been told of and read.\n  ${tailOf(record())}`);
+  }
+}
+
+/** Cases 2 and 3: two mails to a busy Claude session, the hook's one reason for both, and both read after the work. */
+async function busyClaudeCase(t, { bots, title, handle, recordOf, stepsFile, mailFile, mails }) {
+  const steps = async () => readFile(stepsFile, 'utf8').catch(() => '');
+  await until(`${title} to be part way through its loop`, READY_MS, async () => {
+    noteHooksQuestion(title, handle);
+    return (await steps()).includes(PART_WAY) ? true : undefined;
+  }, () => whatIsUp(handle));
+  const since = Date.now() - 1000;
+  for (const mail of mails) {
+    const answer = send(bots, mail);
+    t.diagnostic(`${title}: the send of "${mail.subject}" said ${JSON.stringify({ signal: answer.signal, because: answer.because, nudged: answer.nudged, nudgeTrouble: answer.nudgeTrouble })}`);
+    assert.equal(answer.signal, 'hook', `${title}: a busy Claude Code is told by its hook, got: ${JSON.stringify(answer)}.${whatIsUp(handle)}`);
+    assert.equal(answer.because, 'busy', `${title}: because it is busy, got: ${JSON.stringify(answer)}`);
+    assert.equal(answer.nudged, false, `${title}: nothing typed, got: ${JSON.stringify(answer)}`);
+  }
+  assert.ok(!(await steps()).includes(LAST_STEP), `${title}: the loop ended before the mails went, so nothing here is about a busy receiver: ${stepsFile} holds ${JSON.stringify(await steps())}`);
+
+  // While the loop runs, nothing like the kit's line is on its screen.
+  let ended;
+  while ((ended = await loopEndIn(stepsFile)) === undefined) {
+    const rows = rowsOf(handle);
+    assert.ok(!rows.some((row) => KIT_LINE.test(row)), `${title}: a kit line is on the screen while it is busy:\n  ${rows.join('\n  ')}`);
+    await setTimeout(2000);
+  }
+
+  const record = () => entriesOf(recordOf());
+  const read = await until(`${title} to read both mails after its turn end`, ANSWER_MS, async () => {
+    const found = await mailReadIn(mailFile);
+    return mails.every((mail) => found.text.includes(mail.word)) ? found : undefined;
+  }, () => `\n  the record's tail:\n  ${tailOf(record())}${whatIsUp(handle)}`);
+  assert.ok(read.at > ended, `${title}: the mail was read after the loop's last line (${new Date(ended).toISOString()}), not during it: read at ${new Date(read.at).toISOString()}`);
+
+  const [first, second] = mails.map((mail) => tellingsIn(record(), { since, subject: mail.subject }));
+  assert.equal(first.length, 1, `${title}: the hook told of "${mails[0].subject}" once, got ${first.length}.\n  ${tailOf(record())}`);
+  assert.equal(second.length, 1, `${title}: the hook told of "${mails[1].subject}" once, got ${second.length}.\n  ${tailOf(record())}`);
+  assert.equal(atOf(first[0][0]), atOf(second[0][0]), `${title}: one reason names both mails.\n  ${tailOf(record())}`);
+  assert.ok(atOf(first[0][0]) >= ended - 1000, `${title}: the reason came at the turn end, after the loop.\n  ${tailOf(record())}`);
+  for (const mail of mails) {
+    const found = signalsIn('claude', record(), { since, mailbox: mail.mailbox, subject: mail.subject });
+    assert.deepEqual(found.lines, [], `${title}: no kit line for "${mail.subject}" in its record.\n  ${tailOf(record())}`);
+    if (found.notices.length > 0) t.diagnostic(`${title}: Orca typed its own notice for its mailbox ${found.notices.length} time(s) after the send (out of scope, observed)`);
+  }
+
+  await until(`${title} to be idle after reading`, ANSWER_MS, async () => (idleNow(handle) ? true : undefined), () => whatIsUp(handle));
+  const input = claudeInputOf(rowsOf(handle));
+  assert.ok(!KIT_LINE.test(input) && !input.includes('orchestration check'), `${title}: its input box holds no line for the mail:\n  ${input}`);
+}
+
+/** Case 5: a mail to a busy Codex session, taken into the running turn as a steer, read there, and no Orca notice after. */
+async function busyCodexCase(t, { bots, title, handle, recordOf, stepsFile, mailFile, mail }) {
+  const steps = async () => readFile(stepsFile, 'utf8').catch(() => '');
+  await until(`${title} to be part way through its loop`, READY_MS, async () => ((await steps()).includes(PART_WAY) ? true : undefined), () => whatIsUp(handle));
+  const since = Date.now() - 1000;
+  const answer = send(bots, mail);
+  t.diagnostic(`${title}: the send said ${JSON.stringify({ signal: answer.signal, because: answer.because, nudged: answer.nudged, nudgeUnseen: answer.nudgeUnseen, nudgeTrouble: answer.nudgeTrouble })}`);
+  assert.equal(answer.signal, 'line', `${title}: a busy Codex gets the kit's line, got: ${JSON.stringify(answer)}.${whatIsUp(handle)}`);
+  assert.equal(answer.because, 'busy', `${title}: because it is busy, got: ${JSON.stringify(answer)}. (On Codex 0.157.1 Orca's tui-idle read a Codex waiting on a shell command as idle: messaging.test.js.)`);
+  assert.ok(!(await steps()).includes(LAST_STEP), `${title}: the loop ended before the mail went: ${stepsFile} holds ${JSON.stringify(await steps())}`);
+
+  const record = () => entriesOf(recordOf());
+  const line = await until(`${title}'s rollout to show the kit's line`, RECORD_MS, async () => signalsIn('codex', record(), { since, mailbox: mail.mailbox, subject: mail.subject }).lines[0], () => `\n  ${tailOf(record())}`);
+  const ended = await until(`${title}'s loop to end`, ANSWER_MS, () => loopEndIn(stepsFile), () => whatIsUp(handle));
+  assert.ok(line.at < ended, `${title}: the line went in while the loop ran: line at ${new Date(line.at).toISOString()}, loop ended ${new Date(ended).toISOString()}`);
+
+  const entries = record();
+  const loopAt = entries.findIndex((entry) => entry?.type === 'response_item' && entry.payload?.type !== 'message' && stringsIn(entry.payload).some((text) => text.includes(stepsFile)));
+  assert.ok(loopAt !== -1 && loopAt < line.index, `${title}: the loop's call is in the rollout before the line.\n  ${tailOf(entries)}`);
+  const startsBetween = entries.slice(loopAt + 1, line.index + 1).filter(isTurnStart);
+  assert.deepEqual(startsBetween.map((entry) => entry.timestamp), [], `${title}: no turn started between the loop's call and the line: it went into the running turn.\n  ${tailOf(entries)}`);
+
+  const read = await until(`${title} to read its mail`, ANSWER_MS, async () => {
+    const found = await mailReadIn(mailFile);
+    return found.text.includes(mail.word) ? found : undefined;
+  }, () => `\n  ${tailOf(record())}${whatIsUp(handle)}`);
+  const turnEnd = await until(`${title}'s turn to end`, ANSWER_MS, async () => record().slice(line.index).find(isTurnEnd), () => `\n  ${tailOf(record())}${whatIsUp(handle)}`);
+  assert.ok(read.at <= atOf(turnEnd) + 1000, `${title}: it read the mail in that turn: read at ${new Date(read.at).toISOString()}, the turn ended ${turnEnd.timestamp}`);
+  t.diagnostic(`${title}: the line went in ${Math.round((line.at - since) / 1000)} s after the send; the turn ended ${turnEnd.timestamp}`);
+
+  await setTimeout(Math.max(0, atOf(turnEnd) + LATE_MS - Date.now()));
+  const found = signalsIn('codex', record(), { since, mailbox: mail.mailbox, subject: mail.subject });
+  assert.deepEqual({ notices: found.notices.length, lines: found.lines.length }, { notices: 0, lines: 1 }, `${title}: the kit's one line, and no Orca notice for mail already read, ${LATE_MS / 1000} s after the turn ended.\n  ${tailOf(record())}`);
+  const input = codexInputOf(rowsOf(handle));
+  assert.ok(!KIT_LINE.test(input), `${title}: its input line holds no kit line:\n  ${input}`);
+}
+
+// ------------------------------------------------------------- the test
+
+test('one signal for each fleet mail: Orca\'s notice or the kit\'s line to an idle receiver, the Stop hook for a busy Claude, a steer for a busy Codex, and retire counts what was not read', async (t) => {
+  const before = {
+    handles: new Set(allTerminals().map((terminal) => terminal.handle)),
+    setups: new Set(allSetups().map((setup) => setup.id)),
+  };
+  const bots = await realpath(await mkdtemp(path.join(os.tmpdir(), 'obk-system-one-signal-')));
+  const homeOf = (bot) => path.join(bots, 'bots', bot);
+  const homes = ['bot-father', CLAUDE, CODEX].map(homeOf);
+
+  // Registered before anything is created, so it runs however this test ends.
+  t.after(async () => {
+    const { closed, foreign } = guard.closeOwnAt(homes);
+    const held = new Set(foreign.map((one) => one.home));
+    let deleted = 0;
+    for (const setup of allSetups()) {
+      if (!homes.includes(setup.path) || before.setups.has(setup.id) || held.has(setup.path)) continue;
+      orca(['project', 'setup-delete', '--setup', setup.id]);
+      deleted += 1;
+    }
+    if (deleted > 0 && !(await reloadWindow())) t.diagnostic(RELOAD_LINE);
+    assert.deepEqual(foreign, [], `tabs this test did not create are open at its homes, so it closed only its own and left those projects and ${bots} in place`);
+    const parent = path.dirname(bots);
+    const mine = path.basename(bots);
+    for (const name of (await readdir(parent)).filter((one) => one === mine || one.startsWith(`${mine}.`))) {
+      await rm(path.join(parent, name), { recursive: true, force: true });
+    }
+    const { closedNotOurs, goneElsewhere } = guard.verdict(before.handles);
+    assert.deepEqual(closedNotOurs, [], 'this test closed tabs it did not create');
+    if (goneElsewhere.length > 0) t.diagnostic(`tabs open before this test and closed elsewhere meanwhile: ${goneElsewhere.join(', ')}`);
+    for (const home of homes) assert.deepEqual(await terminalsAfterClosing(home, closed), [], `this test left tabs behind in ${home}`);
+  });
+
+  obkJson(['init', '--bots', bots, '--harness', 'claude']);
+  obkJson(['bot', 'create', '--bots', bots, '--name', CLAUDE, '--harness', 'claude', '--charter', 'Mail Claude exists for one system test run and owns nothing.']);
+  obkJson(['bot', 'create', '--bots', bots, '--name', CODEX, '--harness', 'codex', '--charter', 'Mail Codex exists for one system test run and owns nothing.']);
+  for (const session of ['idle', 'quiet', 'busy']) obkJson(['session', 'add', '--bots', bots, '--bot', CLAUDE, '--name', session, `--prompt=${promptOf(bots, CLAUDE, session)}`]);
+  for (const session of ['idle', 'busy']) obkJson(['session', 'add', '--bots', bots, '--bot', CODEX, '--name', session, `--prompt=${promptOf(bots, CODEX, session)}`, ...codexTrustArgs(bots)]);
+
+  /** One session up, idle once its start turn is over, and its conversation and mailbox in the book. */
+  const sessions = {};
+  const bringUp = async (bot, session, { wait = true } = {}) => {
+    const entry = tabOf(obkJson(['up', '--bots', bots, '--bot', bot, '--session', session]), session);
+    assert.equal(entry.created, true, `the premise: up opened ${entry.title}`);
+    const title = entry.title;
+    if (wait) await readyAndIdle(title, entry.terminal);
+    const held = await until(`the book to hold ${title}'s conversation`, READY_MS, async () => {
+      const found = await sessionIn(homeOf(bot), session);
+      return typeof found.session === 'string' && typeof found.mailbox === 'string' ? found : undefined;
+    }, () => whatIsUp(entry.terminal));
+    const harness = bot === CLAUDE ? 'claude' : 'codex';
+    sessions[`${bot}/${session}`] = {
+      title,
+      harness,
+      handle: entry.terminal,
+      mailbox: held.mailbox,
+      recordOf: () => (harness === 'claude' ? claudeRecordOf(homeOf(bot), held.session) : codexRecordOf(held.session) ?? '/nowhere'),
+      mailFile: mailFileOf(homeOf(bot), session),
+      stepsFile: stepsFileOf(homeOf(bot), session),
+    };
+    return sessions[`${bot}/${session}`];
+  };
+
+  await bringUp(CODEX, 'idle');
+  await bringUp(CLAUDE, 'idle');
+  await bringUp(CLAUDE, 'quiet');
+
+  // 1 and 4, side by side.
+  const idleClaude = sessions[`${CLAUDE}/idle`];
+  const idleCodex = sessions[`${CODEX}/idle`];
+  await together(t, {
+    'case 1, idle Claude': () => idleCase(t, {
+      bots, ...idleClaude, to: `${CLAUDE}/idle`, from: `${CODEX}/idle`, subject: 'the heron report', word: 'HERON-6120',
+    }),
+    'case 4, idle Codex': () => idleCase(t, {
+      bots, ...idleCodex, to: `${CODEX}/idle`, from: `${CLAUDE}/idle`, subject: 'the kestrel report', word: 'KESTREL-3381',
+    }),
+  });
+
+  // 6: mail the quiet session is told to ignore, and a retire at once.
+  const quiet = sessions[`${CLAUDE}/quiet`];
+  const toQuiet = send(bots, { to: `${CLAUDE}/quiet`, from: `${CODEX}/idle`, subject: 'the plover report', word: 'PLOVER-5512' });
+  t.diagnostic(`${quiet.title}: the send said ${JSON.stringify({ signal: toQuiet.signal, because: toQuiet.because, nudged: toQuiet.nudged })}`);
+  const retired = obkJson(['retire', '--bots', bots, '--bot', CLAUDE, '--session', 'quiet']);
+  guard.closedByKit(retired.closed);
+  assert.deepEqual(
+    { count: retired.unread?.count, from: retired.unread?.from },
+    { count: 1, from: [`${CODEX}/idle`] },
+    `${quiet.title}: the retire says one message was not read with obk message check, and who sent it: ${JSON.stringify(retired)}`,
+  );
+
+  // 2, 3 and 5, side by side: the busy sessions come up now, so their loops start now.
+  const busyClaude = await bringUp(CLAUDE, 'busy', { wait: false });
+  const busyCodex = await bringUp(CODEX, 'busy', { wait: false });
+  await together(t, {
+    'cases 2 and 3, busy Claude': () => busyClaudeCase(t, {
+      bots,
+      ...busyClaude,
+      mails: [
+        { to: `${CLAUDE}/busy`, from: `${CODEX}/idle`, subject: 'the osprey report', word: 'OSPREY-7745', mailbox: busyClaude.mailbox },
+        { to: `${CLAUDE}/busy`, from: `${CODEX}/idle`, subject: 'the curlew report', word: 'CURLEW-2209', mailbox: busyClaude.mailbox },
+      ],
+    }),
+    'case 5, busy Codex': () => busyCodexCase(t, {
+      bots,
+      ...busyCodex,
+      mail: { to: `${CODEX}/busy`, from: `${CLAUDE}/idle`, subject: 'the avocet report', word: 'AVOCET-4038', mailbox: busyCodex.mailbox },
+    }),
+  });
+
+  // And no tab here showed a hooks question of its harness's own at its start.
+  assert.deepEqual(hooksScreens, [], `a tab showed a hooks question; the kit's new Stop hook must bring up none:\n${hooksScreens.join('\n\n')}`);
+});
