@@ -32,7 +32,9 @@ still open, and tries again when the tab's title turns idle and on a timer of
 about 3 s. Each message gets one notice, and Orca marks it delivered then.
 Nothing turns the notice off. Orca does not check that its notice started a
 turn, and it presses Enter on a tab that reads working too. A Codex tab reads
-idle only through the `Codex ready` title Orca's own Codex hook writes. A tab
+idle only through the `Codex ready` title Orca's own Codex hook writes, and
+with that hook in place Orca's notice did reach an idle kit-made Codex tab, at
+once after the send (live, 2026-10-09, #509). A tab
 may not read another tab's mailbox, so a sender cannot see whether the notice
 went (read in the 1.4.223 bundle, 2026-10-09, #509; tech notes). Orca's
 `check` shows the subject and not the body, and leaves the delivery open,
