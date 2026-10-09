@@ -86,8 +86,9 @@
 //     creates anything;
 //   - runs this checkout's `src/cli.js` by its full path, never the machine's
 //     `obk`;
-//   - types into no tab: the only lines that go in are the kit's launch lines,
-//     its lines for mail, and Orca's own notices;
+//   - types at no bot: the only lines that go into a tab are the kit's launch
+//     lines, its lines for mail and Orca's own notices; the only keys the test
+//     presses are its two answers below, in its own Claude tabs;
 //   - closes only its own tabs, through the tab guard, then deletes its own
 //     workspaces, whatever happened;
 //   - signals no process.
@@ -98,19 +99,26 @@
 // system test does: the Run mailboxes Orca cannot delete, and offline entries
 // in Claude Code's Remote Control list.
 //
-// **It is attended.** What to expect, in order:
+// **Nobody answers anything by hand** (the architect's ruling for the #509
+// live run). The test answers two first-run screens itself, in its own
+// throwaway Claude tabs, by the suite's allowlists and the keys and checks
+// session-clear.test.js uses (`answerScreens`):
 //
-//   1. `Mail Claude idle`: Claude Code's folder trust, once for the folder
-//      (`<tmp>/obk-system-one-signal-*/bots/mail-claude`). Its selection starts
-//      on `No, exit`: a down-arrow, then return. `Mail Claude quiet` and
-//      `Mail Claude busy` are in the same folder and should not ask again.
-//   2. Any Claude tab after its first turn: "Teach auto mode about your
-//      environment?". Esc cancels it.
-//   3. Any Claude tab: if Claude Code asks before it runs a command its start
-//      prompt gives it, or the kit's check, allow it.
-//   4. The Codex tabs should ask nothing (trust given at launch). If Codex
-//      offers an update, accept it (PRD 6.5).
-//   5. `Bot Father daily`, if it is opened: leave it.
+//   - Claude Code's folder trust, once, for `mail-claude`'s folder, only when
+//     it is the plain one for that folder (helpers/screens.js
+//     `onlyPlainTrustOf`): down and return. `Mail Claude quiet` and `Mail
+//     Claude busy` are in the same folder; a trust question there again stops
+//     the run.
+//   - "Teach auto mode about your environment?", at most once in a tab, only
+//     when it is the captured form (`onlyTeachFormOf`): Esc, then the form
+//     gone and ~/.claude.json's autoModeEnvSetup as it was.
+//
+// Every other question on a tab's screen (`questionOn`) stops the run at once,
+// with the screen in the failure message, and is never answered: a trust
+// screen that is not the plain one, a second Teach form, Claude Code asking
+// before it runs a command, a Codex update offer, a hooks review. The Codex
+// tabs are given their trust at launch and should ask nothing. `Bot Father
+// daily`, if `init` opens it, is never looked at.
 //
 // Every wait says what the tab is showing when it runs out, so a run that was
 // left alone names the screen that stopped it.
@@ -132,7 +140,7 @@ import { parse } from 'yaml';
 import { cliEntry } from '../helpers/cli.js';
 import { codexTrustArgs } from '../helpers/codex-trust.js';
 import { rolloutFilesOf } from '../helpers/codex-rollout.js';
-import { waitingOn } from '../helpers/screens.js';
+import { onlyPlainTrustOf, onlyTeachFormOf, questionOn, waitingOn } from '../helpers/screens.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
 
@@ -231,10 +239,15 @@ async function sessionIn(home, name) {
   return book.sessions?.[name] ?? {};
 }
 
-/** Keep asking until `look` gives something other than undefined, or the time runs out; `note` says what was seen. */
-async function until(what, within, look, note = () => '') {
+/**
+ * Keep asking until `look` gives something other than undefined, or the time
+ * runs out; `note` says what was seen. `screen`, when given, is run before each
+ * look: the tab's own first-run screens, answered or stopped at (`screensOf`).
+ */
+async function until(what, within, look, note = () => '', screen = async () => {}) {
   const stop = Date.now() + within;
   for (;;) {
+    await screen();
     const found = await look();
     if (found !== undefined) return found;
     assert.ok(Date.now() < stop, `gave up waiting for ${what} after ${within}ms.${note()}`);
@@ -242,17 +255,21 @@ async function until(what, within, look, note = () => '') {
   }
 }
 
-/** The rows the tab is rendering right now, or [] when Orca would not say. */
+/** The rows the tab is rendering right now, or undefined when Orca rendered none. */
 function rowsOf(handle) {
   const answer = orca(['terminal', 'read', '--terminal', handle, '--screen']);
-  return answer.ok === true && Array.isArray(answer.result?.terminal?.tail) ? answer.result.terminal.tail.map(String) : [];
+  const tail = answer.ok === true && answer.result?.terminal?.source === 'screen' ? answer.result.terminal.tail : undefined;
+  return Array.isArray(tail) ? tail.map(String) : undefined;
 }
+
+/** Every row the tab renders now, one to a line, for a message. */
+const screenRows = (handle) => (rowsOf(handle) ?? ['(unreadable)']).join('\n    ');
 
 /** What the tab is showing, for the message of a wait that ran out. */
 function whatIsUp(handle) {
   const answer = orca(['terminal', 'wait', '--terminal', handle, '--for', 'tui-idle', '--timeout-ms', '2000']);
   const blocked = answer.ok === true ? answer.result?.wait?.blockedReason : undefined;
-  return `${blocked === undefined ? '' : ` Orca says the tab is waiting on: ${blocked}.`} This test answers nothing a tab asks; answer it in Orca.\n  orca terminal read --terminal ${handle} --screen\n  ${rowsOf(handle).join('\n  ').slice(-3000)}`;
+  return `${blocked === undefined ? '' : ` Orca says the tab is waiting on: ${blocked}.`}\n  orca terminal read --terminal ${handle} --screen\n    ${screenRows(handle)}`;
 }
 
 /** Whether Orca calls the tab idle right now, with nothing to answer on it. */
@@ -262,21 +279,92 @@ function idleNow(handle) {
     && waitingOn(orca, handle) === undefined;
 }
 
-/** Every screen of a tab that showed a hooks question while it started, kept for the check at the end. */
+/** Every screen of a tab that showed a hooks question, kept for the check at the end. */
 const hooksScreens = [];
 
-/** Note a screen with a hooks question on it, whoever answered it after. */
-function noteHooksQuestion(title, handle) {
+/** The title of Claude Code's "Teach auto mode" form (#416), as helpers/screens.js has it. */
+const TEACH_TITLE = 'Teach auto mode about your environment?';
+
+/** ~/.claude.json's autoModeEnvSetup, which only the Teach form's accept path changes (tech notes, section 1). */
+function autoModeState() {
+  try {
+    const held = JSON.parse(readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8')).autoModeEnvSetup;
+    return held === undefined ? 'absent' : JSON.stringify(held);
+  } catch (error) {
+    return `unreadable (${error.message})`;
+  }
+}
+
+/** The bot folders whose Claude folder trust this test answered, and the tabs whose Teach form it answered. */
+const answered = { trust: new Set(), teach: new Set() };
+
+/**
+ * One look at a tab's own first-run screens, by the architect's ruling for the
+ * #509 live run: this test answers two of them itself, in its own throwaway
+ * tabs, and only when the suite's allowlist matches, by the keys and checks
+ * session-clear.test.js uses (the rulings on #391 and #451):
+ *
+ *   - Claude Code's folder trust, once for a bot folder, only when it is the
+ *     plain one for that folder (helpers/screens.js `onlyPlainTrustOf`): down
+ *     and return, with no `--enter`; then the trust rows go, or the test fails.
+ *   - Claude Code's "Teach auto mode about your environment?" form, at most
+ *     once in a tab, only when every row from its title down is the captured
+ *     form's (`onlyTeachFormOf`): Esc; then the form goes, and
+ *     ~/.claude.json's autoModeEnvSetup stays as it was, or the test fails.
+ *
+ * Any other question on screen (helpers/screens.js `questionOn`) stops the run
+ * at once, with the screen in the failure message; it is never answered. A
+ * screen showing a hooks question is kept for the check at the end as well.
+ */
+async function answerScreens(t, title, handle, home) {
   const rows = rowsOf(handle);
-  if (rows.some((row) => HOOKS_QUESTION.test(row))) hooksScreens.push(`${title}:\n  ${rows.join('\n  ')}`);
+  if (rows === undefined) return;
+  if (rows.some((row) => HOOKS_QUESTION.test(row))) hooksScreens.push(`${title}:\n    ${rows.join('\n    ')}`);
+
+  if (rows.some((row) => row.includes('Yes, I trust this folder'))) {
+    assert.ok(!answered.trust.has(home), `${title} asked Claude Code's folder trust for ${home} again, which this test answered once and answers no more:\n    ${rows.join('\n    ')}`);
+    const wrong = onlyPlainTrustOf(rows, home);
+    assert.equal(wrong, undefined, `${title}'s folder trust is not one this test may answer, so it answered nothing: ${wrong}.\n  what it showed:\n    ${rows.join('\n    ')}`);
+    const sent = orca(['terminal', 'send', '--terminal', handle, '--text', '\x1b[B\r']);
+    assert.equal(sent.ok, true, `answering ${title}'s folder trust failed: ${JSON.stringify(sent.error)}`);
+    answered.trust.add(home);
+    await until(`${title}'s folder trust to go after it was answered`, 15000, async () => ((rowsOf(handle) ?? []).some((row) => row.includes('Yes, I trust this folder')) ? undefined : true), () => whatIsUp(handle));
+    t.diagnostic(`answered ${title}'s plain folder trust (the ruling on #391, option (c))`);
+    return;
+  }
+
+  if (rows.some((row) => row.trim() === TEACH_TITLE)) {
+    assert.ok(!answered.teach.has(handle), `the Teach form came up again in ${title}, and this test answers it at most once:\n    ${rows.join('\n    ')}`);
+    const wrong = onlyTeachFormOf(rows);
+    assert.equal(wrong, undefined, `${title}'s Teach form is not the captured one, so this test answered nothing: ${wrong}.\n  what it showed:\n    ${rows.join('\n    ')}`);
+    const was = autoModeState();
+    const sent = orca(['terminal', 'send', '--terminal', handle, '--text', '\x1b']);
+    assert.equal(sent.ok, true, `answering ${title}'s Teach form with Esc failed: ${JSON.stringify(sent.error)}`);
+    answered.teach.add(handle);
+    await until(`${title}'s Teach form to go after Esc`, 15000, async () => ((rowsOf(handle) ?? []).some((row) => row.trim() === TEACH_TITLE) ? undefined : true), () => whatIsUp(handle));
+    await setTimeout(2000);
+    const now = autoModeState();
+    assert.equal(now, was, `Esc on ${title}'s Teach form taught nothing: ~/.claude.json's autoModeEnvSetup should be as it was (before: ${was}, after: ${now})`);
+    t.diagnostic(`answered ${title}'s Teach form with Esc; it went, and ~/.claude.json's autoModeEnvSetup stayed ${was}`);
+    return;
+  }
+
+  const question = questionOn(rows);
+  assert.equal(question, undefined, `${title} shows a screen this test does not know, and it answers nothing; the run stops here:\n    ${rows.join('\n    ')}`);
+}
+
+/** Wait, `ms` in all, looking at the tab's screens every two seconds. */
+async function pause(ms, screen) {
+  const stop = Date.now() + ms;
+  while (Date.now() < stop) {
+    await screen();
+    await setTimeout(Math.min(2000, Math.max(0, stop - Date.now())));
+  }
 }
 
 /** Wait until a tab can be written to: a TUI up, nothing to answer, its start turn over. */
-async function readyAndIdle(title, handle, within = READY_MS) {
-  await until(`${title} to be past its screens and idle`, within, async () => {
-    noteHooksQuestion(title, handle);
-    return idleNow(handle) ? true : undefined;
-  }, () => whatIsUp(handle));
+async function readyAndIdle(title, handle, screen, within = READY_MS) {
+  await until(`${title} to be past its screens and idle`, within, async () => (idleNow(handle) ? true : undefined), () => whatIsUp(handle), screen);
 }
 
 // ------------------------------------------------------------- the records
@@ -479,7 +567,7 @@ async function together(t, cases) {
  * Cases 1 and 4: one mail to an idle session, and exactly one signal for it in
  * its record, of the kind the send said, watched LATE_MS after the signal.
  */
-async function idleCase(t, { bots, title, harness, handle, recordOf, mailbox, mailFile, to, from, subject, word }) {
+async function idleCase(t, { bots, title, harness, handle, recordOf, mailbox, mailFile, screen, to, from, subject, word }) {
   const since = Date.now() - 1000;
   const answer = send(bots, { to, from, subject, word });
   const { signal, because, nudged, nudgeUnseen, nudgeTrouble, blocked, watchedMs } = answer;
@@ -491,15 +579,15 @@ async function idleCase(t, { bots, title, harness, handle, recordOf, mailbox, ma
     const found = signalsIn(harness, record(), { since, mailbox, subject });
     const mine = signal === 'orca' ? found.notices : found.lines;
     return mine.length > 0 ? mine[0] : undefined;
-  }, () => `\n  the record's tail:\n  ${tailOf(record())}${whatIsUp(handle)}`);
+  }, () => `\n  the record's tail:\n  ${tailOf(record())}${whatIsUp(handle)}`, screen);
 
   const read = await until(`${title} to read its mail`, ANSWER_MS, async () => {
     const found = await mailReadIn(mailFile);
     return found.text.includes(word) ? found : undefined;
-  }, () => `\n  the record's tail:\n  ${tailOf(record())}${whatIsUp(handle)}`);
+  }, () => `\n  the record's tail:\n  ${tailOf(record())}${whatIsUp(handle)}`, screen);
   t.diagnostic(`${title}: the ${signal} signal showed ${Math.round((seen.at - since) / 1000)} s after the send; the mail was read ${Math.round((read.at - since) / 1000)} s after it`);
 
-  await setTimeout(Math.max(0, seen.at + LATE_MS - Date.now()));
+  await pause(seen.at + LATE_MS - Date.now(), screen);
   const found = signalsIn(harness, record(), { since, mailbox, subject });
   assert.deepEqual(
     { notices: found.notices.length, lines: found.lines.length },
@@ -512,12 +600,9 @@ async function idleCase(t, { bots, title, harness, handle, recordOf, mailbox, ma
 }
 
 /** Cases 2 and 3: two mails to a busy Claude session, the hook's one reason for both, and both read after the work. */
-async function busyClaudeCase(t, { bots, title, handle, recordOf, stepsFile, mailFile, mails }) {
+async function busyClaudeCase(t, { bots, title, handle, recordOf, stepsFile, mailFile, screen, mails }) {
   const steps = async () => readFile(stepsFile, 'utf8').catch(() => '');
-  await until(`${title} to be part way through its loop`, READY_MS, async () => {
-    noteHooksQuestion(title, handle);
-    return (await steps()).includes(PART_WAY) ? true : undefined;
-  }, () => whatIsUp(handle));
+  await until(`${title} to be part way through its loop`, READY_MS, async () => ((await steps()).includes(PART_WAY) ? true : undefined), () => whatIsUp(handle), screen);
   const since = Date.now() - 1000;
   for (const mail of mails) {
     const answer = send(bots, mail);
@@ -531,7 +616,8 @@ async function busyClaudeCase(t, { bots, title, handle, recordOf, stepsFile, mai
   // While the loop runs, nothing like the kit's line is on its screen.
   let ended;
   while ((ended = await loopEndIn(stepsFile)) === undefined) {
-    const rows = rowsOf(handle);
+    await screen();
+    const rows = rowsOf(handle) ?? [];
     assert.ok(!rows.some((row) => KIT_LINE.test(row)), `${title}: a kit line is on the screen while it is busy:\n  ${rows.join('\n  ')}`);
     await setTimeout(2000);
   }
@@ -540,7 +626,7 @@ async function busyClaudeCase(t, { bots, title, handle, recordOf, stepsFile, mai
   const read = await until(`${title} to read both mails after its turn end`, ANSWER_MS, async () => {
     const found = await mailReadIn(mailFile);
     return mails.every((mail) => found.text.includes(mail.word)) ? found : undefined;
-  }, () => `\n  the record's tail:\n  ${tailOf(record())}${whatIsUp(handle)}`);
+  }, () => `\n  the record's tail:\n  ${tailOf(record())}${whatIsUp(handle)}`, screen);
   assert.ok(read.at > ended, `${title}: the mail was read after the loop's last line (${new Date(ended).toISOString()}), not during it: read at ${new Date(read.at).toISOString()}`);
 
   const [first, second] = mails.map((mail) => tellingsIn(record(), { since, subject: mail.subject }));
@@ -554,15 +640,15 @@ async function busyClaudeCase(t, { bots, title, handle, recordOf, stepsFile, mai
     if (found.notices.length > 0) t.diagnostic(`${title}: Orca typed its own notice for its mailbox ${found.notices.length} time(s) after the send (out of scope, observed)`);
   }
 
-  await until(`${title} to be idle after reading`, ANSWER_MS, async () => (idleNow(handle) ? true : undefined), () => whatIsUp(handle));
-  const input = claudeInputOf(rowsOf(handle));
+  await until(`${title} to be idle after reading`, ANSWER_MS, async () => (idleNow(handle) ? true : undefined), () => whatIsUp(handle), screen);
+  const input = claudeInputOf(rowsOf(handle) ?? []);
   assert.ok(!KIT_LINE.test(input) && !input.includes('orchestration check'), `${title}: its input box holds no line for the mail:\n  ${input}`);
 }
 
 /** Case 5: a mail to a busy Codex session, taken into the running turn as a steer, read there, and no Orca notice after. */
-async function busyCodexCase(t, { bots, title, handle, recordOf, stepsFile, mailFile, mail }) {
+async function busyCodexCase(t, { bots, title, handle, recordOf, stepsFile, mailFile, screen, mail }) {
   const steps = async () => readFile(stepsFile, 'utf8').catch(() => '');
-  await until(`${title} to be part way through its loop`, READY_MS, async () => ((await steps()).includes(PART_WAY) ? true : undefined), () => whatIsUp(handle));
+  await until(`${title} to be part way through its loop`, READY_MS, async () => ((await steps()).includes(PART_WAY) ? true : undefined), () => whatIsUp(handle), screen);
   const since = Date.now() - 1000;
   const answer = send(bots, mail);
   t.diagnostic(`${title}: the send said ${JSON.stringify({ signal: answer.signal, because: answer.because, nudged: answer.nudged, nudgeUnseen: answer.nudgeUnseen, nudgeTrouble: answer.nudgeTrouble })}`);
@@ -571,8 +657,8 @@ async function busyCodexCase(t, { bots, title, handle, recordOf, stepsFile, mail
   assert.ok(!(await steps()).includes(LAST_STEP), `${title}: the loop ended before the mail went: ${stepsFile} holds ${JSON.stringify(await steps())}`);
 
   const record = () => entriesOf(recordOf());
-  const line = await until(`${title}'s rollout to show the kit's line`, RECORD_MS, async () => signalsIn('codex', record(), { since, mailbox: mail.mailbox, subject: mail.subject }).lines[0], () => `\n  ${tailOf(record())}`);
-  const ended = await until(`${title}'s loop to end`, ANSWER_MS, () => loopEndIn(stepsFile), () => whatIsUp(handle));
+  const line = await until(`${title}'s rollout to show the kit's line`, RECORD_MS, async () => signalsIn('codex', record(), { since, mailbox: mail.mailbox, subject: mail.subject }).lines[0], () => `\n  ${tailOf(record())}`, screen);
+  const ended = await until(`${title}'s loop to end`, ANSWER_MS, () => loopEndIn(stepsFile), () => whatIsUp(handle), screen);
   assert.ok(line.at < ended, `${title}: the line went in while the loop ran: line at ${new Date(line.at).toISOString()}, loop ended ${new Date(ended).toISOString()}`);
 
   const entries = record();
@@ -584,15 +670,15 @@ async function busyCodexCase(t, { bots, title, handle, recordOf, stepsFile, mail
   const read = await until(`${title} to read its mail`, ANSWER_MS, async () => {
     const found = await mailReadIn(mailFile);
     return found.text.includes(mail.word) ? found : undefined;
-  }, () => `\n  ${tailOf(record())}${whatIsUp(handle)}`);
-  const turnEnd = await until(`${title}'s turn to end`, ANSWER_MS, async () => record().slice(line.index).find(isTurnEnd), () => `\n  ${tailOf(record())}${whatIsUp(handle)}`);
+  }, () => `\n  ${tailOf(record())}${whatIsUp(handle)}`, screen);
+  const turnEnd = await until(`${title}'s turn to end`, ANSWER_MS, async () => record().slice(line.index).find(isTurnEnd), () => `\n  ${tailOf(record())}${whatIsUp(handle)}`, screen);
   assert.ok(read.at <= atOf(turnEnd) + 1000, `${title}: it read the mail in that turn: read at ${new Date(read.at).toISOString()}, the turn ended ${turnEnd.timestamp}`);
   t.diagnostic(`${title}: the line went in ${Math.round((line.at - since) / 1000)} s after the send; the turn ended ${turnEnd.timestamp}`);
 
-  await setTimeout(Math.max(0, atOf(turnEnd) + LATE_MS - Date.now()));
+  await pause(atOf(turnEnd) + LATE_MS - Date.now(), screen);
   const found = signalsIn('codex', record(), { since, mailbox: mail.mailbox, subject: mail.subject });
   assert.deepEqual({ notices: found.notices.length, lines: found.lines.length }, { notices: 0, lines: 1 }, `${title}: the kit's one line, and no Orca notice for mail already read, ${LATE_MS / 1000} s after the turn ended.\n  ${tailOf(record())}`);
-  const input = codexInputOf(rowsOf(handle));
+  const input = codexInputOf(rowsOf(handle) ?? []);
   assert.ok(!KIT_LINE.test(input), `${title}: its input line holds no kit line:\n  ${input}`);
 }
 
@@ -642,16 +728,18 @@ test('one signal for each fleet mail: Orca\'s notice or the kit\'s line to an id
     const entry = tabOf(obkJson(['up', '--bots', bots, '--bot', bot, '--session', session]), session);
     assert.equal(entry.created, true, `the premise: up opened ${entry.title}`);
     const title = entry.title;
-    if (wait) await readyAndIdle(title, entry.terminal);
+    const screen = () => answerScreens(t, title, entry.terminal, homeOf(bot));
+    if (wait) await readyAndIdle(title, entry.terminal, screen);
     const held = await until(`the book to hold ${title}'s conversation`, READY_MS, async () => {
       const found = await sessionIn(homeOf(bot), session);
       return typeof found.session === 'string' && typeof found.mailbox === 'string' ? found : undefined;
-    }, () => whatIsUp(entry.terminal));
+    }, () => whatIsUp(entry.terminal), screen);
     const harness = bot === CLAUDE ? 'claude' : 'codex';
     sessions[`${bot}/${session}`] = {
       title,
       harness,
       handle: entry.terminal,
+      screen,
       mailbox: held.mailbox,
       recordOf: () => (harness === 'claude' ? claudeRecordOf(homeOf(bot), held.session) : codexRecordOf(held.session) ?? '/nowhere'),
       mailFile: mailFileOf(homeOf(bot), session),
