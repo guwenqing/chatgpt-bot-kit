@@ -8,9 +8,10 @@
 // handed to Orca on the command line.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { copyFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 
 import { SHELL_ENV } from './launch.js';
@@ -135,7 +136,14 @@ export const profilesDir = () => path.join(homedir(), 'Library', 'Application Su
  *
  * Orca adds these to the agents it launches, relaunches and resumes itself, so
  * they override the approval level a session was started with (PRD 6.5). The
- * kit reads the file and never writes it.
+ * kit reads Orca's files and never writes them.
+ *
+ * Orca 1.4.223 keeps them in `profile-state.db`, and older Orca in
+ * `orca-data.json` (tech notes, section 1). Orca's CLI has no command that
+ * prints them. A profile is read from its db when the db holds a settings
+ * document, and from the json file otherwise. A db that cannot be read is not
+ * passed over for the json beside it, which an upgraded Orca no longer keeps up
+ * to date.
  *
  * A mapping with no entry for an agent is not "no arguments": Orca falls back
  * to its own built-in default, which is the permission bypass itself (tech
@@ -153,17 +161,66 @@ export function orcaDefaultArgs() {
 
   return {
     dir,
-    profiles: profiles
-      .map((name) => path.join(dir, name, 'orca-data.json'))
-      .filter((file) => existsSync(file))
-      .map((file) => ({ file, args: argsIn(file) })),
+    profiles: profiles.map((name) => argsOfProfile(path.join(dir, name))).filter((one) => one !== undefined),
   };
 }
 
-/** What one profile file says about the agents' default arguments. */
-function argsIn(file) {
+/** What one profile says about the agents' default arguments, or undefined when it keeps no settings. */
+function argsOfProfile(profile) {
+  const db = path.join(profile, 'profile-state.db');
+  const json = path.join(profile, 'orca-data.json');
+
+  if (existsSync(db)) {
+    let payload;
+    try {
+      payload = settingsPayloadIn(db);
+    } catch {
+      return { file: db, args: undefined };
+    }
+    if (payload !== null) return { file: db, args: argsIn(() => JSON.parse(payload)) };
+  }
+  if (existsSync(json)) return { file: json, args: argsIn(() => JSON.parse(readFileSync(json, 'utf8'))?.settings) };
+  // A db with no settings document and no older file beside it: a store the
+  // kit does not know how to read, which it says rather than pass over.
+  return existsSync(db) ? { file: db, args: undefined } : undefined;
+}
+
+/**
+ * The `settings` document in Orca's `profile-state.db`, as text, or null when
+ * the db has none. Throws when the db cannot be read.
+ *
+ * Orca holds the db open in WAL mode, and its current settings may be in the
+ * `-wal` alone. A SQLite open of Orca's own file, read-only included, writes
+ * reader marks into its `-shm` and is refused while Orca holds the db in
+ * exclusive mode. So the kit reads a copy: the `-wal` and then the db, into a
+ * private folder of its own (0700, as mkdtemp makes it), removed straight after
+ * on every path. The `-wal` goes first so that a checkpoint Orca runs between
+ * the two copies leaves the db copy holding what the `-wal` copy holds, not
+ * missing it.
+ */
+function settingsPayloadIn(db) {
+  const copyDir = mkdtempSync(path.join(tmpdir(), 'obk-orca-'));
   try {
-    const settings = JSON.parse(readFileSync(file, 'utf8'))?.settings?.agentDefaultArgs;
+    const copy = path.join(copyDir, path.basename(db));
+    if (existsSync(`${db}-wal`)) copyFileSync(`${db}-wal`, `${copy}-wal`);
+    copyFileSync(db, copy);
+
+    const store = new DatabaseSync(copy);
+    try {
+      const row = store.prepare("SELECT payload FROM profile_state_documents WHERE domain = 'settings'").get();
+      return row === undefined ? null : row.payload;
+    } finally {
+      store.close();
+    }
+  } finally {
+    rmSync(copyDir, { recursive: true, force: true });
+  }
+}
+
+/** What one settings document, given by `read`, says about the agents' default arguments. */
+function argsIn(read) {
+  try {
+    const settings = read()?.agentDefaultArgs;
     // Anything that is not a mapping of agents is a mapping with nothing in it,
     // which is Orca falling back to its own defaults for every agent.
     return settings !== null && typeof settings === 'object' && !Array.isArray(settings) ? settings : {};

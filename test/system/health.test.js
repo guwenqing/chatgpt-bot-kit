@@ -11,7 +11,8 @@
 //      it has been given, and a bot folder that goes away does not take that
 //      record with it. Here the folder really goes away.
 //   3. Orca's own per-agent default launch arguments. The kit reads them out of
-//      Orca's profile settings file under the home directory, and when they
+//      Orca's profile settings under the home directory (profile-state.db from
+//      Orca 1.4.223, orca-data.json before it, #507), and when they
 //      carry a permission bypass every session Orca relaunches or resumes runs
 //      in that mode whatever the kit asked for (PRD 6.5). Here the real file is
 //      read — by the kit, and separately by this test, which then holds the kit
@@ -57,9 +58,10 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readdir, readFile, realpath, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, readdir, readFile, realpath, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from '../helpers/system.js';
 import { setTimeout } from 'node:timers/promises';
 
@@ -182,9 +184,18 @@ async function recordedLaunchArgs() {
   const files = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
+    // Orca 1.4.223 and later: the settings document in profile-state.db, which
+    // counts over an old orca-data.json beside it (#507).
+    const db = path.join(ORCA_PROFILES, entry.name, 'profile-state.db');
+    const fromDb = await settingsInDb(db);
+    if (fromDb !== undefined) {
+      files.push({ file: db, args: fromDb.agentDefaultArgs });
+      continue;
+    }
+    // An older Orca, with no db: orca-data.json.
     const file = path.join(ORCA_PROFILES, entry.name, 'orca-data.json');
     try {
-      files.push({ file, settings: JSON.parse(await readFile(file, 'utf8')) });
+      files.push({ file, args: JSON.parse(await readFile(file, 'utf8'))?.settings?.agentDefaultArgs });
     } catch {
       // A profile folder with no readable settings in it is not this machine's
       // settings; only one that has them counts.
@@ -197,7 +208,44 @@ async function recordedLaunchArgs() {
     `this machine has ${files.length} Orca profiles with settings in them under ${ORCA_PROFILES}`
     + ', and the test cannot say which one Orca is running on. Look at it before trusting this run.',
   );
-  return { file: files[0].file, args: files[0].settings?.settings?.agentDefaultArgs };
+  return { file: files[0].file, args: files[0].args };
+}
+
+/**
+ * The settings document in one profile's profile-state.db, or undefined when
+ * there is no db or no settings document in it.
+ *
+ * Orca holds the live db open in WAL mode, and its current settings may be in
+ * the -wal alone. So this never opens Orca's own file: it copies the db and its
+ * -wal into a throwaway folder, reads the copy, and removes the copy, however
+ * the read ends. Copying only reads Orca's files.
+ */
+async function settingsInDb(db) {
+  const scratch = await mkdtemp(path.join(os.tmpdir(), 'obk-system-orca-db-'));
+  try {
+    const copy = path.join(scratch, 'profile-state.db');
+    try {
+      await copyFile(db, copy);
+    } catch {
+      return undefined;
+    }
+    try {
+      await copyFile(`${db}-wal`, `${copy}-wal`);
+    } catch {
+      // No -wal: everything is in the db file.
+    }
+    const reader = new DatabaseSync(copy, { readOnly: true });
+    try {
+      const row = reader.prepare("SELECT payload FROM profile_state_documents WHERE domain = 'settings'").get();
+      return row === undefined ? undefined : JSON.parse(row.payload);
+    } finally {
+      reader.close();
+    }
+  } catch {
+    return undefined;
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
 }
 
 /**
