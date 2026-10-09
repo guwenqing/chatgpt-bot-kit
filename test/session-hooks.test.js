@@ -656,9 +656,15 @@ for (const harness of ['claude', 'codex']) {
       .flatMap((group) => (group.hooks ?? []).map((one) => one.command))
       .filter((command) => /\bsession name\b/.test(String(command)));
     assert.equal(names.length, harness === 'codex' ? 1 : 0, `the kit's naming hook, on Codex only, got:\n${await readFile(file, 'utf8')}`);
+    // On Claude the kit also writes its unread-mail hook, under Stop (#509);
+    // Codex gets none.
+    const mails = (held.hooks?.Stop ?? [])
+      .flatMap((group) => (group.hooks ?? []).map((one) => one.command))
+      .filter((command) => /\bsession mail\b/.test(String(command)));
+    assert.equal(mails.length, harness === 'claude' ? 1 : 0, `the kit's unread-mail hook, on Claude only, got:\n${await readFile(file, 'utf8')}`);
     assert.equal(
       allCommands(held).length,
-      Object.keys(alikes).length + 1 + sends.length + nudges.length + names.length,
+      Object.keys(alikes).length + 1 + sends.length + nudges.length + names.length + mails.length,
       `their hooks and the kit's, and nothing else, got:\n${await readFile(file, 'utf8')}`,
     );
   });

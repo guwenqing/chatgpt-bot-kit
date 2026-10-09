@@ -262,6 +262,34 @@
 //               and the close without `--tab` worked. In 1.4.215's code the
 //               refusal likely comes as code `runtime_error` with message
 //               `tab_not_found` (read, not seen live). Orca never lists it.
+//   afterMail   on one terminal only: what the receiver does once mail comes
+//               to the Run it coordinates (#509). { waits, busy, record,
+//               text }. Armed by the next `orchestration send` that gives
+//               this terminal Orca's notice, it happens at the `waits`th
+//               `terminal wait` on this terminal after that send (2 if left
+//               out, so the kit's first look still finds what it found
+//               before, and the look after it finds the change). Then, once:
+//                 record  { file, harness }: a user turn is written at the end
+//                         of that conversation record, in that harness's own
+//                         shape (Claude Code's `type: "user"` line, Codex's
+//                         `response_item` message with `role: "user"`), stamped
+//                         with the time it is written. Its text is `text`:
+//                         'notice' (the default) is Orca's notice as it wrote
+//                         it into this tab, naming the Run; a string is that
+//                         turn word for word; null writes nothing. A record
+//                         that cannot be written to (a folder in its place)
+//                         is left as it is.
+//                 busy    true: from then on the tab answers `terminal wait` as
+//                         a busy harness does (`tuiIdle: 'busy'`), a turn
+//                         under way; false or left out, it answers as before.
+//               So Orca's notice taken as a turn is `{ busy: true, record }`;
+//               a turn of other work is `{ busy: true, record, text: '…' }`;
+//               a turn that leaves no record is `{ busy: true }`. What a
+//               harness writes, and when, is from the tech notes (sections 2
+//               and 3); that Orca's notice lands as a user turn is from
+//               the request for #509 (Orca types it into an idle tab, and
+//               the harness takes it as a turn of the user's).
+//               `fired` is set once it has happened. Orca never lists it.
 //   hang        { command, ms, applied } — that command is answered as it would
 //               have been, `ms` later (a minute if left out): an Orca that is
 //               slow to answer, or has stopped answering. What cuts it short
@@ -663,7 +691,7 @@ if (command === 'project setup-delete') {
  * a test gave it, which only `terminal read` shows, and what a send into it is
  * seen to do, which only `terminal send` answers.
  */
-const asReported = ({ typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, nextScreens: _nextScreens, tuiIdle: _tuiIdle, thenScreen: _thenScreen, readsBeforeThen: _readsBeforeThen, submit: _submit, refuseClose: _refuseClose, ...rest }) => (rest.orphaned === true
+const asReported = ({ typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, nextScreens: _nextScreens, tuiIdle: _tuiIdle, thenScreen: _thenScreen, readsBeforeThen: _readsBeforeThen, submit: _submit, refuseClose: _refuseClose, afterMail: _afterMail, ...rest }) => (rest.orphaned === true
   ? { ...rest, ...identity(), tabId: `pty:${rest.ptyId}`, leafId: `pty:${rest.ptyId}`, orphaned: true }
   : { ...rest, ...identity(), orphaned: false });
 
@@ -796,7 +824,7 @@ if (command === 'terminal close') {
 if (command === 'terminal show') {
   const terminal = (state.terminals ?? []).find((entry) => entry.handle === flag('--terminal'));
   if (!terminal) fail('terminal_not_found', `no terminal with handle ${flag('--terminal')}`);
-  const { typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, nextScreens: _nextScreens, tuiIdle: _tuiIdle, thenScreen: _thenScreen, readsBeforeThen: _readsBeforeThen, submit: _submit, refuseClose: _refuseClose, ...rest } = terminal;
+  const { typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, nextScreens: _nextScreens, tuiIdle: _tuiIdle, thenScreen: _thenScreen, readsBeforeThen: _readsBeforeThen, submit: _submit, refuseClose: _refuseClose, afterMail: _afterMail, ...rest } = terminal;
   ok({ terminal: { ...rest, ...identity(), orphaned: terminal.orphaned === true } });
 }
 
@@ -850,6 +878,7 @@ if (command === 'terminal rename') {
 if (command === 'terminal wait') {
   const terminal = (state.terminals ?? []).find((entry) => entry.handle === flag('--terminal'));
   if (!terminal) fail('terminal_not_found', `no terminal with handle ${flag('--terminal')}`);
+  if (terminal.afterMail?.armed === true && terminal.afterMail.fired !== true) afterMailWait(terminal);
 
   // One answer per call when a test gave a list, so a tab can hold a TUI on
   // one look and none on the next; the last entry stands for every call after.
@@ -881,6 +910,35 @@ if (command === 'terminal wait') {
       ...(blocked ? { blockedReason: state.blockedReason ?? 'agent-interactive-prompt' } : {}),
     },
   });
+}
+
+/**
+ * One more `terminal wait` on a terminal armed with `afterMail`: at the
+ * `waits`th, the receiver's turn is written to its record and the tab goes busy,
+ * as the test asked, once (see `afterMail` at the top of this file).
+ */
+function afterMailWait(terminal) {
+  const spec = terminal.afterMail;
+  spec.seen += 1;
+  if (spec.seen < (spec.waits ?? 2)) {
+    save();
+    return;
+  }
+  spec.fired = true;
+  const text = spec.text === undefined || spec.text === 'notice' ? spec.notice : spec.text;
+  if (spec.record != null && typeof text === 'string') {
+    const at = new Date().toISOString();
+    const line = spec.record.harness === 'codex'
+      ? { timestamp: at, type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } }
+      : { parentUuid: null, isSidechain: false, userType: 'external', type: 'user', message: { role: 'user', content: text }, uuid: randomUUID(), timestamp: at };
+    try {
+      appendFileSync(spec.record.file, `${JSON.stringify(line)}\n`);
+    } catch {
+      // A record that cannot be written to stays as it is: that is the test's point.
+    }
+  }
+  if (spec.busy === true) terminal.tuiIdle = 'busy';
+  save();
 }
 
 /**
@@ -1227,6 +1285,10 @@ if (command === 'orchestration send') {
       ...(coordinator.notices ?? []),
       `You have ${waiting} orchestration message. Run \`orca orchestration check --run ${run}\``,
     ];
+    // The receiver's reaction to this mail, when a test gave it one (`afterMail`).
+    if (coordinator.afterMail != null && coordinator.afterMail.fired !== true && coordinator.afterMail.armed !== true) {
+      coordinator.afterMail = { ...coordinator.afterMail, armed: true, seen: 0, notice: coordinator.notices.at(-1) };
+    }
   }
   save();
 
