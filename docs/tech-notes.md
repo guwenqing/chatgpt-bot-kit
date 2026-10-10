@@ -266,6 +266,13 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
     `❯\u00a0/clear`. Its slash menu sits above the input box's top rule, a row per command with its
     description wrapped onto rows set far in, and no pointer marks a selection; with `/clear` typed,
     `/clear` was its one row.
+  - Claude Code 2.1.296 marks the menu's selected row with its pointer: `  ❯ /compact  Free up
+    context…`, then `    /autocompact …` under it, all above the input box's top rule. Under Orca
+    1.4.223, `terminal read --screen --json` shows its input line bare, `❯`, whatever it holds, and
+    gives the line's text as `result.terminal.draft` beside `tail`: `hello`, `hello/compact`,
+    `/compact`, and no `draft` key when the line is empty. With `hello/compact` no menu came up.
+    Seen in four probes on 2026-10-09 (#510), in a throwaway tab, before and after a turn.
+    Whether the same `draft` is what made Codex 0.160.0's line bare is **not checked**.
   - At work, Codex shows `• Working (5s • esc to interrupt)` or `• Executing requested command (36s •
     esc to interrupt)`. Claude Code 2.1.288 never showed "esc to interrupt": its row is a spinner
     glyph, a word ending in `…`, then the time (`✶ Unfurling… (36s · ↓ 131 tokens)`); a finished turn's
