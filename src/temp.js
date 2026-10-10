@@ -346,7 +346,7 @@ const REVIEW_GONE_MS = 5000;
 export async function trustHooks(bots, { tab, name }) {
   const caller = callerIn(bots, tab, 'trust-hooks', "answer a run's hooks review");
   const { bot, session } = ownTemp(caller, name, 'answer for', 'Nothing was typed.');
-  await trustAll({ run: `${caller.bot}/${name}`, home: caller.home, session: name, harness: harnessOf(session, bot.harness), extra: session.extra_args }, 'temp');
+  await trustAll({ bots, run: `${caller.bot}/${name}`, bot: caller.bot, home: caller.home, session: name, harness: harnessOf(session, bot.harness) }, 'temp');
   return { bot: caller.bot, session: name, maker: caller.session };
 }
 
@@ -360,17 +360,22 @@ const HOOKS_COUNT = /^ *(\d+) hooks? (?:is|are) new or changed\. *$/;
  * `.codex/hooks.json` must hold the kit's own hooks alone, and the review's
  * count row must be the number of them Codex does not trust yet (#506, R4).
  * Codex also takes hook trust, and hooks, from the session's own `-c` flags,
- * which its `extra_args` can carry: when they name hooks at all, the kit
- * cannot tell the count, and refuses (the review of PR #517).
+ * which its extra_args can carry. What it was started with is the book's
+ * `launched_with`, which the kit writes at each launch: when that names hooks
+ * at all, or there is none, the kit cannot tell the count, and refuses (the
+ * review of PR #517). The arguments are not quoted: they can hold a secret.
  */
 async function trustAll(target, kind) {
   const nothing = 'Nothing was typed.';
   if (target.harness !== 'codex') {
     throw new Error(`${target.run} runs on ${target.harness}, and ${kind} trust-hooks answers a Codex session's "${HOOKS_REVIEW}" alone. ${nothing}`);
   }
-  const extra = [target.extra ?? []].flat().join(' ');
-  if (/hooks/i.test(extra)) {
-    throw new Error(`${target.run}'s extra_args in bot.yaml mention hooks (${extra}), and Codex takes hooks and their trust from a session's own -c flags as well, so the kit cannot tell which hooks its review covers. ${nothing}`);
+  const launchedWith = readBook(target.home).sessions[target.session]?.launched_with;
+  if (launchedWith === undefined) {
+    throw new Error(`${target.run}'s book entry does not say what extra arguments it was launched with: it was started before the kit kept that record, or not by the kit. Codex takes hooks and their trust from a session's own -c flags as well, so the kit cannot tell which hooks its review covers. Start it again with the kit, then run this again: ${shellWord(ownCli())} restart --bots ${shellWord(target.bots)} --bot ${target.bot} --session ${target.session}. ${nothing}`);
+  }
+  if (/hooks/i.test([launchedWith].flat().join(' '))) {
+    throw new Error(`${target.run} was launched with extra arguments that mention hooks, and Codex takes hooks and their trust from a session's own -c flags as well, so the kit cannot tell which hooks its review covers. ${nothing}`);
   }
   const { untrusted, file } = untrustedKitHooks(target.home, target.run, nothing);
   await answerScreen(target, {
@@ -658,8 +663,7 @@ function longLivedTarget(bots, { tab, bot, session }, verb) {
   if (temporary !== undefined) {
     throw new Error(`${run} is a temporary session ${temporary.maker} made, so its first-run screen is ${temporary.maker}'s to answer, with temp ${verb} run in ${temporary.maker}'s tab. ${nothing}`);
   }
-  const { extra_args: extra } = readBot(found.home, found.bot).sessions.find((one) => one.name === found.session);
-  return { run, bot: found.bot, session: found.session, home: found.home, harness: found.harness, extra };
+  return { bots, run, bot: found.bot, session: found.session, home: found.home, harness: found.harness };
 }
 
 /**
