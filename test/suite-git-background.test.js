@@ -60,10 +60,23 @@ const FILES = 300;
  */
 const REPACK_ON_EVERY_COMMIT = '[maintenance]\n\tstrategy = geometric\n[maintenance "geometric-repack"]\n\tauto = -1\n';
 
-/** A throwaway folder for one test, gone when it ends. */
+/**
+ * A throwaway folder for one test, gone when it ends. Before it goes, wait for
+ * git's work in it to end, also when the test failed before its own wait: a
+ * detached maintenance must not be left to run in a folder that is removed.
+ * The wait does not throw here, so the test's own failure stays the one shown.
+ */
 async function scratch(t) {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), 'obk-gitbg-')));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(async () => {
+    const repos = [path.join(root, 'source'), path.join(root, 'clone')];
+    try {
+      await untilGitAtRest(path.join(root, 'trace2.json'), repos);
+    } catch (error) {
+      t.diagnostic(`cleanup: ${error.message}`);
+    }
+    await rm(root, { recursive: true, force: true });
+  });
   const home = path.join(root, 'home');
   await mkdir(home);
   return { root, home, trace: path.join(root, 'trace2.json') };
@@ -168,10 +181,14 @@ async function traceEvents(trace) {
 function processes(events) {
   const bySid = new Map();
   for (const event of events) {
-    if (!bySid.has(event.sid)) bySid.set(event.sid, { argv: [], starts: 0, exits: 0, children: 0, childExits: 0, detached: false });
+    if (!bySid.has(event.sid)) {
+      // A child's session id is its parent's, a slash, and its own.
+      const parent = event.sid.includes('/') ? event.sid.slice(0, event.sid.lastIndexOf('/')) : null;
+      bySid.set(event.sid, { parent, argv: [], starts: 0, exits: 0, failed: false, children: 0, childExits: 0, detached: false });
+    }
     const proc = bySid.get(event.sid);
     if (event.event === 'start') { proc.starts += 1; proc.argv = event.argv; }
-    if (event.event === 'exit') proc.exits += 1;
+    if (event.event === 'exit') { proc.exits += 1; if (event.code !== 0) proc.failed = true; }
     if (event.event === 'child_start') proc.children += 1;
     if (event.event === 'child_exit') proc.childExits += 1;
     if (event.event === 'region_enter' && event.label === 'detach') proc.detached = true;
@@ -184,12 +201,19 @@ function processes(events) {
  * the trace has exited, a process that detached has exited from both halves,
  * every child was waited for, and no repository is locked for maintenance.
  * A test that caused background work leaves none running behind it this way.
+ *
+ * A git that fails stops without waiting for its children, and a child it
+ * leaves (the upload-pack of a failed clone) may write no exit at all. Neither
+ * is waited for: they are not background work, and they write nothing.
  */
 async function untilGitAtRest(trace, repos) {
   const deadline = Date.now() + AT_REST_TIMEOUT_MS;
   for (;;) {
-    const procs = [...processes(await traceEvents(trace)).values()];
-    const running = procs.filter((proc) => proc.exits < (proc.detached ? 2 : 1) || proc.childExits < proc.children);
+    const bySid = processes(await traceEvents(trace));
+    const parentFailed = (proc) => Boolean(proc.parent && bySid.get(proc.parent)?.failed);
+    const running = [...bySid.values()].filter((proc) => (proc.detached
+      ? proc.exits < 2
+      : (proc.exits === 0 && !parentFailed(proc)) || (proc.childExits < proc.children && !proc.failed)));
     const locked = repos.filter((repo) => existsSync(path.join(repo, '.git', 'objects', 'maintenance.lock')));
     if (running.length === 0 && locked.length === 0) return;
     if (Date.now() > deadline) {
