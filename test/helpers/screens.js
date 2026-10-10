@@ -1207,6 +1207,204 @@ export function whileTyping(harness, command) {
   });
 }
 
+// Codex 0.162.0, as a live probe for #516 showed it on 2026-10-10 in Orca
+// 1.4.223, in a throwaway tab not made by the kit, after one turn. Orca's
+// read gives the text of Codex's input line as `draft`, apart from the rows,
+// and leaves the key out when the line is empty, as it does for Claude Code
+// 2.1.296 (#510). While the line holds text, its row reads `›` alone; empty,
+// it shows the placeholder, `› Ask Codex to do anything`. With `/new` or
+// `/compact` typed, the slash popup is the command's one row, selected, and
+// the input line comes right under it, with no blank row between: Codex
+// 0.160.0 drew a blank row there. Each screen was the same 300 ms, 1 s and
+// 3 s after the last character. A read with a draft is `{ screen, draft }`,
+// as the fake Orca's `nextScreens` takes it.
+//
+// Each capture is the whole `tail` of one read, with its `draft` from the same
+// read, named by its key in the probe's captures1.json. The probe's folder,
+// /private/tmp/obk-probe-516.MTulp9, is put back to `<tmp>/obk-probe-516.MTulp9`,
+// and nothing else changed. The reconstructions stand on these captures.
+
+/** Codex 0.162.0 after one turn, its input line empty and showing its placeholder: a capture ("after turn"), a read with no draft. */
+export const CODEX_162_IDLE = [
+  '  >_ OpenAI Codex (v0.162.0)',
+  '     <tmp>/obk-probe-516.MTulp9',
+  '› Reply with the single word ok, and do nothing else.',
+  '• ok',
+  '  Worked for 2s • 2:53 AM',
+  '› Ask Codex to do anything',
+  '  GPT-6.1-Sol default · <tmp>/obk-probe-516.MTulp9 · Reply with ok',
+  '  ? for shortcuts',
+];
+
+/**
+ * A draft, `hello`, typed into the empty input line after that turn: the line
+ * reads `›` alone, no placeholder and no `? for shortcuts` row, and the draft
+ * comes beside the rows. A capture ("hello"), the rows and the draft from one
+ * read.
+ */
+export const CODEX_162_DRAFT = {
+  screen: [
+    '  >_ OpenAI Codex (v0.162.0)',
+    '     <tmp>/obk-probe-516.MTulp9',
+    '› Reply with the single word ok, and do nothing else.',
+    '• ok',
+    '  Worked for 2s • 2:53 AM',
+    '›',
+    '  GPT-6.1-Sol default · <tmp>/obk-probe-516.MTulp9 · Reply with ok',
+  ],
+  draft: 'hello',
+};
+
+/**
+ * `/compact` typed after that draft: no popup came up, and the draft reads
+ * `hello/compact`. A capture ("hello/compact"): the read gave the same rows as
+ * CODEX_162_DRAFT's, and this draft.
+ */
+export const CODEX_162_DRAFT_COMPACT = { screen: CODEX_162_DRAFT.screen, draft: 'hello/compact' };
+
+/**
+ * "/" alone typed into the empty input line after that turn: the popup lists
+ * commands, `/model` selected, the input line `›` right under it, and the
+ * draft `/`. A capture ("turn slash"), the rows and the draft from one read.
+ */
+export const CODEX_162_SLASH = {
+  screen: [
+    '  >_ OpenAI Codex (v0.162.0)',
+    '     <tmp>/obk-probe-516.MTulp9',
+    '› Reply with the single word ok, and do nothing else.',
+    '• ok',
+    '  Worked for 2s • 2:53 AM',
+    '› /model         choose what model and reasoning effort to use',
+    '  /fast          2x speed, increased usage',
+    '  /ide           include current selection, open files, and other context from your IDE',
+    '  /permissions   choose what Codex is allowed to do',
+    '  /keymap        remap TUI shortcuts',
+    '  /vim           toggle Vim mode for the composer',
+    '  /experimental  toggle experimental features',
+    '  /approve       approve one retry of a recent auto-review denial',
+    '›',
+    '  GPT-6.1-Sol default · <tmp>/obk-probe-516.MTulp9 · Reply with ok',
+  ],
+  draft: '/',
+};
+
+/**
+ * `/new` typed into the empty input line after that turn, one character a
+ * send: the popup's one row, `/new`, selected, the input line `›` right under
+ * it with no blank row, and the draft `/new`. A capture ("/new +300ms"), the
+ * rows and the draft from one read.
+ */
+export const CODEX_162_NEW_READ = {
+  screen: [
+    '  >_ OpenAI Codex (v0.162.0)',
+    '     <tmp>/obk-probe-516.MTulp9',
+    '› Reply with the single word ok, and do nothing else.',
+    '• ok',
+    '  Worked for 2s • 2:53 AM',
+    '› /new  start a new chat during a conversation',
+    '›',
+    '  GPT-6.1-Sol default · <tmp>/obk-probe-516.MTulp9 · Reply with ok',
+  ],
+  draft: '/new',
+};
+
+/**
+ * `/compact` typed the same way: the popup's one row, `/compact`, selected,
+ * the input line `›` right under it, and the draft `/compact`. A capture
+ * ("/compact +300ms"), the rows and the draft from one read.
+ */
+export const CODEX_162_COMPACT_READ = {
+  screen: [
+    '  >_ OpenAI Codex (v0.162.0)',
+    '     <tmp>/obk-probe-516.MTulp9',
+    '› Reply with the single word ok, and do nothing else.',
+    '• ok',
+    '  Worked for 2s • 2:53 AM',
+    '› /compact  summarize conversation to prevent hitting the context limit',
+    '›',
+    '  GPT-6.1-Sol default · <tmp>/obk-probe-516.MTulp9 · Reply with ok',
+  ],
+  draft: '/compact',
+};
+
+/**
+ * Codex 0.162.0 after that turn with `popup` right above its input line, no
+ * blank row between, and `input` as the line, as the captures above lay it
+ * out: their header and answered turn, then the popup, the line, and the
+ * status row.
+ */
+export const codex162With = (popup, input = '›') => [...CODEX_162_IDLE.slice(0, 5), ...popup, input, CODEX_162_IDLE[6]];
+
+/**
+ * The idle screen with its placeholder, `› Ask Codex to do anything`, and the
+ * draft `hello` beside it. A rebuilt pairing: the live read with this draft
+ * showed a bare `›` (CODEX_162_DRAFT). It stands for a draft whose row the
+ * screen does not show as text.
+ */
+export const CODEX_162_PLACEHOLDER_DRAFT = { screen: CODEX_162_IDLE, draft: 'hello' };
+
+/**
+ * `/new` typed, the popup as captured, and the input line showing the text,
+ * `› /new`, right under it, with no draft. A reconstruction: CODEX_162_NEW_READ's
+ * rows with only the input line changed, and its draft left out. No live read
+ * showed this line.
+ */
+export const CODEX_162_NEW_SHOWN = codex162With([CODEX_ROWS['/new']], '› /new');
+
+/**
+ * `/new` typed after a draft the kit could not see before its first key: the
+ * popup as captured, `/new` selected, and the draft `x/new`. A reconstruction:
+ * CODEX_162_NEW_READ with only the draft changed.
+ */
+export const CODEX_162_NEW_OTHER_DRAFT = { screen: CODEX_162_NEW_READ.screen, draft: 'x/new' };
+
+/** The same with the draft `/new ` (a space after the command). A reconstruction: only the draft changed. */
+export const CODEX_162_NEW_SPACE_DRAFT = { screen: CODEX_162_NEW_READ.screen, draft: '/new ' };
+
+/** `/compact` typed after a draft: CODEX_162_COMPACT_READ with only the draft changed, to `x/compact`. A reconstruction. */
+export const CODEX_162_COMPACT_OTHER_DRAFT = { screen: CODEX_162_COMPACT_READ.screen, draft: 'x/compact' };
+
+/**
+ * The draft `/new`, and the popup's one row another command, `/model`,
+ * selected. A reconstruction on CODEX_162_NEW_READ, the `/model` row as
+ * CODEX_162_SLASH captured it: no such screen was seen.
+ */
+export const CODEX_162_NEW_OTHER_SELECTED = {
+  screen: codex162With(['› /model         choose what model and reasoning effort to use']),
+  draft: '/new',
+};
+
+/**
+ * The draft `/new`, and the popup not filtered down to it: `/model` above
+ * `/new`, which is selected and right above the input line. A reconstruction
+ * on CODEX_162_NEW_READ: no such screen was seen.
+ */
+export const CODEX_162_NEW_TWO_ROWS = {
+  screen: codex162With(['  /model         choose what model and reasoning effort to use', CODEX_ROWS['/new']]),
+  draft: '/new',
+};
+
+/**
+ * The draft `/new`, and no popup at all: the rows of the live read with the
+ * draft `hello` (CODEX_162_DRAFT), with this draft. A reconstruction: no such
+ * read was seen.
+ */
+export const CODEX_162_NEW_NO_MENU = { screen: CODEX_162_DRAFT.screen, draft: '/new' };
+
+/**
+ * What Codex 0.162.0 shows after each character of `command` but the last,
+ * one read per send, for the fake Orca's `nextScreens`: for "/" alone the
+ * capture CODEX_162_SLASH, and after that the command's own popup row right
+ * above a bare `›`, with the draft so far. Reconstructions, but for "/": the
+ * probe read the screen only for "/" and for the whole command.
+ */
+export function whileTypingCodex162(command) {
+  return [...command].slice(0, -1).map((_, at) => {
+    const typed = command.slice(0, at + 1);
+    return typed === '/' ? CODEX_162_SLASH : { screen: codex162With([CODEX_ROWS[command]]), draft: typed };
+  });
+}
+
 /**
  * Codex at work on a turn, its empty input line below: the row above it says
  * how to interrupt it, in lower case. Orca's `tui-idle` called Codex busy like

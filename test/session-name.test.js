@@ -103,6 +103,10 @@ import {
 import {
   CLAUDE_FEEDBACK_PANEL,
   CLAUDE_TEACH_LIST,
+  CODEX_162_DRAFT,
+  CODEX_162_IDLE,
+  CODEX_162_PLACEHOLDER_DRAFT,
+  CODEX_162_SLASH,
   CODEX_ANSWERED,
   CODEX_DRAFT,
   CODEX_IDLE,
@@ -110,6 +114,7 @@ import {
   CODEX_SLASH_TYPED,
   CODEX_UPDATE_OFFER,
   CODEX_WORKING,
+  codex162With,
 } from './helpers/screens.js';
 import { linesTurnWanted, typingTurnHeld, withLinesTurnHeld, withTypingTurnHeld } from './helpers/typing-turn.js';
 
@@ -201,11 +206,12 @@ const workingOver = (rows) => [...ABOVE_POPUP.slice(0, 9), WORKING_ROW, '', ...r
 /**
  * A bots folder with api-bot on Codex and its sessions named, each brought up,
  * with a conversation the book holds and Codex has on record (its thread id
- * from THREADS, its rollout's first line naming Codex 0.160.0), as a session
- * that has had a turn has them. `claude` adds sessions of api-bot that run on
- * Claude Code; `others` adds bots on Codex, each with a `daily` session.
+ * from THREADS, its rollout's first line naming Codex `cliVersion`, 0.160.0
+ * unless a test says otherwise), as a session that has had a turn has them.
+ * `claude` adds sessions of api-bot that run on Claude Code; `others` adds
+ * bots on Codex, each with a `daily` session.
  */
-async function running(box, { sessions = ['daily', 'review'], claude = [], others = [] } = {}) {
+async function running(box, { sessions = ['daily', 'review'], claude = [], others = [], cliVersion = '0.160.0' } = {}) {
   assert.equal((await box.run(['init', '--bots', 'bots', '--harness', 'claude'])).code, 0);
   for (const bot of [BOT, ...others]) {
     const made = await box.run(['bot', 'create', '--bots', 'bots', '--name', bot, '--harness', 'codex']);
@@ -229,7 +235,7 @@ async function running(box, { sessions = ['daily', 'review'], claude = [], other
     const tab = await liveTab(box, bots, name);
     const heard = await recordSession(box, { bots, bot: BOT, tab: tab.tabId, session: THREADS[name] });
     assert.equal(heard.code, 0, `the hook report this test stands on: ${heard.stderr}`);
-    await conversationOnRecord(box, { harness: 'codex', cwd: botHomeOf(bots, BOT), id: THREADS[name], cliVersion: '0.160.0' });
+    await conversationOnRecord(box, { harness: 'codex', cwd: botHomeOf(bots, BOT), id: THREADS[name], cliVersion });
   }
   return bots;
 }
@@ -684,6 +690,101 @@ for (const { what, screen } of [
     assert.deepEqual(await sendsInto(box, tab.tabId), [...typed(RENAME), { text: backspaces(RENAME), enter: false }]);
   });
 }
+
+// ------------------------------------------------- Codex 0.162.0 and Orca's draft (#516)
+//
+// Codex 0.162.0 under Orca 1.4.223 (helpers/screens.js, the CODEX_162
+// captures): Orca's read gives the text of the input line as `draft`, and the
+// line's row reads `›` alone while it holds text; an empty line gives no
+// `draft`. The intent of #516 for the naming, as these tests hold it:
+//
+//   - Before the first key: a non-empty `draft` means the user's draft is in
+//     the line, and nothing is typed, even when the line's row reads `›` alone
+//     or the placeholder.
+//   - After typing, with a `draft`: it equals the command exactly, and no
+//     slash-menu row stands right above the input line. Then the return goes
+//     in, as before.
+//   - A draft that is not exactly the command: the typed keys are taken back,
+//     one backspace each in one send, and no return.
+//   - With no `draft`, the screen is read as before: the tests above.
+//
+// No live read of `/rename` was made. The screens below are reconstructions on
+// the 0.162.0 captures: for "/" alone CODEX_162_SLASH; up to the space, the
+// popup's `/rename` row (RENAME_ROW, its words made up) right above a bare
+// `›`; from the space on, no popup, as Codex's source says, on the rows of the
+// live read with a draft (CODEX_162_DRAFT). Each comes with the draft so far.
+
+/** What Codex 0.162.0 shows after each character of `command` but the last, each read with the draft so far. Reconstructions. */
+function whileRenaming162(command = RENAME) {
+  return [...command].slice(0, -1).map((_, at) => {
+    const sofar = command.slice(0, at + 1);
+    if (sofar === '/') return CODEX_162_SLASH;
+    if (!sofar.includes(' ')) return { screen: codex162With([RENAME_ROW]), draft: sofar };
+    return { screen: CODEX_162_DRAFT.screen, draft: sofar };
+  });
+}
+
+/** Codex 0.162.0 with no popup, its input line's row `›` alone, and `draft` in the line. A reconstruction on CODEX_162_DRAFT. */
+const drafted162 = (draft) => ({ screen: CODEX_162_DRAFT.screen, draft });
+
+for (const { start, what } of [
+  { start: CODEX_162_DRAFT, what: 'the live read with the draft "hello" and the line\'s row "›" alone' },
+  { start: CODEX_162_PLACEHOLDER_DRAFT, what: 'the draft "hello" and the line\'s row showing the placeholder (rebuilt pairing)' },
+]) {
+  test(`#516: Codex 0.162.0 with a draft in its input line before the first key, ${what}: nothing typed, and it exits 0 quietly`, async (t) => {
+    const box = await createSandbox(t);
+    const bots = await running(box, { cliVersion: '0.162.0' });
+    const tab = await liveTab(box, bots);
+    await changeTab(box, tab.tabId, { screen: start.screen, draft: start.draft, nextScreens: [...whileRenaming162(), drafted162(RENAME), CODEX_162_IDLE] });
+    const before = await typedEverywhere(box);
+    const from = (await box.orca.calls()).length;
+
+    assertQuiet(await nameHook(box, bots, tab), 'a draft');
+
+    assert.ok((await callsSince(box, from)).length > 0, 'the premise: the hook acted, and asked Orca about the tab');
+    assert.deepEqual(await typedEverywhere(box), before, 'nothing is typed into any tab');
+  });
+}
+
+for (const cliVersion of ['0.162.0', '0.160.0']) {
+  test(`#516: Codex ${cliVersion} whose read gives the draft "${RENAME}" exactly, the line's row "›" alone and no popup: the command is entered, and Codex names the thread`, async (t) => {
+    const box = await createSandbox(t);
+    const bots = await running(box, { cliVersion });
+    const tab = await liveTab(box, bots);
+    await changeTab(box, tab.tabId, { screen: CODEX_162_IDLE, nextScreens: [...whileRenaming162(), drafted162(RENAME), CODEX_162_IDLE] });
+
+    const { result, played } = await nameHookPlaying(box, bots, tab);
+
+    assertQuiet(result, 'the naming');
+    assert.ok(played, 'the premise: the return went in, and Codex wrote its line');
+    assert.deepEqual(await sendsInto(box, tab.tabId), renamed(), 'the command a character a send, then the return, and nothing taken back');
+  });
+}
+
+// The refusals once the command is typed. Side by side, since a naming that
+// wrongly goes in waits about 10 s for Codex's line.
+describe('#516: Codex naming refusals with a draft once the command is typed, side by side', { concurrency: true }, () => {
+  for (const { what, read } of [
+    { what: `the draft "x${RENAME}" and no popup`, read: drafted162(`x${RENAME}`) },
+    { what: 'the draft short of the last character', read: drafted162(RENAME.slice(0, -1)) },
+    { what: 'the draft with a space after the command', read: drafted162(`${RENAME} `) },
+    // The line's row reads the command, and Orca's draft says otherwise.
+    { what: `the draft "x${RENAME}" while the line's row reads "› ${RENAME}"`, read: { screen: shown(RENAME), draft: `x${RENAME}` } },
+    // The right draft does not excuse a menu row right above the input line.
+    { what: `the draft "${RENAME}" exactly and the /rename popup row right above the line`, read: { screen: codex162With([RENAME_ROW]), draft: RENAME } },
+  ]) {
+    it(`#516: on Codex 0.162.0, after the last character, ${what}: no return, and the command is taken back, one backspace per character, in one send`, async (t) => {
+      const box = await createSandbox(t);
+      const bots = await running(box, { cliVersion: '0.162.0' });
+      const tab = await liveTab(box, bots);
+      await changeTab(box, tab.tabId, { screen: CODEX_162_IDLE, nextScreens: [...whileRenaming162(), read, CODEX_162_IDLE] });
+
+      assertQuiet(await nameHook(box, bots, tab), what);
+
+      assert.deepEqual(await sendsInto(box, tab.tabId), [...typed(RENAME), { text: backspaces(RENAME), enter: false }]);
+    });
+  }
+});
 
 // ------------------------------------------------- one naming at a time
 

@@ -146,6 +146,19 @@ import {
   CLAUDE_TEACH_LIST,
   CLAUDE_TEACH_LIST_GONE,
   CLAUDE_WORKING,
+  CODEX_162_COMPACT_OTHER_DRAFT,
+  CODEX_162_COMPACT_READ,
+  CODEX_162_DRAFT,
+  CODEX_162_DRAFT_COMPACT,
+  CODEX_162_IDLE,
+  CODEX_162_NEW_NO_MENU,
+  CODEX_162_NEW_OTHER_DRAFT,
+  CODEX_162_NEW_OTHER_SELECTED,
+  CODEX_162_NEW_READ,
+  CODEX_162_NEW_SHOWN,
+  CODEX_162_NEW_SPACE_DRAFT,
+  CODEX_162_NEW_TWO_ROWS,
+  CODEX_162_PLACEHOLDER_DRAFT,
   CODEX_COMPACT_NOT_OFFERED,
   CODEX_COMPACT_TYPED,
   CODEX_DRAFT,
@@ -164,6 +177,7 @@ import {
   CODEX_WORKING,
   atWork,
   whileTyping,
+  whileTypingCodex162,
 } from './helpers/screens.js';
 
 /** The line the kit types into Codex after its `/new`, word for word, as the architect approved it on #391. */
@@ -1358,6 +1372,221 @@ describe('#510: the refusals once the command is typed, side by side', { concurr
       if (names !== undefined) {
         assert.ok(timesIn(said, names) >= 2, `the reason names the selected row, ${names}, beside the screen rows it quotes, got:\n${said}`);
       }
+    });
+  }
+});
+
+// ---------------------------------- Codex 0.162.0 and Orca's draft (#516)
+//
+// Codex 0.162.0 under Orca 1.4.223, as a live probe for #516 showed it
+// (helpers/screens.js, the CODEX_162 captures): Orca's read gives the text of
+// Codex's input line as `draft`, and the line's row then reads `›` alone. An
+// empty line gives no `draft`. The popup for `/new` or `/compact` is the
+// command's one row, selected, with the input line right under it and no
+// blank row. The intent of #516, as these tests hold it, for clear (`/new`)
+// and compact (`/compact`) on Codex:
+//
+//   - Before the first key: a non-empty `draft` means the user's draft is in
+//     the line. Refused, nothing typed at all, and the refusal shows the
+//     draft. This holds when the line's row reads `›` alone or the
+//     placeholder.
+//   - After typing, with a `draft`: it equals the command exactly, and the
+//     popup's selected row names the command exactly and is its only command
+//     row. Then the return goes in, and the clear or compact goes on as
+//     before. On any Codex version: 0.162.0, 0.160.0, or one the rollout does
+//     not give.
+//   - A draft that is not exactly the command: the typed keys are taken back,
+//     one backspace each in one send, no return, and the refusal shows the
+//     draft. On 0.160.0 too, whose bare line is taken only with no draft.
+//   - The right draft does not excuse a wrong popup: another command
+//     selected, two command rows, or none. Taken back and refused.
+//   - With no `draft`, the screen is read as before: a bare `›` is taken only
+//     on 0.160.0. And 0.162.0's layout, with no blank row, is read the same.
+//
+// The reads while the command is typed are whileTypingCodex162's: the
+// capture for "/", and then the command's row with the draft so far.
+
+/** How Codex's part is played once the return is in, what the kit types after it, and what it answers once it is done. */
+const CODEX_ENTERED = {
+  clear: {
+    command: '/new',
+    read: CODEX_162_NEW_READ,
+    after: [CODEX_NEW_MENU, CODEX_IDLE],
+    when: (sends) => sends.some((one) => one.text === RECORD_LINE),
+    then: (box, bots) => hookReports(box, bots, 'sess-new', 'startup'),
+    sends: [...typed('/new'), { text: '\r', enter: false }, { text: '\r', enter: false }, { text: RECORD_LINE, enter: true }],
+    key: 'cleared',
+    answer: { bot: BOT, session: 'daily', harness: 'codex', was: 'sess-daily', now: 'sess-new' },
+  },
+  compact: {
+    command: COMPACT,
+    read: CODEX_162_COMPACT_READ,
+    after: [CODEX_162_IDLE],
+    when: (sends) => sends.some((one) => one.text === '\r'),
+    then: async (box) => compactionIn(await recordFileOf(box, 'sess-daily'), 'codex'),
+    sends: [...typed(COMPACT), { text: '\r', enter: false }],
+    key: 'compacted',
+    answer: { bot: BOT, session: 'daily', harness: 'codex', conversation: 'sess-daily', confirmed: true },
+  },
+};
+
+for (const verb of VERBS) {
+  for (const { start, what } of [
+    { start: CODEX_162_DRAFT, what: 'the live read with the draft "hello" and the line\'s row "›" alone' },
+    { start: CODEX_162_PLACEHOLDER_DRAFT, what: 'the draft "hello" and the line\'s row showing the placeholder (rebuilt pairing)' },
+  ]) {
+    test(`#516: ${verb} on Codex 0.162.0 with a draft in its input line before the first key, ${what}: refused, nothing typed into any tab, and the refusal shows the draft`, async (t) => {
+      const box = await createSandbox(t);
+      const bots = await running(box, { harness: 'codex', cliVersion: '0.162.0' });
+      const { command, read } = CODEX_ENTERED[verb];
+      await changeTab(box, (await liveTab(box, bots)).tabId, {
+        screen: start.screen,
+        draft: start.draft,
+        nextScreens: [...whileTypingCodex162(command), read, CODEX_162_IDLE],
+      });
+      const before = await typedEverywhere(box);
+      const book = await sessionIn(bots, BOT, 'daily');
+
+      const said = assertRefused(await sessionCommand(box, verb));
+
+      await assertNothingTyped(box, before, 'a draft in the input line');
+      assert.ok(said.includes('hello'), `the refusal shows the draft the line holds, hello, got:\n${said}`);
+      assert.deepEqual(await sessionIn(bots, BOT, 'daily'), book, 'the book is as it was');
+    });
+  }
+}
+
+for (const verb of VERBS) {
+  for (const { cliVersion, what } of [
+    { cliVersion: '0.162.0', what: 'Codex 0.162.0' },
+    { cliVersion: '0.160.0', what: 'Codex 0.160.0' },
+    { cliVersion: null, what: 'a Codex whose version its rollout does not give' },
+  ]) {
+    test(`#516: ${verb} on ${what}, from the 0.162.0 live read: the draft exactly the command and its popup row selected, so it is entered and the ${verb} goes on as before`, async (t) => {
+      const box = await createSandbox(t);
+      const bots = await running(box, { harness: 'codex', cliVersion });
+      const entered = CODEX_ENTERED[verb];
+      await changeTab(box, (await liveTab(box, bots)).tabId, {
+        screen: CODEX_162_IDLE,
+        nextScreens: [...whileTypingCodex162(entered.command), entered.read, ...entered.after],
+      });
+
+      const { result, played } = await runPlaying(box, bots, verb, {
+        when: entered.when,
+        then: () => entered.then(box, bots),
+      });
+
+      const answer = answered(result, `the ${verb}`);
+      assert.ok(played, `the premise: the return went in and Codex did the ${verb}`);
+      assert.deepEqual(await sendsInto(box, bots), entered.sends, 'the command a character a send, its return, and on a clear the "Current checkout" return and the ruled line; nothing taken back');
+      assert.deepEqual(answer[entered.key], entered.answer);
+    });
+  }
+}
+
+for (const { read, what } of [
+  {
+    read: { screen: CODEX_NEW_TYPED, draft: '/new' },
+    what: 'the draft "/new" under 0.160.0\'s layout, a blank row between the popup and the line (rebuilt pairing)',
+  },
+  {
+    read: CODEX_162_NEW_SHOWN,
+    what: 'no draft, 0.162.0\'s layout with the line "› /new" right under the popup row (rebuilt)',
+  },
+]) {
+  test(`#516: clear on Codex 0.162.0 with ${what}: /new is entered, and the new conversation is the answer`, async (t) => {
+    const box = await createSandbox(t);
+    const bots = await running(box, { harness: 'codex', cliVersion: '0.162.0' });
+    await changeTab(box, (await liveTab(box, bots)).tabId, {
+      screen: CODEX_162_IDLE,
+      nextScreens: [...whileTypingCodex162('/new'), read, CODEX_NEW_MENU, CODEX_IDLE],
+    });
+
+    const { result, played } = await runPlaying(box, bots, 'clear', {
+      when: CODEX_ENTERED.clear.when,
+      then: () => CODEX_ENTERED.clear.then(box, bots),
+    });
+
+    const answer = answered(result, 'the clear');
+    assert.ok(played, 'the premise: the line was typed and the hook reported the new conversation');
+    assert.deepEqual(await sendsInto(box, bots), CODEX_ENTERED.clear.sends);
+    assert.deepEqual(answer.cleared, CODEX_ENTERED.clear.answer);
+  });
+}
+
+// The refusals once the command is typed. Side by side, since a check that
+// wrongly lets a compact in waits out its 300 s, and a clear its 30 s.
+describe('#516: Codex refusals once the command is typed, side by side', { concurrency: true }, () => {
+  for (const { verb, cliVersion = '0.162.0', typing = whileTypingCodex162, read, shows, what } of [
+    // A draft that is not exactly the command.
+    {
+      verb: 'clear', read: CODEX_162_NEW_OTHER_DRAFT, shows: 'x/new',
+      what: 'the draft "x/new" under the live read\'s popup, /new selected',
+    },
+    {
+      verb: 'compact', read: CODEX_162_COMPACT_OTHER_DRAFT, shows: 'x/compact',
+      what: 'the draft "x/compact" under the live read\'s popup, /compact selected',
+    },
+    {
+      verb: 'clear', read: CODEX_162_NEW_SPACE_DRAFT,
+      what: 'the draft "/new " with a space after it, under the live read\'s popup',
+    },
+    {
+      verb: 'compact', read: CODEX_162_DRAFT_COMPACT, shows: 'hello/compact',
+      what: 'the draft "hello/compact" and no popup, the live read',
+    },
+    {
+      verb: 'clear', cliVersion: '0.160.0', typing: (command) => whileTyping('codex', command), read: { screen: CODEX_NEW_TYPED, draft: 'x/new' }, shows: 'x/new',
+      what: 'the draft "x/new" on Codex 0.160.0, its bare line under the /new row as live run 4 showed it',
+    },
+    {
+      verb: 'compact', cliVersion: '0.160.0', typing: (command) => whileTyping('codex', command), read: { screen: CODEX_COMPACT_TYPED, draft: 'x/compact' }, shows: 'x/compact',
+      what: 'the draft "x/compact" on Codex 0.160.0, its bare line under the /compact row',
+    },
+    {
+      // The line's row reads the command, and Orca's draft says otherwise.
+      verb: 'clear', typing: (command) => whileTyping('codex', command), read: { screen: CODEX_NEW_TYPED_SHOWN, draft: 'x/new' }, shows: 'x/new',
+      what: 'the draft "x/new" while the line\'s row reads "› /new" under the /new row',
+    },
+    // The right draft under a wrong popup.
+    {
+      verb: 'clear', read: CODEX_162_NEW_OTHER_SELECTED,
+      what: 'the draft "/new" and the popup\'s one row /model, selected',
+    },
+    {
+      verb: 'clear', read: CODEX_162_NEW_TWO_ROWS,
+      what: 'the draft "/new" and two command rows in the popup, /new selected',
+    },
+    {
+      verb: 'clear', read: CODEX_162_NEW_NO_MENU,
+      what: 'the draft "/new" and no popup at all',
+    },
+    {
+      verb: 'clear', cliVersion: '0.160.0', typing: (command) => whileTyping('codex', command), read: { screen: CODEX_NEW_OTHER_SELECTED, draft: '/new' },
+      what: 'the draft "/new" on Codex 0.160.0 and its popup\'s one row /model, selected',
+    },
+    // No draft: a bare line is taken only on 0.160.0.
+    {
+      verb: 'clear', read: CODEX_162_NEW_READ.screen,
+      what: 'no draft, the input line "›" alone right under the /new row: the live read\'s rows with its draft left out',
+    },
+    {
+      verb: 'compact', read: CODEX_162_COMPACT_READ.screen,
+      what: 'no draft, the input line "›" alone right under the /compact row: the live read\'s rows with its draft left out',
+    },
+  ]) {
+    const command = CODEX_ENTERED[verb].command;
+    it(`#516: ${verb} on Codex ${cliVersion} with ${what}: ${command} taken back, never entered, and refused${shows === undefined ? '' : `, showing ${shows}`}`, async (t) => {
+      const box = await createSandbox(t);
+      const bots = await running(box, { harness: 'codex', cliVersion });
+      await changeTab(box, (await liveTab(box, bots)).tabId, { screen: CODEX_162_IDLE, nextScreens: [...typing(command), read, CODEX_162_IDLE] });
+      const book = await sessionIn(bots, BOT, 'daily');
+
+      const said = assertRefused(await sessionCommand(box, verb));
+
+      assert.deepEqual(await sendsInto(box, bots), [...typed(command), { text: backspaces(command), enter: false }], 'the command a character a send, then exactly those taken back in one send, and no return');
+      assert.deepEqual(await sessionIn(bots, BOT, 'daily'), book, 'the book is as it was');
+      if (shows !== undefined) assert.ok(said.includes(shows), `the refusal shows the draft the line held, ${shows}, got:\n${said}`);
     });
   }
 });

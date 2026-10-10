@@ -125,12 +125,13 @@ function nameOf(thread) {
  * pointer and the command exactly, and no row of its slash menu stands above
  * it. With words after the command Codex has closed its menu (chat_composer.rs
  * `sync_command_popup`, rust-v0.160.0), so a menu still open means the line is
- * not what it seems.
+ * not what it seems. Where Orca gives a draft, the draft is the line's text:
+ * Codex 0.162.0's line on the screen then reads its pointer alone (#516).
  */
-function renameWrong(rows, _harness, command) {
+function renameWrong(rows, _harness, command, _version, draft) {
   const at = rows.findLastIndex((row) => /^ *›/.test(row));
   if (at < 0) return { why: 'its screen shows no input line' };
-  const line = rows[at].replaceAll(' ', ' ').trim();
+  const line = draft === undefined ? rows[at].replaceAll(' ', ' ').trim() : `› ${draft}`;
   if (line !== `› ${command}`) return { why: `its input line reads "${line}"` };
   const above = rows.slice(0, at).findLast((row) => row.trim() !== '');
   if (above !== undefined && /^ *(?:› +)?\/\S/.test(above)) return { why: `a menu of commands stands above its input line: "${above.trim()}"` };
