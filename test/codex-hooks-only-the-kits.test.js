@@ -68,6 +68,7 @@ import {
   withoutCodexHome,
   writeCodexConfig,
 } from './helpers/codex-hooks.js';
+import { codexTrustArgs } from './helpers/codex-trust.js';
 import { CODEX_AFTER_TRUST, CODEX_HOOKS_REVIEW_NO_COUNT, codexHooksReview } from './helpers/screens.js';
 
 const TASK = 'Read the open pull request and write down what it changes.';
@@ -636,6 +637,37 @@ for (const [name, target] of Object.entries(TARGETS)) {
         });
       }
 
+      // Codex's --profile <name> (-p <name>) loads a second user config,
+      // <name>.config.toml, whose hook trust the kit does not read.
+      for (const record of [['--profile', 'work'], ['-p', 'work'], ['-pwork'], '--profile=work', ['-c', 'profile=work']]) {
+        test(`K7 ${name}: daily's book entry says it was launched with ${JSON.stringify(record)}, a profile: the kit cannot tell, so a review of 1, 2 or 3 is refused, and nothing is typed`, async (t) => {
+          const box = await createSandbox(t);
+          const ours = await fleet(box);
+          await setLaunchedWith(ours, record);
+
+          await assertRefusedAtEveryCount(box, ours, target, `launched with ${JSON.stringify(record)}`);
+        });
+      }
+
+      test(`K7 ${name}: daily's book entry says it was launched with ["-m","gpt-x","--add-dir","/tmp/x"], no profile and no hooks: "3 hooks are new or changed." is answered`, async (t) => {
+        const box = await createSandbox(t);
+        const ours = await fleet(box);
+        await setLaunchedWith(ours, ['-m', 'gpt-x', '--add-dir', '/tmp/x']);
+
+        await assertCounts(box, ours, target, { refused: [1], answered: 3, what: 'a record with no profile' });
+      });
+
+      test(`K7 ${name}: daily's book entry says it was launched with a system test's words, codexTrustArgs with hooks: false and -m gpt-6.1-sol, which hold a p but no profile: "3 hooks are new or changed." is answered`, async (t) => {
+        const box = await createSandbox(t);
+        const ours = await fleet(box);
+        const record = [...codexTrustArgs(ours.bots, { hooks: false }).map((arg) => arg.replace(/^--extra-arg=/, '')), '-m', 'gpt-6.1-sol'];
+        assert.deepEqual(record.slice(0, 2), ['-c', `projects={${JSON.stringify(ours.bots)}={trust_level="trusted"}}`], `the premise: the folder's trust comes first: ${JSON.stringify(record)}`);
+        assert.ok(record.some((word) => word.includes('p')) && !record.some((word) => /profile/i.test(word)), `the premise: a p, and no profile: ${JSON.stringify(record)}`);
+        await setLaunchedWith(ours, record);
+
+        await assertCounts(box, ours, target, { refused: [1], answered: 3, what: 'a system test\'s launch words' });
+      });
+
       test(`K7 ${name}: daily's book entry says it was launched with the plain string "-c tui.show_tooltips=false", every character safe and no hooks: "3 hooks are new or changed." is answered`, async (t) => {
         const box = await createSandbox(t);
         const ours = await fleet(box);
@@ -701,6 +733,14 @@ for (const [name, target] of Object.entries(TARGETS)) {
     }
 
     if (!sessionOnly) {
+      test(`K7 ${name}: scout's book entry says it was launched with ["-p","work"], a profile: the kit cannot tell, so a review of 1, 2 or 3 is refused, and nothing is typed`, async (t) => {
+        const box = await createSandbox(t);
+        const ours = await fleet(box);
+        await setLaunchedWith(ours, ['-p', 'work'], { bot: target.bot, session: 'scout' });
+
+        await assertRefusedAtEveryCount(box, ours, target, 'scout launched with -p work');
+      });
+
       test(`K8 ${name}: a session given extra_args before its first launch, by session add or temp make --extra-arg, has them as launched_with in its book entry`, async (t) => {
         const box = await createSandbox(t);
         const extra = ['-c', 'tui.show_tooltips=false'];
@@ -848,15 +888,24 @@ async function relaunchDaily(box, ours) {
   ours.daily = await tabOf(box, ours.bots, 'coder', 'daily');
 }
 
-/** Write coder/daily's `launched_with` in its book entry, or take it out when `value` is undefined. */
-async function setLaunchedWith(ours, value) {
-  const file = path.join(botHomeOf(ours.bots, 'coder'), 'sessions.yaml');
+/** Write a session's `launched_with` (coder/daily's unless named) in its book entry, or take it out when `value` is undefined. */
+async function setLaunchedWith(ours, value, { bot = 'coder', session = 'daily' } = {}) {
+  const file = path.join(botHomeOf(ours.bots, bot), 'sessions.yaml');
   const book = await readYaml(file);
-  assert.ok(book?.sessions?.daily, `the premise: the book holds daily: ${JSON.stringify(book)}`);
-  if (value === undefined) delete book.sessions.daily.launched_with;
-  else book.sessions.daily.launched_with = value;
+  assert.ok(book?.sessions?.[session], `the premise: the book holds ${session}: ${JSON.stringify(book)}`);
+  if (value === undefined) delete book.sessions[session].launched_with;
+  else book.sessions[session].launched_with = value;
   await writeFile(file, YAML.stringify(book));
-  assert.deepEqual((await sessionIn(ours.bots, 'coder', 'daily'))?.launched_with, value, 'the premise: the book entry is as written');
+  assert.deepEqual((await sessionIn(ours.bots, bot, session))?.launched_with, value, 'the premise: the book entry is as written');
+}
+
+/** Reviews of 3, 2 and 1 are each refused, with nothing typed. */
+async function assertRefusedAtEveryCount(box, ours, target, what) {
+  for (const count of [3, 2, 1]) {
+    await showReview(box, ours, target, count, { goes: true });
+    const before = await sendsByTab(box);
+    await assertRefusedUntyped(box, await trust(box, ours, target), before, `${what}, a review of ${count}`);
+  }
 }
 
 /** Reviews of 3, 2 and 1 are each refused, naming the session's extra arguments as why, with nothing typed. */
