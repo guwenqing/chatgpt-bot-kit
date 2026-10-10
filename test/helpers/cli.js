@@ -124,9 +124,16 @@ function capture(command, args, options = {}) {
   });
 }
 
+/**
+ * The suite's own git config, which is none: a developer's global and system
+ * settings (a signed tag, a hook, an object format) must not change what a
+ * test's own git calls do (#512). The kit's own git calls are not run here.
+ */
+const SUITE_GIT_CONFIG = { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+
 /** Run git in `cwd` and report the result without throwing. */
 export function git(args, cwd) {
-  return capture('git', args, { cwd });
+  return capture('git', args, { cwd, env: { ...process.env, ...SUITE_GIT_CONFIG } });
 }
 
 /**
