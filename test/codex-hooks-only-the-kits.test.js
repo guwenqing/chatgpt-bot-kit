@@ -48,6 +48,7 @@
 // through `temp trust-hooks` in its maker lead's tab.
 
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, it as test } from 'node:test';
@@ -91,24 +92,25 @@ async function tabOf(box, bots, bot, name) {
  * Codex session scout that lead made. Both bots hold the kit's three Codex
  * hooks, by the sandbox's kit (the premise every count here rests on).
  * `dailyExtra`, when given, is the extra arguments daily is added with;
- * `scoutExtra(bots)` those scout is made with.
+ * `scoutExtra(bots)` those scout is made with. `folder` is the bots folder's
+ * name in the sandbox's working folder.
  */
-async function fleet(box, { dailyExtra = [], scoutExtra } = {}) {
+async function fleet(box, { dailyExtra = [], scoutExtra, folder = 'bots' } = {}) {
   const env = withoutCodexHome(box.env);
   const ok = async (args, extra = {}) => {
     const result = await box.run(args, { env: { ...env, ...extra } });
     assert.equal(result.code, 0, `obk ${args.join(' ')}: ${result.stdout}${result.stderr}`);
   };
-  await ok(['init', '--bots', 'bots', '--harness', 'claude']);
-  await ok(['bot', 'create', '--bots', 'bots', '--name', 'coder', '--harness', 'codex']);
-  await ok(['session', 'add', '--bots', 'bots', '--bot', 'coder', '--name', 'daily', ...dailyExtra.map((arg) => `--extra-arg=${arg}`)]);
-  await ok(['bot', 'create', '--bots', 'bots', '--name', 'writer', '--harness', 'claude']);
-  await ok(['session', 'add', '--bots', 'bots', '--bot', 'writer', '--name', 'lead']);
-  await ok(['up', '--bots', 'bots']);
-  const bots = box.path('bots');
+  await ok(['init', '--bots', folder, '--harness', 'claude']);
+  await ok(['bot', 'create', '--bots', folder, '--name', 'coder', '--harness', 'codex']);
+  await ok(['session', 'add', '--bots', folder, '--bot', 'coder', '--name', 'daily', ...dailyExtra.map((arg) => `--extra-arg=${arg}`)]);
+  await ok(['bot', 'create', '--bots', folder, '--name', 'writer', '--harness', 'claude']);
+  await ok(['session', 'add', '--bots', folder, '--bot', 'writer', '--name', 'lead']);
+  await ok(['up', '--bots', folder]);
+  const bots = box.path(folder);
   const lead = await tabOf(box, bots, 'writer', 'lead');
   const extra = scoutExtra === undefined ? [] : (await scoutExtra(bots)).map((arg) => `--extra-arg=${arg}`);
-  await ok(['temp', 'make', '--bots', 'bots', '--name', 'scout', '--harness', 'codex', '--prompt', TASK, ...extra], {
+  await ok(['temp', 'make', '--bots', folder, '--name', 'scout', '--harness', 'codex', '--prompt', TASK, ...extra], {
     ORCA_TERMINAL_HANDLE: lead.handle,
     ORCA_TAB_ID: lead.tabId,
     ...kitLaunchMark(box, lead),
@@ -273,6 +275,23 @@ test('K0 the premise: the -c value the K7 tests give a session reads, as TOML, a
     hash: trustedHash({ event: 'SessionStart', command: 'obk session record', timeout: 10 }),
   };
   assert.deepEqual(parseToml(hookStateFlag(entry)), parseToml(trustTablesFor([entry])));
+});
+
+test('K0 the premise: a shell reads "-c \'h\'\'ooks.state={…}\'" as the same two words as "-c \'hooks.state={…}\'"', () => {
+  const flag = hookStateFlag({ key: '/b/bots/coder/.codex/hooks.json:session_start:0:0', hash: WRONG_HASH });
+  const words = (text) => execFileSync('/bin/sh', ['-c', `printf '%s\\n' ${text}`], { encoding: 'utf8' }).split('\n').slice(0, -1);
+  assert.deepEqual(words(`-c '${flag}'`), ['-c', flag]);
+  assert.deepEqual(words(splitHooks(`-c '${flag}'`)), ['-c', flag]);
+  assert.ok(!/hooks/i.test(splitHooks(`-c '${flag}'`)), 'the premise: the split string has no "hooks" in it');
+});
+
+test('K0 the premise: a literal-string table [hooks.state.\'<key>\'] gives the same key and hash as the basic-string one, a backslash in the key included', () => {
+  const entries = ['/b/bots\\trust/bots/coder/.codex/hooks.json', '/b/bots/bots/coder/.codex/hooks.json'].map((file) => ({
+    key: stateKey(file, 'PostToolUse', 0, 0),
+    hash: trustedHash({ event: 'PostToolUse', matcher: 'Bash', command: 'obk session nudge', timeout: 10 }),
+  }));
+  assert.ok(entries[0].key.includes('\\t'), `the premise: the key holds a backslash and a t: ${entries[0].key}`);
+  assert.deepEqual(parseToml(literalTrustTablesFor(entries)), parseToml(trustTablesFor(entries)));
 });
 
 for (const [name, target] of Object.entries(TARGETS)) {
@@ -517,6 +536,12 @@ for (const [name, target] of Object.entries(TARGETS)) {
         clean: (k) => trustTablesFor([k.SessionStart]),
         answered: 2,
       },
+      {
+        label: 'the kit\'s SessionStart key in a literal-string table, [hooks.state.\'<key>\']',
+        config: (k) => literalTrustTablesFor([k.SessionStart]),
+        clean: (k) => trustTablesFor([k.SessionStart]),
+        answered: 2,
+      },
       ...Object.entries(ESCAPED_OTHER_FORMS).map(([form, write]) => ({
         label: `the kit's SessionStart key written with TOML's Unicode escapes, in ${form}`,
         config: (k) => write(k.SessionStart),
@@ -573,6 +598,50 @@ for (const [name, target] of Object.entries(TARGETS)) {
         await setLaunchedWith(ours, `-c '${hookStateFlag(k.SessionStart).replace(/^hooks/, 'Hooks')}'`);
 
         await assertExtraArgsRefused(box, ours, target, 'launched_with naming Hooks');
+      });
+
+      test(`K5 ${name}: a bots folder named bots\\trust, PostToolUse and Stop trusted in literal-string tables [hooks.state.'<key>'] at their right hashes: the kit cannot tell, so a review of 1, 2 or 3 is refused, and nothing is typed; in the usual form, 1 is answered`, async (t) => {
+        const box = await createSandbox(t);
+        const folder = 'bots\\trust';
+        const ours = await fleet(box, { folder });
+        const here = { ...target, args: target.args.map((arg) => (arg === 'bots' ? folder : arg)) };
+        const k = await kitHooks(ours, here);
+        assert.ok(k.PostToolUse.key.includes('bots\\trust'), `the premise: the kit's keys hold the backslash: ${k.PostToolUse.key}`);
+        await writeCodexConfig(homeCodex(box), literalTrustTablesFor([k.PostToolUse, k.Stop]));
+
+        for (const count of [3, 2, 1]) {
+          await showReview(box, ours, here, count, { goes: true });
+          const before = await sendsByTab(box);
+          await assertRefusedUntyped(box, await trust(box, ours, here), before, `literal-string tables under bots\\trust, a review of ${count}`);
+        }
+
+        await writeCodexConfig(homeCodex(box), trustTablesFor([k.PostToolUse, k.Stop]));
+        await assertCounts(box, ours, here, { refused: [], answered: 1, what: 'bots\\trust, written in the usual form' });
+      });
+
+      for (const { label, record } of [
+        { label: 'with each "hooks" split by adjacent quotes, "-c \'h\'\'ooks.state={…/.codex/h\'\'ooks.json…}\'", which the shell reads as the hooks.state flag', record: (k) => splitHooks(`-c '${hookStateFlag(k.SessionStart)}'`) },
+        { label: 'with a quote in it and no hooks at all, "-c \'tui.show_tooltips=false\'"', record: () => "-c 'tui.show_tooltips=false'" },
+      ]) {
+        test(`K7 ${name}: daily's book entry says it was launched with a plain string ${label}: the kit cannot tell, so a review of 1, 2 or 3 is refused, and nothing is typed`, async (t) => {
+          const box = await createSandbox(t);
+          const ours = await fleet(box);
+          await setLaunchedWith(ours, record(await kitHooks(ours, target)));
+
+          for (const count of [3, 2, 1]) {
+            await showReview(box, ours, target, count, { goes: true });
+            const before = await sendsByTab(box);
+            await assertRefusedUntyped(box, await trust(box, ours, target), before, `${label}, a review of ${count}`);
+          }
+        });
+      }
+
+      test(`K7 ${name}: daily's book entry says it was launched with the plain string "-c tui.show_tooltips=false", every character safe and no hooks: "3 hooks are new or changed." is answered`, async (t) => {
+        const box = await createSandbox(t);
+        const ours = await fleet(box);
+        await setLaunchedWith(ours, '-c tui.show_tooltips=false');
+
+        await assertCounts(box, ours, target, { refused: [1], answered: 3, what: 'a safe string record with no hooks' });
       });
 
       test(`K7 ${name}: daily's book entry has no launched_with, as for a session launched before the kit wrote one: the kit cannot tell, so a review of 1, 2 or 3 is refused, saying to restart it, and nothing is typed`, async (t) => {
@@ -720,6 +789,24 @@ for (const [name, target] of Object.entries(TARGETS)) {
     }
   });
 }
+
+/**
+ * Shell text `-c '<value>'` with each "hooks" in the single-quoted value (the
+ * table's name, and hooks.json in the key) split by adjacent quotes,
+ * `h''ooks`: the same word to a shell, with no "hooks" left in the text.
+ */
+const splitHooks = (text) => {
+  assert.match(text, /^-c '[^']*'$/, 'the premise: one single-quoted word after -c');
+  return text.replaceAll('hooks', "h''ooks");
+};
+
+/** config.toml tables trusting each `{ key, hash }`, each key a TOML literal string, '<key>', which keeps backslashes as they are. */
+const literalTrustTablesFor = (entries) => entries
+  .map(({ key, hash }) => {
+    assert.ok(!key.includes("'"), `a literal string cannot hold a ': ${key}`);
+    return `[hooks.state.'${key}']\ntrusted_hash = ${JSON.stringify(hash)}\n`;
+  })
+  .join('\n');
 
 /** A `-c` value that trusts one hook, `{ key, hash }`, as Codex reads its session flags. */
 const hookStateFlag = ({ key, hash }) => `hooks.state={${JSON.stringify(key)}={trusted_hash=${JSON.stringify(hash)}}}`;
