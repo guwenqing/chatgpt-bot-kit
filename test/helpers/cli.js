@@ -128,8 +128,17 @@ function capture(command, args, options = {}) {
  * The suite's own git config, which is none: a developer's global and system
  * settings (a signed tag, a hook, an object format) must not change what a
  * test's own git calls do (#512). The kit's own git calls are not run here.
+ *
+ * And no automatic maintenance: after a commit it goes to the background and
+ * can repack the repository while a test clones it (#526).
  */
-const SUITE_GIT_CONFIG = { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+const SUITE_GIT_CONFIG = {
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_CONFIG_NOSYSTEM: '1',
+  GIT_CONFIG_COUNT: '1',
+  GIT_CONFIG_KEY_0: 'maintenance.auto',
+  GIT_CONFIG_VALUE_0: 'false',
+};
 
 /** Run git in `cwd` and report the result without throwing. */
 export function git(args, cwd) {
