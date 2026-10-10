@@ -98,8 +98,12 @@ Which signal goes (the architect's rulings for #509):
   no notice. When no turn starts in the 8 s, the kit types its line, which an
   idle harness takes as a turn at once. When a turn of other work starts, a
   Claude session gets nothing typed and a Codex session gets the line.
-- A receiver that is busy: a Claude session gets nothing typed; a Codex
-  session gets the line, which it takes as a steer.
+- A receiver that is busy: its record is read for Orca's notice for up to
+  1.5 s, since the notice can start the turn before the kit looks (seen live on
+  Codex, #509); with the notice there, nothing is typed. Otherwise a Claude
+  session gets nothing typed, and a Codex session gets the line, which it
+  takes as a steer. That read is the most a send to a receiver busy with other
+  work waits.
 - A Claude session's own `Stop` hook, at each turn end, tells it once about
   each message the kit sent it that Orca still lists as unread, and says
   "still unread" and when it came. It types nothing. It says nothing when it
