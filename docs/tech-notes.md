@@ -84,6 +84,21 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
   `YOLO_TUI_AGENT_ARGS` — `--dangerously-skip-permissions` for `claude`, `--dangerously-bypass-approvals-and-sandbox`
   for `codex`, which are exactly the kit's own `dangerously-skip` flags. So a file with no entry for a
   harness means Orca will add the bypass. **verified** (read in the installed app)
+- **Orca 1.4.223 moved its settings into SQLite.** A fresh profile has no `orca-data.json`. It holds
+  `profile-state.db` with its `-wal` and `-shm`, plus `.authority` and `.backup.*.db` files. Orca holds the db
+  open in WAL mode, and its `-wal` can carry changes not yet checkpointed into the db. **verified** (the
+  folder listed live, 2026-10-09). The settings are one JSON document: table
+  `profile_state_documents (domain TEXT PRIMARY KEY, payload TEXT, domain_version, revision, updated_at,
+  content_hash)`, row `domain = 'settings'` (`domain_version` 1), with `agentDefaultArgs` at the top level of
+  `payload`. **reported** in #507 by the owner; the kit's system test reads it live. Orca's CLI has no
+  command that prints its settings: `orca --help` and `orca agent-context` list none. **verified** (1.4.223)
+  A SQLite open of the live db, read-only included, writes reader marks into Orca's `-shm`, and is refused
+  while a writer holds the db in exclusive locking mode. **verified** on a test db, not on Orca's own. So
+  `obk health` reads a copy of the `-wal` and the db in a private temporary folder, and removes it at once
+  (#507). A copy that Orca changed during the copy is thrown away: a part of the `-wal` over a db that was
+  just checkpointed reads as older settings. On macOS `copyFileSync` does not return when its source is
+  truncated during the copy, as a checkpoint truncates the `-wal`; `readFileSync` does return.
+  **verified** (a 600 MB file truncated during each copy, and a test db checkpointed during the kit's copy)
 
 ### Terminal commands (verified from help)
 
@@ -251,6 +266,13 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
     `❯\u00a0/clear`. Its slash menu sits above the input box's top rule, a row per command with its
     description wrapped onto rows set far in, and no pointer marks a selection; with `/clear` typed,
     `/clear` was its one row.
+  - Claude Code 2.1.296 marks the menu's selected row with its pointer: `  ❯ /compact  Free up
+    context…`, then `    /autocompact …` under it, all above the input box's top rule. Under Orca
+    1.4.223, `terminal read --screen --json` shows its input line bare, `❯`, whatever it holds, and
+    gives the line's text as `result.terminal.draft` beside `tail`: `hello`, `hello/compact`,
+    `/compact`, and no `draft` key when the line is empty. With `hello/compact` no menu came up.
+    Seen in four probes on 2026-10-09 (#510), in a throwaway tab, before and after a turn.
+    Whether the same `draft` is what made Codex 0.160.0's line bare is **not checked**.
   - At work, Codex shows `• Working (5s • esc to interrupt)` or `• Executing requested command (36s •
     esc to interrupt)`. Claude Code 2.1.288 never showed "esc to interrupt": its row is a spinner
     glyph, a word ending in `…`, then the time (`✶ Unfurling… (36s · ↓ 131 tokens)`); a finished turn's

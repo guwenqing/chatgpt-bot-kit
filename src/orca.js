@@ -8,9 +8,10 @@
 // handed to Orca on the command line.
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 
 import { SHELL_ENV } from './launch.js';
@@ -135,7 +136,14 @@ export const profilesDir = () => path.join(homedir(), 'Library', 'Application Su
  *
  * Orca adds these to the agents it launches, relaunches and resumes itself, so
  * they override the approval level a session was started with (PRD 6.5). The
- * kit reads the file and never writes it.
+ * kit reads Orca's files and never writes them.
+ *
+ * Orca 1.4.223 keeps them in `profile-state.db`, and older Orca in
+ * `orca-data.json` (tech notes, section 1). Orca's CLI has no command that
+ * prints them. A profile is read from its db when the db holds a settings
+ * document, and from the json file otherwise. A db that cannot be read is not
+ * passed over for the json beside it, which an upgraded Orca no longer keeps up
+ * to date.
  *
  * A mapping with no entry for an agent is not "no arguments": Orca falls back
  * to its own built-in default, which is the permission bypass itself (tech
@@ -153,17 +161,98 @@ export function orcaDefaultArgs() {
 
   return {
     dir,
-    profiles: profiles
-      .map((name) => path.join(dir, name, 'orca-data.json'))
-      .filter((file) => existsSync(file))
-      .map((file) => ({ file, args: argsIn(file) })),
+    profiles: profiles.map((name) => argsOfProfile(path.join(dir, name))).filter((one) => one !== undefined),
   };
 }
 
-/** What one profile file says about the agents' default arguments. */
-function argsIn(file) {
+/** What one profile says about the agents' default arguments, or undefined when it keeps no settings. */
+function argsOfProfile(profile) {
+  const db = path.join(profile, 'profile-state.db');
+  const json = path.join(profile, 'orca-data.json');
+
+  if (existsSync(db)) {
+    let payload;
+    try {
+      payload = settingsPayloadIn(db);
+    } catch {
+      return { file: db, args: undefined };
+    }
+    if (payload !== null) return { file: db, args: argsIn(() => JSON.parse(payload)) };
+  }
+  if (existsSync(json)) return { file: json, args: argsIn(() => JSON.parse(readFileSync(json, 'utf8'))?.settings) };
+  // A db with no settings document and no older file beside it: a store the
+  // kit does not know how to read, which it says rather than pass over.
+  return existsSync(db) ? { file: db, args: undefined } : undefined;
+}
+
+/**
+ * The `settings` document in Orca's `profile-state.db`, as text, or null when
+ * the db has none. Throws when the db cannot be read.
+ *
+ * Orca holds the db open in WAL mode, and its current settings may be in the
+ * `-wal` alone. A SQLite open of Orca's own file, read-only included, writes
+ * reader marks into its `-shm` and is refused while Orca holds the db in
+ * exclusive mode. So the kit reads a copy: the `-wal` and then the db, into a
+ * private folder of its own (0700, as mkdtemp makes it), removed straight after
+ * on every path.
+ *
+ * A copy Orca changed under it is thrown away: a part of the `-wal` laid over a
+ * db Orca has just checkpointed reads as older settings than Orca's own. So the
+ * two files are noted before and after, and a copy is read only when neither
+ * moved; after COPY_TRIES copies that all moved, the db counts as unreadable.
+ * The bytes are read whole and written out rather than copied with
+ * `copyFileSync`, which on macOS never returns when its source is truncated
+ * under it, as a checkpoint truncates the `-wal` (#507).
+ */
+function settingsPayloadIn(db) {
+  const copyDir = mkdtempSync(path.join(tmpdir(), 'obk-orca-'));
   try {
-    const settings = JSON.parse(readFileSync(file, 'utf8'))?.settings?.agentDefaultArgs;
+    const copy = path.join(copyDir, path.basename(db));
+    for (let tries = 0; tries < COPY_TRIES; tries += 1) {
+      const before = stateOf(db);
+      const wal = bytesIfThere(`${db}-wal`);
+      rmSync(`${copy}-wal`, { force: true });
+      if (wal !== undefined) writeFileSync(`${copy}-wal`, wal);
+      writeFileSync(copy, readFileSync(db));
+      if (stateOf(db) !== before) continue;
+
+      const store = new DatabaseSync(copy);
+      try {
+        const row = store.prepare("SELECT payload FROM profile_state_documents WHERE domain = 'settings'").get();
+        return row === undefined ? null : row.payload;
+      } finally {
+        store.close();
+      }
+    }
+    throw new Error(`${db} changed during each of ${COPY_TRIES} copies`);
+  } finally {
+    rmSync(copyDir, { recursive: true, force: true });
+  }
+}
+
+/** How many copies of Orca's db the kit makes before it gives up on one that keeps changing. */
+const COPY_TRIES = 3;
+
+/** Where Orca's db and its `-wal` stand: one string that changes whenever either file does. */
+const stateOf = (db) => [db, `${db}-wal`].map((file) => {
+  const stat = statSync(file, { bigint: true, throwIfNoEntry: false });
+  return stat === undefined ? 'none' : `${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+}).join('|');
+
+/** The bytes of `file`, or undefined when there is no such file. */
+function bytesIfThere(file) {
+  try {
+    return readFileSync(file);
+  } catch (error) {
+    if (error.code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
+
+/** What one settings document, given by `read`, says about the agents' default arguments. */
+function argsIn(read) {
+  try {
+    const settings = read()?.agentDefaultArgs;
     // Anything that is not a mapping of agents is a mapping with nothing in it,
     // which is Orca falling back to its own defaults for every agent.
     return settings !== null && typeof settings === 'object' && !Array.isArray(settings) ? settings : {};
@@ -401,13 +490,16 @@ export const QUESTION_ON_SCREEN = 'question-on-screen';
  */
 function screenOf(handle, readMs) {
   const read = screenRows(handle, readMs);
-  return read.rows === undefined ? { screenUnreadable: read.unreadable } : { question: questionIn(read.rows), rows: read.rows };
+  return read.rows === undefined ? { screenUnreadable: read.unreadable } : { question: questionIn(read.rows), rows: read.rows, draft: read.draft };
 }
 
 /**
- * The rows the tab `handle` renders, `{ rows }`, or `{ unreadable: <why> }`.
+ * The rows the tab `handle` renders, `{ rows, draft }`, or `{ unreadable: <why> }`.
  * Orca refusing, or answering with anything but the rendered screen, is a
- * screen that cannot be read, not an error.
+ * screen that cannot be read, not an error. `draft` is the text in the
+ * harness's input line, undefined when there is none: Orca 1.4.223 gives it
+ * beside the rows, and Claude Code 2.1.296's input line in the rows then reads
+ * its pointer alone (#510, probe 4).
  */
 export function screenRows(handle, readMs) {
   let read;
@@ -419,7 +511,7 @@ export function screenRows(handle, readMs) {
   if (read?.source !== 'screen' || !Array.isArray(read.tail)) {
     return { unreadable: `Orca gave no rendered screen for it (source: ${read?.source ?? 'none'})` };
   }
-  return { rows: read.tail };
+  return { rows: read.tail, draft: typeof read.draft === 'string' && read.draft !== '' ? read.draft : undefined };
 }
 
 /** A row the harness starts with its selection pointer: `›` on Codex, `❯` on Claude Code. */
@@ -530,7 +622,7 @@ function pointedChoiceAt(rows, at) {
  * may: `{ handle, agent }`, with the agent Orca names there. Otherwise nothing
  * is typed, and the answer says why. `idle` says whether Orca's `tui-idle` wait
  * answered ok, and `rows` is the screen the gate read, for a caller that must
- * not type into a busy harness (#391):
+ * not type into a busy harness (#391), with the `draft` Orca gave beside it (#510):
  * `{}` for a tab with no harness in it (none in the book, none Orca lists, or
  * the shell in front), `{ blocked }` for one with something on screen waiting
  * to be answered, and `{ unsure }`, a sentence, for one the kit cannot tell
@@ -593,7 +685,7 @@ export function tabToTypeInto(home, tabId, timeoutMs) {
   if (seen.question === undefined) {
     return { unsure: `the kit could not tell whether a question is waiting on its screen (${seen.screenUnreadable}), so nothing was typed` };
   }
-  return { handle: live.handle, agent: seen.agent, idle: seen.answered, rows: seen.rows };
+  return { handle: live.handle, agent: seen.agent, idle: seen.answered, rows: seen.rows, draft: seen.draft };
 }
 
 /**

@@ -690,6 +690,40 @@ test('a screen the fake puts up at a send can carry what tui-idle finds in that 
   assert.equal('tuiIdle' in listed, false, 'Orca never lists it');
 });
 
+test('a tab\'s input line text is read as its draft beside the screen, put up and taken away with the screens a send moves on to, and listed nowhere (#510)', async (t) => {
+  // Orca 1.4.223 answers Claude Code 2.1.296's input line text as `draft`,
+  // and leaves the key out when the line is empty (seen live, #510).
+  const box = await createSandbox(t);
+  await twoTabs(box);
+  const bare = ['─'.repeat(20), '❯', '─'.repeat(20)];
+  const menu = ['  ❯ /compact  Free up context', ...bare];
+  await box.orca.set({
+    terminals: (await box.orca.terminals()).map((terminal) => (terminal.handle === 'term_a'
+      ? { ...terminal, screen: bare, draft: 'hello', nextScreens: [{ screen: menu, draft: '/compact' }, bare, { screen: menu, draft: '/c' }, { screen: bare }] }
+      : terminal)),
+  });
+  const read = (on, more = ['--screen']) => answer(ask(box, ['terminal', 'read', '--terminal', on, ...more, '--json'])).result.terminal;
+  const send = (text) => answer(ask(box, ['terminal', 'send', '--terminal', 'term_a', '--text', text, '--json']));
+
+  assert.deepEqual([read('term_a').tail, read('term_a').draft], [bare, 'hello'], 'the tab\'s own draft, beside its rows');
+  assert.equal(read('term_a', []).draft, 'hello', 'a read of the stream gives it too');
+  assert.equal('draft' in read('term_b'), false, 'a tab with nothing in its line has no draft key');
+  const listed = answer(ask(box, ['terminal', 'list', '--json'])).result.terminals.find((one) => one.handle === 'term_a');
+  const showed = answer(ask(box, ['terminal', 'show', '--terminal', 'term_a', '--json'])).result.terminal;
+  for (const [what, entry] of [['list', listed], ['show', showed]]) {
+    assert.equal('draft' in entry, false, `Orca shows a draft only through read, not in ${what}`);
+  }
+  send('/');
+  assert.deepEqual([read('term_a').tail, read('term_a').draft], [menu, '/compact'], 'a screen with a draft puts up both');
+  send('c');
+  assert.deepEqual(read('term_a').tail, bare, 'rows alone are the next screen');
+  assert.equal('draft' in read('term_a'), false, 'and take the draft away');
+  send('o');
+  assert.equal(read('term_a').draft, '/c', 'an entry\'s draft is the draft from then on');
+  send('m');
+  assert.equal('draft' in read('term_a'), false, 'and an entry with none takes it away');
+});
+
 test('the fake can be slow to answer one command only once another has been called, counting from when it was told (#391)', async (t) => {
   // A screen that reads at once until a key is sent, and hangs after.
   const box = await createSandbox(t);

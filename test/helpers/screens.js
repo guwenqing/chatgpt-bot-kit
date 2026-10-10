@@ -723,6 +723,330 @@ export const CLAUDE_CLEAR_MENU_BELOW = [...CLAUDE_ABOVE_INPUT, CLAUDE_LIVE_RULE,
 export const CLAUDE_COMPACT_TYPED = claudeMenuAbove(CLAUDE_COMPACT_ROWS, claudeInput('/compact'));
 
 /**
+ * `/compact` typed, its input line `❯` alone, and Claude Code 2.1.288's menu
+ * above the box with `/compact` its first and only command row, no pointer in
+ * it (#510). A reconstruction.
+ */
+export const CLAUDE_COMPACT_BARE = claudeMenuAbove(CLAUDE_COMPACT_ROWS, '❯');
+
+/** The same for `/clear`: its input line `❯` alone under CLAUDE_CLEAR_TYPED's menu. A reconstruction. */
+export const CLAUDE_CLEAR_BARE = claudeMenuAbove(CLAUDE_CLEAR_ROWS, '❯');
+
+/**
+ * `/compact` typed and shown in the input line, and Claude Code 2.1.288's menu
+ * above the box with no pointer and `/autocompact` its first command row,
+ * `/compact` second: the screen's only `❯ /compact` is the input line's
+ * (#510). A reconstruction: `/autocompact`'s words are 2.1.296's, laid out as
+ * 2.1.288 lays out its rows.
+ */
+export const CLAUDE_COMPACT_OTHER_FIRST = claudeMenuAbove([
+  `${'  /autocompact'.padEnd(50)}Set how full the context gets before auto-summarizing`,
+  ...CLAUDE_COMPACT_ROWS,
+], claudeInput('/compact'));
+
+// Claude Code 2.1.296, as live probes for #510 showed it on 2026-10-09 in
+// Orca 1.4.223, in throwaway sessions not made by the kit, so their rules
+// carry no session name. With a command typed one character a send, the slash
+// menu above the input box's top rule marks its selected row with a pointer
+// and a plain space, `  ❯ /compact`; the other rows are set two columns
+// further in, and a wrapped description is lined up under the descriptions.
+// The input line under the rule reads `❯` alone, whatever is in it. Orca's
+// read gives the line's text apart from the rows, as `draft`, and leaves the
+// key out when the line is empty; its help calls it "UI-only composer text
+// excluded from tail". A read with a draft is `{ screen, draft }` here, as the
+// fake Orca's `nextScreens` takes it.
+//
+// The first probe read a session with no turn yet, the second and the fourth
+// one after a turn. Each screen was the same 300 ms, 1 s and 3 s after the
+// last character. Only the fourth probe saved `draft`, so an earlier capture
+// paired with a draft is a rebuilt pairing, and says so. Each capture is the
+// whole `tail` of one read, the probe's folder put back to `<tmp>` and nothing
+// else changed. The reconstructions stand on the fourth probe's captures.
+
+/** Claude Code 2.1.296 at its idle input line, showing its placeholder, before anything was typed: a capture. */
+export const CLAUDE_296_IDLE = [
+  ' ▐▛███▛█   Claude Code v2.1.296',
+  '▝▜██████▀  Opus 5.5 · Claude Max',
+  ' ▝▝   ▝▝   <tmp>/obk-probe-510.DwlBk4',
+  '▎ Auto mode is now Claude Code\'s default permission mode.',
+  '▎ Auto mode lets Claude handle permission prompts automatically. Claude checks each tool call for risky actions and',
+  '▎ prompt injection before executing, runs the ones it assesses as lower-risk, and blocks the rest.',
+  '▎ https://code.claude.com/docs/en/permission-modes',
+  '                                                                                                    ◐ medium · /effort',
+  '─'.repeat(120),
+  '❯\u00a0Try "edit <filepath> to..."',
+  '─'.repeat(120),
+  '  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents',
+];
+
+/**
+ * `/compact` typed into Claude Code 2.1.296: its menu above the box with the
+ * pointer on `/compact`, `/autocompact` and `/computer-use` under it, and the
+ * input line `❯` alone. A capture from the first probe, which saved the rows
+ * and not the draft.
+ */
+export const CLAUDE_296_COMPACT_TYPED = [
+  ' ▐▛███▛█   Claude Code v2.1.296',
+  '▝▜██████▀  Opus 5.5 · Claude Max',
+  ' ▝▝   ▝▝   <tmp>/obk-probe-510.DwlBk4',
+  '▎ Auto mode is now Claude Code\'s default permission mode.',
+  '▎ Auto mode lets Claude handle permission prompts automatically. Claude checks each tool call for risky actions and',
+  '▎ prompt injection before executing, runs the ones it assesses as lower-risk, and blocks the rest.',
+  '▎ https://code.claude.com/docs/en/permission-modes',
+  '  ❯ /compact                                        Free up context by summarizing the conversation so far',
+  '    /autocompact                                    Set how full the context gets before auto-summarizing',
+  '    /computer-use                                   Read this skill before the first step of any request to do',
+  '                                                    something in an app on the person\'s own computer (Notes, Finder, …',
+  '─'.repeat(120),
+  '❯',
+  '─'.repeat(120),
+  '  ⏵⏵ auto mode on (shift+tab to cycle)',
+];
+
+/**
+ * `/clear` typed into Claude Code 2.1.296: its menu above the box with the
+ * pointer on `/clear`, its only command row, and the input line `❯` alone. A
+ * capture from the first probe, which saved the rows and not the draft.
+ */
+export const CLAUDE_296_CLEAR_TYPED = [
+  ' ▐▛███▛█   Claude Code v2.1.296',
+  '▝▜██████▀  Opus 5.5 · Claude Max',
+  ' ▝▝   ▝▝   <tmp>/obk-probe-510.DwlBk4',
+  '▎ Auto mode is now Claude Code\'s default permission mode.',
+  '▎ Auto mode lets Claude handle permission prompts automatically. Claude checks each tool call for risky actions and',
+  '▎ prompt injection before executing, runs the ones it assesses as lower-risk, and blocks the rest.',
+  '▎ https://code.claude.com/docs/en/permission-modes',
+  '  ❯ /clear                                          Start a new session with empty context; previous session stays on',
+  '                                                    disk (resumable with /resume)',
+  '─'.repeat(120),
+  '❯',
+  '─'.repeat(120),
+  '  ⏵⏵ auto mode on (shift+tab to cycle)',
+];
+
+/**
+ * `/compact` typed into Claude Code 2.1.296 with no turn yet, read with its
+ * draft: CLAUDE_296_COMPACT_TYPED with `draft: '/compact'` beside it. A
+ * rebuilt pairing: the first probe saved the rows and not the draft.
+ */
+export const CLAUDE_296_COMPACT_READ = { screen: CLAUDE_296_COMPACT_TYPED, draft: '/compact' };
+
+/** The same for `/clear`: CLAUDE_296_CLEAR_TYPED with `draft: '/clear'` beside it. A rebuilt pairing. */
+export const CLAUDE_296_CLEAR_READ = { screen: CLAUDE_296_CLEAR_TYPED, draft: '/clear' };
+
+/**
+ * `/clear` typed into Claude Code 2.1.296 after one turn, at the kit's pace:
+ * its menu above the box with the pointer on `/clear`, and the input line `❯`
+ * alone. A capture from the second probe, which saved the rows and not the
+ * draft.
+ */
+export const CLAUDE_296_TURN_CLEAR_TYPED = [
+  ' ▐▛███▛█   Claude Code v2.1.296',
+  '▝▜██████▀  Opus 5.5 · Claude Max',
+  ' ▝▝   ▝▝   <tmp>/obk-probe-510b.pbX1Oa',
+  '❯ Reply with the single word ok, and do nothing else.',
+  '⏺ ok',
+  '✻ Worked for 1s · done 8:24 PM',
+  '  ❯ /clear                                          Start a new session with empty context; previous session stays on',
+  '                                                    disk (resumable with /resume)',
+  '─'.repeat(120),
+  '❯',
+  '─'.repeat(120),
+  '  ⏵⏵ auto mode on (shift+tab to cycle)',
+];
+
+/** CLAUDE_296_TURN_CLEAR_TYPED with `draft: '/clear'` beside it. A rebuilt pairing. */
+export const CLAUDE_296_TURN_CLEAR_READ = { screen: CLAUDE_296_TURN_CLEAR_TYPED, draft: '/clear' };
+
+// The fourth probe saved Orca's whole answer to each read, `draft` with the
+// rows, in a session after one turn.
+
+/**
+ * Claude Code 2.1.296 after one turn, its input line empty, which reads `❯`
+ * alone: a capture, a read with no draft. The read after a typed line was
+ * taken back with backspaces gave the same rows, with no draft.
+ */
+export const CLAUDE_296_TURN_IDLE = [
+  ' ▐▛███▛█   Claude Code v2.1.296',
+  '▝▜██████▀  Opus 5.5 · Claude Max',
+  ' ▝▝   ▝▝   <tmp>/obk-probe-510d.LVfL3G',
+  '❯ Reply with the single word ok, and do nothing else.',
+  '⏺ ok',
+  '✻ Cooked for 1s · done 8:30 PM',
+  '─'.repeat(120),
+  '❯',
+  '─'.repeat(120),
+  '  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents',
+];
+
+/**
+ * A draft, `hello`, typed into the empty input line after that turn: the line
+ * still reads `❯` alone, and the draft comes beside the rows. A capture, the
+ * rows and the draft from one read.
+ */
+export const CLAUDE_296_TURN_DRAFT = {
+  screen: [
+    ' ▐▛███▛█   Claude Code v2.1.296',
+    '▝▜██████▀  Opus 5.5 · Claude Max',
+    ' ▝▝   ▝▝   <tmp>/obk-probe-510d.LVfL3G',
+    '❯ Reply with the single word ok, and do nothing else.',
+    '⏺ ok',
+    '✻ Cooked for 1s · done 8:30 PM',
+    '─'.repeat(120),
+    '❯',
+    '─'.repeat(120),
+    '  ⏵⏵ auto mode on (shift+tab to cycle)',
+  ],
+  draft: 'hello',
+};
+
+/**
+ * `/compact` typed after that draft: no menu came up, and the draft reads
+ * `hello/compact`. A capture: the read gave the same rows as
+ * CLAUDE_296_TURN_DRAFT's, and this draft.
+ */
+export const CLAUDE_296_TURN_DRAFT_COMPACT = { screen: CLAUDE_296_TURN_DRAFT.screen, draft: 'hello/compact' };
+
+/**
+ * `/compact` typed into the empty input line after that turn: the menu above
+ * the box with the pointer on `/compact`, the input line `❯` alone, and the
+ * draft `/compact`. A capture, the rows and the draft from one read.
+ */
+export const CLAUDE_296_TURN_COMPACT = {
+  screen: [
+    ' ▐▛███▛█   Claude Code v2.1.296',
+    '▝▜██████▀  Opus 5.5 · Claude Max',
+    ' ▝▝   ▝▝   <tmp>/obk-probe-510d.LVfL3G',
+    '❯ Reply with the single word ok, and do nothing else.',
+    '⏺ ok',
+    '✻ Cooked for 1s · done 8:30 PM',
+    '  ❯ /compact                                        Free up context by summarizing the conversation so far',
+    '    /autocompact                                    Set how full the context gets before auto-summarizing',
+    '    /computer-use                                   Read this skill before the first step of any request to do',
+    '                                                    something in an app on the person\'s own computer (Notes, Finder, …',
+    '─'.repeat(120),
+    '❯',
+    '─'.repeat(120),
+    '  ⏵⏵ auto mode on (shift+tab to cycle)',
+  ],
+  draft: '/compact',
+};
+
+/** The rows of CLAUDE_296_TURN_COMPACT, the reconstructions below stand on. */
+const TURN_COMPACT_ROWS = CLAUDE_296_TURN_COMPACT.screen;
+
+/** Where the menu starts there: right under the answered turn. */
+const CLAUDE_296_MENU_AT = TURN_COMPACT_ROWS.findIndex((row) => row.startsWith('  ❯ /compact'));
+
+/** The screen above the menu: Claude Code's header and the answered turn. */
+const CLAUDE_296_ABOVE_MENU = TURN_COMPACT_ROWS.slice(0, CLAUDE_296_MENU_AT);
+
+/** The menu rows with `/compact` typed, as captured: the pointer on `/compact`. */
+const CLAUDE_296_COMPACT_MENU = TURN_COMPACT_ROWS.slice(CLAUDE_296_MENU_AT, TURN_COMPACT_ROWS.findIndex((row) => row.startsWith('─')));
+
+/** The menu rows with `/clear` typed, as the second probe captured them: the pointer on `/clear`. */
+const CLAUDE_296_CLEAR_MENU = CLAUDE_296_TURN_CLEAR_TYPED.slice(CLAUDE_296_MENU_AT, CLAUDE_296_TURN_CLEAR_TYPED.findIndex((row) => row.startsWith('─')));
+
+/** The input box's rule, and the foot under it with a command typed, as captured. */
+const CLAUDE_296_RULE = '─'.repeat(120);
+const CLAUDE_296_FOOT = '  ⏵⏵ auto mode on (shift+tab to cycle)';
+
+/** CLAUDE_296_TURN_COMPACT's rows with `menu` drawn above the input box and `input` as the input line. */
+const claude296 = (menu, input) => [...CLAUDE_296_ABOVE_MENU, ...menu, CLAUDE_296_RULE, input, CLAUDE_296_RULE, CLAUDE_296_FOOT];
+
+/** A 2.1.296 menu row with its pointer taken off: the two columns it and its space took are spaces again. */
+const unselected = (row) => row.replace(/^ {2}❯ /, '    ');
+
+/** A 2.1.296 menu row with the pointer put on it, in the two columns before its command. */
+const selected = (row) => row.replace(/^ {4}\//, '  ❯ /');
+
+/**
+ * `/compact` typed, the menu's pointer on it, and the input line showing the
+ * text, `❯ /compact`, with no draft: CLAUDE_296_TURN_COMPACT's rows with only
+ * the input line changed, and its draft left out. A reconstruction: no live
+ * read showed this line.
+ */
+export const CLAUDE_296_COMPACT_SHOWN = TURN_COMPACT_ROWS.map((row) => (row === '❯' ? claudeInput('/compact') : row));
+
+/** The same for `/clear`: CLAUDE_296_TURN_CLEAR_TYPED with only its input line changed, to `❯ /clear`, and no draft. A reconstruction. */
+export const CLAUDE_296_CLEAR_SHOWN = CLAUDE_296_TURN_CLEAR_TYPED.map((row) => (row === '❯' ? claudeInput('/clear') : row));
+
+/**
+ * `/compact` typed after a draft the kit could not see before its first key:
+ * CLAUDE_296_TURN_COMPACT's rows as captured, the menu's pointer on
+ * `/compact`, and the draft `x/compact`. A reconstruction: only the draft
+ * changed; no live read showed it.
+ */
+export const CLAUDE_296_COMPACT_OTHER_DRAFT = { screen: TURN_COMPACT_ROWS, draft: 'x/compact' };
+
+/** The same for `/clear`: CLAUDE_296_TURN_CLEAR_TYPED's rows as captured, the pointer on `/clear`, and the draft `x/clear`. A reconstruction. */
+export const CLAUDE_296_CLEAR_OTHER_DRAFT = { screen: CLAUDE_296_TURN_CLEAR_TYPED, draft: 'x/clear' };
+
+/**
+ * The draft `/compact`, and the menu's pointer moved down onto
+ * `/autocompact`: `/compact` is the first command row, not selected. A
+ * reconstruction from CLAUDE_296_TURN_COMPACT: only the pointer moved.
+ */
+export const CLAUDE_296_ON_AUTOCOMPACT = {
+  screen: claude296(CLAUDE_296_COMPACT_MENU.map((row) => {
+    if (row.startsWith('  ❯ /compact ')) return unselected(row);
+    if (row.startsWith('    /autocompact ')) return selected(row);
+    return row;
+  }), '❯'),
+  draft: '/compact',
+};
+
+/**
+ * The draft `/compact`, and the menu's pointer on a command whose name only
+ * starts with it, `/compact-x`, drawn first; `/compact` under it, not
+ * selected, then the captured rows. A reconstruction from
+ * CLAUDE_296_TURN_COMPACT: no `/compact-x` was seen, and its words are made up.
+ */
+export const CLAUDE_296_ON_COMPACT_X = {
+  screen: claude296([
+    `${'  ❯ /compact-x'.padEnd(52)}Compact the conversation and its tool results`,
+    ...CLAUDE_296_COMPACT_MENU.map(unselected),
+  ], '❯'),
+  draft: '/compact',
+};
+
+/**
+ * The draft `/clear`, and the menu's pointer on `/clear-history`, a command
+ * whose name only starts with it, drawn first; `/clear` and its wrapped
+ * description under it, not selected. A reconstruction on
+ * CLAUDE_296_TURN_COMPACT's rows: no `/clear-history` was seen, and its words
+ * are CLAUDE_CLEAR_OTHER_FIRST's.
+ */
+export const CLAUDE_296_ON_CLEAR_HISTORY = {
+  screen: claude296([
+    `${'  ❯ /clear-history'.padEnd(52)}Remove the prompt history`,
+    ...CLAUDE_296_CLEAR_MENU.map(unselected),
+  ], '❯'),
+  draft: '/clear',
+};
+
+/**
+ * The draft `/compact`, and the 2.1.296 menu, its pointer on `/compact`,
+ * drawn UNDER the input box, none above it: a pointer row in the wrong place.
+ * A reconstruction: Claude Code 2.1.296 draws its menu above the box.
+ */
+export const CLAUDE_296_COMPACT_MENU_BELOW = {
+  screen: [...CLAUDE_296_ABOVE_MENU, CLAUDE_296_RULE, '❯', CLAUDE_296_RULE, ...CLAUDE_296_COMPACT_MENU],
+  draft: '/compact',
+};
+
+/**
+ * The draft `/compact`, and no menu above the box: only the echo of an
+ * earlier `/compact` turn in the history above it, with a row of its answer
+ * after it. No pointer row in a menu names the command. A reconstruction: the
+ * echo's layout is the answered turn's, and the answer's words are made up.
+ */
+export const CLAUDE_296_COMPACT_ECHOED = {
+  screen: claude296(['❯ /compact', '  ⎿  Conversation compacted'], '❯'),
+  draft: '/compact',
+};
+
+/**
  * Claude Code at work on a turn, its empty input line below: the row above the
  * box says how to interrupt it, here with a capital E, as either harness may
  * write it. Orca's `tui-idle` can call a harness like this idle (tech notes,
