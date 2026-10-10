@@ -490,11 +490,16 @@ async function nudge(to, from, subject, tab, mark = recordMark(to.harness, to.ho
   if (to.tab === undefined) return { nudged: false };
   const notice = `orchestration check --run ${to.mailbox}`;
 
-  const first = atTheGate(to, from, subject, tab, (found) => {
-    if (found.idle) return { watch: found.handle };
+  const first = atTheGate(to, from, subject, tab, (found) => (found.idle ? { watch: found.handle } : { busy: true }));
+  if (first.busy) {
+    // Busy at the first look may be Orca's notice, typed the moment the mail
+    // was in: an idle Codex took it as a turn before the kit looked, live.
+    if (await noticeShows(mark, notice)) return { nudged: false, signal: 'orca' };
     if (to.harness === 'claude') return { nudged: false, signal: 'hook', because: 'busy' };
-    return line(found.handle, to, from, subject, 'busy');
-  });
+    return atTheGate(to, from, subject, tab, (found) => (userTurnSince(mark, notice)
+      ? { nudged: false, signal: 'orca' }
+      : line(found.handle, to, from, subject, 'busy')));
+  }
   if (first.watch === undefined) return first;
 
   const watched = await watch(first.watch, mark, notice);
@@ -533,6 +538,17 @@ const RECORD_GRACE_MS = 1500;
 const RECORD_ASK_MS = 250;
 
 /**
+ * Whether the receiver's record shows Orca's notice within RECORD_GRACE_MS, for
+ * a tab seen busy: the most a send to a receiver busy with other work waits.
+ */
+async function noticeShows(mark, notice) {
+  for (const end = Date.now() + RECORD_GRACE_MS; ; await pause(RECORD_ASK_MS)) {
+    if (userTurnSince(mark, notice)) return true;
+    if (Date.now() >= end) return false;
+  }
+}
+
+/**
  * Watch an idle receiver for up to WATCH_MS: `{ notice: true }` once its record
  * shows Orca's notice, `{ turn: true }` once a turn started that the record
  * does not show as the notice, or `{}` when it stayed at rest; with `ms`, how
@@ -548,12 +564,7 @@ async function watch(handle, mark, notice) {
     const left = until - Date.now();
     if (left <= 0) return { ms: ms() };
     const seen = idleNow(handle, Math.min(WATCH_LOOK_MS, left));
-    if (seen === 'busy') {
-      for (const end = Date.now() + RECORD_GRACE_MS; Date.now() < end; await pause(RECORD_ASK_MS)) {
-        if (userTurnSince(mark, notice)) return { notice: true, ms: ms() };
-      }
-      return { turn: true, ms: ms() };
-    }
+    if (seen === 'busy') return (await noticeShows(mark, notice)) ? { notice: true, ms: ms() } : { turn: true, ms: ms() };
     if (seen === 'idle') await pause(Math.min(WATCH_LOOK_MS, Math.max(until - Date.now(), 0)));
   }
 }
