@@ -45,11 +45,12 @@
 // ADR 0034 records.
 
 import assert from 'node:assert/strict';
-import { chmod, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, readFile, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
   botHomeOf,
+  conversationOnRecord,
   createSandbox,
   eventsIn,
   hookFileOf,
@@ -60,6 +61,7 @@ import {
   orcaCommand,
   orcaFlag,
   plainCli,
+  recordSession,
   sentInto,
   sessionIn,
   sh,
@@ -657,6 +659,77 @@ test('A6 a nudge left by a send in one tab is not taken by the hook in another; 
 
   assertSaid(own, 'the hook in the sending tab');
   await assertToldOnly(box, bots, developer.tabId, 'the hook in the sending tab');
+});
+
+// ---------------------------------------------------------------------------
+// A6b — Orca's notice before the hook (#509, R1; the review of PR #514).
+// ---------------------------------------------------------------------------
+//
+// The send leaves its nudge; before the sending session's hook runs, Orca's
+// notice reaches the receiver: a user turn in its transcript, written after
+// the post, its turn over and its tab idle again. R1: the kit MUST NOT type
+// its line when Orca's notice for that mailbox reached the receiver after the
+// send, known from the receiver's record, and "after the send" is after the
+// post, not after the hook. So the hook types nothing. A notice that was in
+// the record before the send is no signal for this mail, and the hook still
+// types the line after its 8 s watch.
+
+/** A conversation id of the shape Claude Code gives one, for the developer. */
+const DEVELOPER_CONVERSATION = '0199b2c0-0514-4444-8888-de7e10000001';
+
+/**
+ * The left-nudge fleet with an idle receiver whose book holds its
+ * conversation and whose transcript is on record, and the send that leaves
+ * the nudge (`before` is written to the transcript ahead of the send). Answers
+ * the fleet, the transcript, and the receiver's mailbox.
+ */
+async function leftWithRecord(t, { before } = {}) {
+  const fleet = await leftFleet(t, { receiver: 'idle' });
+  const { box, bots, developer } = fleet;
+  await psRuns(box);
+  const heard = await recordSession(box, { bots, bot: 'developer', tab: developer.tabId, session: DEVELOPER_CONVERSATION });
+  assert.equal(heard.code, 0, `the premise: the book holds the developer's conversation: ${heard.stderr}`);
+  assert.equal((await sessionIn(bots, 'developer', 'daily')).session, DEVELOPER_CONVERSATION, 'the premise: the book holds the developer\'s conversation');
+  const transcript = await conversationOnRecord(box, { harness: 'claude', cwd: botHomeOf(bots, 'developer'), id: DEVELOPER_CONVERSATION });
+  const { mailbox } = await sessionIn(bots, 'developer', 'daily');
+  if (before !== undefined) await appendFile(transcript, `${JSON.stringify(before(mailbox))}\n`);
+  await psNotPermitted(box);
+  const answer = await send(box, await inTab(box, bots, 'reviewer', 'daily', { codexCommand: true }));
+  assert.equal(answer.nudgeLeft, true, `the premise: the send left its nudge for the hook, got: ${JSON.stringify(answer)}`);
+  await psRuns(box);
+  return { ...fleet, transcript, mailbox };
+}
+
+/** Orca's notice for `mailbox` as Claude Code writes the user turn it took, at `at`. */
+const noticeTurn = (mailbox, at = new Date()) => ({
+  type: 'user',
+  message: { role: 'user', content: `You have 1 orchestration message. Run \`orca orchestration check --run ${mailbox}\`` },
+  timestamp: at.toISOString(),
+});
+
+test('A6b Orca\'s notice in the receiver\'s record after the post and before the hook ran: the hook types nothing into the idle receiver (R1)', async (t) => {
+  const { box, bots, transcript, mailbox } = await leftWithRecord(t);
+  // Orca's notice reached the developer after the post; its turn on it is
+  // over, and its tab is idle again, as the fleet left it.
+  await appendFile(transcript, `${JSON.stringify(noticeTurn(mailbox))}\n`);
+  await appendFile(transcript, `${JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Read.' }] }, timestamp: new Date().toISOString() })}\n`);
+
+  const ran = await hook(box, await inTab(box, bots, 'reviewer'), afterBash(bots));
+
+  const text = assertSaid(ran, 'Orca\'s notice before the hook');
+  assert.ok(text.includes('developer/daily'), `it names the receiver: ${text}`);
+  await assertUntyped(box, 'Orca\'s notice reached the receiver after the post');
+  assert.match(text, /Orca/, `and says Orca's notice reached it: ${text}`);
+});
+
+test('A6b the contrast: Orca\'s notice that was in the record before the send is no signal for this mail, and the hook types the line after its watch', async (t) => {
+  const earlier = new Date(Date.now() - 3_600_000);
+  const { box, bots, developer } = await leftWithRecord(t, { before: (mailbox) => noticeTurn(mailbox, earlier) });
+
+  const ran = await hook(box, await inTab(box, bots, 'reviewer'), afterBash(bots));
+
+  assertSaid(ran, 'an old notice only');
+  await assertToldOnly(box, bots, developer.tabId, 'an old notice only');
 });
 
 // ---------------------------------------------------------------------------

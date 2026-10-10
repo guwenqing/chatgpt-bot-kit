@@ -29,10 +29,12 @@ import assert from 'node:assert/strict';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import {
   createSandbox,
   kitLaunchMark,
+  orcaCallsOf,
   sessionIn,
   tabsOfBot,
 } from './helpers/cli.js';
@@ -311,4 +313,97 @@ test('R7c the retired session\'s record goes with it, and another session\'s sta
   assert.equal(result.code, 0, `${result.stdout}${result.stderr}`);
   assert.equal(await recordHolds(box, 'subject-for-scout'), false, 'scout\'s record went with it');
   assert.equal(await recordHolds(box, 'subject-for-nightly'), true, 'nightly\'s stays');
+});
+
+// --------------------------------------------------------------- R7d: a retire that fails partway
+
+// The review of PR #514: retiring a maker retires its temporary session first,
+// which takes that session's record of unread mail away with it. When the
+// maker's own retire then fails, as when Orca refuses its tab's close, the
+// failure names the sessions already retired, and must still say what R7a
+// says of each: how many messages sent to it were not read with obk message
+// check, and who sent them. Otherwise that is said nowhere, and the record is
+// gone.
+
+/** Orca refuses every `terminal close` after the next one: scout's tab closes, planner's does not. */
+async function refuseCloseAfterOne(box) {
+  const closes = orcaCallsOf(await box.orca.calls(), 'terminal close').length;
+  await box.orca.set({ fail: { 'terminal close': { code: 'runtime_error', message: 'the close was refused', after: closes + 1 } } });
+}
+
+test('R7d a retire that fails after it retired a temporary session still says how many of its messages were not read, and who sent them', async (t) => {
+  const box = await createSandbox(t);
+  await fleetIn(box);
+  await mail(box, `${BOT}/scout`, 'coder', 'the staging host');
+  await refuseCloseAfterOne(box);
+
+  const result = await retire(box, '--bot', BOT, '--session', 'planner');
+
+  const said = `${result.stdout}${result.stderr}`;
+  assert.notEqual(result.code, 0, `the premise: planner's retire failed at its own close: ${said}`);
+  assert.equal((await sessionIn(box.path('bots'), BOT, 'scout'))?.tab, undefined, `the premise: scout was retired before the failure: ${said}`);
+  assert.ok(said.includes('scout'), `it names scout, retired before the failure: ${said}`);
+  assert.match(said, /\b1 message\b/, `and how many of scout's messages were not read: ${said}`);
+  assert.match(said, /not read/i, `that they were not read: ${said}`);
+  assert.ok(said.includes('coder/daily'), `and who sent them: ${said}`);
+});
+
+test('R7d with --json, a retire that fails after it retired a temporary session still gives its unread count and senders', async (t) => {
+  const box = await createSandbox(t);
+  await fleetIn(box);
+  await mail(box, `${BOT}/scout`, 'coder', 'the staging host');
+  await mail(box, `${BOT}/scout`, 'tester', 'the flaky test');
+  await refuseCloseAfterOne(box);
+
+  const result = await retire(box, '--bot', BOT, '--session', 'planner', '--json');
+
+  const said = `${result.stdout}${result.stderr}`;
+  assert.notEqual(result.code, 0, `the premise: planner's retire failed at its own close: ${said}`);
+  // In the JSON form when the failure has one, in words otherwise.
+  let answer;
+  try {
+    answer = JSON.parse(result.stdout);
+  } catch {
+    answer = undefined;
+  }
+  if (answer !== undefined) {
+    const text = JSON.stringify(answer);
+    assert.match(text, /"count":\s*2\b/, `the count of scout's unread messages in the JSON: ${text}`);
+    assert.ok(text.includes('coder/daily') && text.includes('tester/daily'), `and the senders: ${text}`);
+  } else {
+    assert.match(said, /\b2 messages\b/, `the count of scout's unread messages: ${said}`);
+    assert.ok(said.includes('coder/daily') && said.includes('tester/daily'), `and the senders: ${said}`);
+  }
+});
+
+// --------------------------------------------------------------- R7e: read before the send's answer
+
+// The review of PR #514: Orca holds the message the moment it is posted, and
+// answers the post a while later. A receiver that reads and acknowledges its
+// mail with obk message check in that while has read it. A send that writes
+// its record of unread mail only once the answer comes then records mail
+// already read, and a retire says it was not read.
+
+test('R7e mail the receiver read with obk message check before the send\'s answer came back is not counted as unread by a retire', async (t) => {
+  const box = await createSandbox(t);
+  await fleetIn(box);
+  const sends = orcaCallsOf(await box.orca.calls(), 'orchestration send').length;
+  await box.orca.set({ hang: { command: 'orchestration send', ms: 4000, applied: true, from: sends, times: 1 } });
+
+  const sending = box.run([
+    'message', 'send', '--bots', 'bots', '--to', `${BOT}/nightly`, '--from', 'coder/daily',
+    '--subject', 'read before the answer', '--text', 'Already read.', '--json',
+  ]);
+  for (let tries = 0; (await box.orca.messages()).length === 0; tries += 1) {
+    assert.ok(tries < 200, 'the premise: the post reached Orca while its answer was held back');
+    await sleep(25);
+  }
+  const read = await check(box, `${BOT}/nightly`);
+  const sent = await sending;
+
+  assert.equal(read.messages.length, 1, `the premise: the check read the mail before the send's answer: ${JSON.stringify(read)}`);
+  assert.equal(sent.code, 0, `the premise: the send went: ${sent.stdout}${sent.stderr}`);
+  assert.deepEqual((await box.orca.messages()).map((one) => one.acked), [true], 'the premise: Orca has it as read');
+  const answer = answerIn(await retire(box, '--bot', BOT, '--session', 'nightly', '--json'));
+  assert.equal('unread' in answer, false, `the mail was read, so nothing is unread: ${JSON.stringify(answer)}`);
 });

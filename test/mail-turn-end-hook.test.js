@@ -50,6 +50,7 @@ import assert from 'node:assert/strict';
 import { chmod, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 import {
   createSandbox,
@@ -59,6 +60,7 @@ import {
   kitHooksIn,
   kitLaunchMark,
   orcaCallsOf,
+  recordSession,
   sessionIn,
   shellWord,
   spellingsOf,
@@ -72,11 +74,16 @@ const SENDERS = ['coder', 'tester'];
 /** Root reads a folder whatever its mode, so a record made unreadable that way stays readable. */
 const NEEDS_A_USER = process.getuid?.() === 0 && 'runs as root, which reads a folder whatever its mode';
 
+/** The conversation the book holds for the reader's session, and the one its Stop events name. */
+const CONVERSATION = '0199b2c0-0509-4444-8888-c1a0de000001';
+
 /**
  * The bots up, each tab busy with a turn of its own, so a send to the reader
- * types nothing and returns at once (signal hook, because busy).
+ * types nothing and returns at once (signal hook, because busy). The book
+ * holds CONVERSATION for the reader's session, as the kit's SessionStart hook
+ * writes it; with `conversation: false` it holds none.
  */
-async function fleetIn(box) {
+async function fleetIn(box, { conversation = true } = {}) {
   assert.equal((await box.run(['init', '--bots', 'bots', '--harness', 'claude'])).code, 0);
   for (const [bot, harness] of [[READER, 'claude'], ...SENDERS.map((one) => [one, 'codex'])]) {
     assert.equal((await box.run(['bot', 'create', '--bots', 'bots', '--name', bot, '--harness', harness])).code, 0);
@@ -89,6 +96,11 @@ async function fleetIn(box) {
   const terminals = await box.orca.terminals();
   const terminal = terminals.find((one) => one.tabId === tab);
   assert.ok(terminal, `the premise: Orca has ${READER}'s tab`);
+  if (conversation) {
+    const heard = await recordSession(box, { bots, bot: READER, tab, session: CONVERSATION });
+    assert.equal(heard.code, 0, `the premise: the book holds the reader's conversation: ${heard.stderr}`);
+    assert.equal((await sessionIn(bots, READER, 'daily')).session, CONVERSATION, 'the premise: the book holds the reader\'s conversation');
+  }
   // Every tab busy, so no send in this file waits out the 8 s watch.
   await box.orca.set({ terminals: terminals.map((one) => ({ ...one, tuiIdle: 'busy' })) });
   return { bots, tab, terminal };
@@ -105,8 +117,8 @@ async function mail(box, from, subject, text = 'It is down again.') {
 }
 
 /** What Claude Code hands a Stop hook on stdin. */
-const stopEvent = (fleet, { active = false } = {}) => `${JSON.stringify({
-  session_id: '0199b2c0-0509-4444-8888-c1a0de000001',
+const stopEvent = (fleet, { active = false, session = CONVERSATION } = {}) => `${JSON.stringify({
+  session_id: session,
   transcript_path: '/nowhere/transcript.jsonl',
   cwd: path.join(fleet.bots, 'bots', READER),
   hook_event_name: 'Stop',
@@ -121,9 +133,10 @@ const mailCommand = (box, fleet) => [box.cli, 'session', 'mail', '--bots', fleet
  * the session's own tab. `tab` and `handle` stand in for another tab's; `null`
  * for either leaves that variable out (a default would fill in `undefined`).
  */
-const turnEnds = (box, fleet, { active = false, command = mailCommand(box, fleet), tab = fleet.tab, handle = fleet.terminal.handle, env } = {}) => throughAHarness(box, command, {
+const turnEnds = (box, fleet, { active = false, session = CONVERSATION, nested = false, command = mailCommand(box, fleet), tab = fleet.tab, handle = fleet.terminal.handle, env } = {}) => throughAHarness(box, command, {
   tab: tab ?? undefined,
-  stdin: stopEvent(fleet, { active }),
+  nested,
+  stdin: stopEvent(fleet, { active, session }),
   env: { ...(env ?? box.env), ...(handle === null ? {} : { ORCA_TERMINAL_HANDLE: handle }), ...kitLaunchMark(box, fleet.terminal) },
 });
 
@@ -509,4 +522,89 @@ test('T6 after obk message check read its mail, the hook does not call Orca eith
   assertSilent(await turnEnds(box, fleet), 'the mail was read');
 
   assert.deepEqual((await box.orca.calls()).slice(from).map((call) => call.args.slice(0, 2).join(' ')), [], 'not one call to Orca');
+});
+
+// ------------------------------------------------------------ T7: only the book's conversation
+
+// The review of PR #514: a Claude harness started inside the session (same
+// bot folder, same tab variables, same project hooks) runs the same Stop hook
+// with a session_id of its own. The hook tells only the conversation the book
+// holds for that tab: a Stop event with any other session_id prints nothing
+// and marks nothing, so the session's own later turn end still tells. With no
+// conversation in the book, nothing is told and nothing is marked.
+
+/** The id a nested harness's own conversation has. */
+const NESTED = '0199b2c0-0509-4444-8888-c1a0de0000ff';
+
+test('T7 a nested harness\'s turn end, with a session_id that is not the book\'s, says nothing and marks nothing: the session\'s own turn end still tells', async (t) => {
+  const box = await createSandbox(t);
+  const fleet = await fleetIn(box);
+  await mail(box, 'coder', 'the staging host');
+
+  const nested = await turnEnds(box, fleet, { session: NESTED, nested: true });
+  const own = await turnEnds(box, fleet);
+
+  assertSilent(nested, 'a nested harness\'s turn end');
+  const text = toldIn(own);
+  assert.ok(text.includes('the staging host'), `the session's own turn end tells it: ${text}`);
+});
+
+test('T7 a turn end with a session_id that is not the book\'s, in the session\'s own process chain, says nothing either', async (t) => {
+  const box = await createSandbox(t);
+  const fleet = await fleetIn(box);
+  await mail(box, 'coder', 'the staging host');
+
+  const other = await turnEnds(box, fleet, { session: NESTED });
+  const own = await turnEnds(box, fleet);
+
+  assertSilent(other, 'another conversation\'s turn end');
+  toldIn(own);
+});
+
+test('T7 with no conversation in the book, a turn end tells nothing and marks nothing; once the book holds it, its turn end tells', async (t) => {
+  const box = await createSandbox(t);
+  const fleet = await fleetIn(box, { conversation: false });
+  assert.equal((await sessionIn(fleet.bots, READER, 'daily')).session, undefined, 'the premise: the book holds no conversation');
+  await mail(box, 'coder', 'the staging host');
+
+  const before = await turnEnds(box, fleet);
+  const heard = await recordSession(box, { bots: fleet.bots, bot: READER, tab: fleet.tab, session: CONVERSATION });
+  assert.equal(heard.code, 0, `the premise: the book now holds the conversation: ${heard.stderr}`);
+  const after = await turnEnds(box, fleet);
+
+  assertSilent(before, 'no conversation in the book');
+  toldIn(after);
+});
+
+// ------------------------------------------------------------ T8: read before the send's answer
+
+// The review of PR #514: Orca holds the message the moment it is posted, and
+// answers the post a while later. Mail the receiver read with obk message
+// check in that while is read: its turn end tells nothing of it.
+
+test('T8 mail read with obk message check before the send\'s answer came back: the turn end says nothing of it', async (t) => {
+  const box = await createSandbox(t);
+  const fleet = await fleetIn(box);
+  const sends = orcaCallsOf(await box.orca.calls(), 'orchestration send').length;
+  await box.orca.set({ hang: { command: 'orchestration send', ms: 4000, applied: true, from: sends, times: 1 } });
+
+  const sending = box.run([
+    'message', 'send', '--bots', 'bots', '--to', READER, '--from', 'coder/daily',
+    '--subject', 'read before the answer', '--text', 'Already read.', '--json',
+  ]);
+  for (let tries = 0; (await box.orca.messages()).length === 0; tries += 1) {
+    assert.ok(tries < 200, 'the premise: the post reached Orca while its answer was held back');
+    await sleep(25);
+  }
+  const read = await box.run(['message', 'check', '--bots', 'bots', '--bot', READER, '--session', 'daily', '--json']);
+  const sent = await sending;
+
+  assert.equal(read.code, 0, `the premise: the check ran: ${read.stdout}${read.stderr}`);
+  assert.equal(JSON.parse(read.stdout).messages.length, 1, `the premise: the check read the mail before the send's answer: ${read.stdout}`);
+  assert.equal(sent.code, 0, `the premise: the send went: ${sent.stdout}${sent.stderr}`);
+  assertSilent(await turnEnds(box, fleet), 'mail read before the send\'s answer');
+  // The contrast: mail sent after that read, and not read, is told.
+  await mail(box, 'tester', 'the flaky test');
+  const text = toldIn(await turnEnds(box, fleet));
+  assert.ok(text.includes('the flaky test') && !text.includes('read before the answer'), `only the mail not read: ${text}`);
 });
