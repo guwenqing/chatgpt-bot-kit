@@ -1298,7 +1298,12 @@ const commands = {
 function toLines(answer, bots, where) {
   if (answer.trouble !== undefined) return [`             ${answer.trouble}`];
   if (answer.transport === 'native') {
-    return [`             Write to ${answer.address} with your own harness's messaging. The kit does not carry that road.`];
+    // A refused call is not re-sent by another road (PRD 6.9), so the answer
+    // says what to do instead, before the bot needs it (#521).
+    return [
+      `             Write to ${answer.address} with your own harness's messaging. The kit does not carry that road.`,
+      "             If your harness refuses that call, do not send the message again by another road. Tell your maker or your user that it was refused, with the harness's reason. A refusal can mean a missing permission rule, which they can add through the kit after the user's yes.",
+    ];
   }
   return [
     ...(answer.unnamed === true
