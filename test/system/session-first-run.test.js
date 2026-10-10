@@ -37,8 +37,11 @@
 //      this test's own draws the rows in lead's tab, writes every byte it reads
 //      to a file, and ends only on the right answer.
 //      a. The captured 2.1.289 list (helpers/screens.js CLAUDE_TEACH_LIST), run
-//         from daily's tab, a session of another bot: refused, names Bot
-//         Father, and the program read no byte.
+//         from daily's tab, a session of another bot, as a command daily's
+//         Codex runs: the tab and the kit's launch line's mark (OBK_TAB_SHELL,
+//         OBK_CLI). Refused, names Bot Father, and the program read no byte.
+//         Then from daily's tab without the mark: refused, says the kit
+//         cannot tell which session is asking (#408), and still no byte.
 //      b. The list with one row changed: refused, prints that row, no byte.
 //      c. The captured list, run outside every bot's session, after the
 //         premise that it passes `onlyTeachListOf`: answered with down, then
@@ -259,6 +262,16 @@ const outsideAnyTab = Object.fromEntries(Object.entries(process.env)
 
 /** What a command run in a session's tab sees of it: the tab's id, as the book holds it, and its handle. */
 const inTab = ({ tabId, handle }) => ({ ...outsideAnyTab, ORCA_TAB_ID: tabId, ORCA_TERMINAL_HANDLE: handle });
+
+/**
+ * What a command that the session's own harness runs sees of its tab, when the
+ * kit's launch line started that harness: the tab, and the launch line's mark,
+ * the tab shell's pid and the CLI (#220, #408). The kit takes a Codex tab's
+ * caller to be its session only with that mark. The pid stands for the
+ * shell's, as test/helpers/cli.js `launchLineEnv` has it: the kit reads only
+ * that the mark is there.
+ */
+const fromHarnessIn = (tab) => ({ ...inTab(tab), OBK_TAB_SHELL: String(process.pid), OBK_CLI: cliEntry });
 
 /**
  * Run this checkout's `obk`, by its full path (#217, #220), outside any tab
@@ -636,10 +649,17 @@ test('a long-lived session\'s first-run screens answered through the kit: Codex\
   };
 
   // 7a. The captured list, from daily's tab, a session of another bot: refused, not one byte.
+  // First as a command daily's Codex runs, with the launch line's mark; then
+  // from the same tab without the mark, where the kit cannot tell who asks.
   const listFirst = await startStage('list', LIST_ROWS, 'the staged captured list');
   assert.equal(onlyTeachListOf(listFirst), undefined, `the premise: the staged list, as Orca renders it, is the captured one:\n    ${listFirst.join('\n    ')}`);
-  const fromDaily = refused(answerLead(inTab(daily)), 'session answer from another bot\'s session');
+  const fromDaily = refused(answerLead(fromHarnessIn(daily)), 'session answer from another bot\'s session');
   assert.match(fromDaily, /Bot Father|bot-father/i, `the refusal names Bot Father: ${fromDaily}`);
+  await setTimeout(SETTLE_MS);
+  assert.equal(keysRead(), '', 'the refusal sent no key into the tab: the staging program read nothing');
+  assert.equal(showsTitle(rowsOf(lead.handle), TEACH_TITLE), true, 'and the staged list is still up');
+  const unmarked = refused(answerLead(inTab(daily)), 'session answer from daily\'s tab without the launch line\'s mark');
+  assert.match(unmarked, /cannot tell which session is asking/, `the refusal says the kit cannot tell who asks: ${unmarked}`);
   await setTimeout(SETTLE_MS);
   assert.equal(keysRead(), '', 'the refusal sent no key into the tab: the staging program read nothing');
   assert.equal(showsTitle(rowsOf(lead.handle), TEACH_TITLE), true, 'and the staged list is still up');
