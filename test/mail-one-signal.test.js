@@ -124,11 +124,12 @@ const busy = (box, fleet, receiver) => setTab(box, fleet.tabs[receiver.bot], { t
  * record: 'notice' for Orca's notice for its own mailbox, a string for any
  * other turn, null for none. `record` false writes nowhere.
  */
-const reacts = (box, fleet, receiver, { busy: turn = true, text = 'notice', record = true, waits = 2 } = {}) => setTab(box, fleet.tabs[receiver.bot], {
+const reacts = (box, fleet, receiver, { busy: turn = true, text = 'notice', record = true, waits = 2, spoil } = {}) => setTab(box, fleet.tabs[receiver.bot], {
   afterMail: {
     waits,
     busy: turn,
     text,
+    ...(spoil === undefined ? {} : { spoil }),
     ...(record ? { record: { file: fleet.records[receiver.bot], harness: receiver.harness } } : {}),
   },
 });
@@ -570,6 +571,28 @@ describe('the whole 8 s watch, with no turn', { concurrency: true }, () => {
         await spoil(fleet.records[receiver.bot]);
 
         await assertNoTurnLine(box, fleet, receiver, await send(box, receiver));
+      });
+    }
+  }
+
+  // R1's last sentence: a record readable when the send took its mark, and
+  // not by the watch's first look (removed, its mode 000, a folder in its
+  // place), with no notice and no turn, counts as "the notice was not seen":
+  // the line after the watch, never "orca". The review of PR #514's hand
+  // mutation check: a record read that throws must not count as the notice.
+  for (const [how, spoil] of [['removed', 'remove'], ['made unreadable (mode 000)', 'mode000'], ['replaced by a folder', 'folder']]) {
+    for (const receiver of Object.values(RECEIVERS)) {
+      const asRoot = spoil === 'mode000' && process.getuid?.() === 0 && 'runs as root, which reads a file whatever its mode';
+      test(`S3 an idle ${receiver.harness} receiver whose record is ${how} during the watch, with no notice and no turn, gets the line after 8 s: line, no-turn`, { skip: asRoot }, async (t) => {
+        const box = await createSandbox(t);
+        const fleet = await fleetIn(box);
+        await reacts(box, fleet, receiver, { busy: false, text: null, spoil });
+
+        const result = await send(box, receiver);
+
+        const fired = (await box.orca.terminals()).find((one) => one.tabId === fleet.tabs[receiver.bot]).afterMail?.fired;
+        assert.equal(fired, true, `the premise: the record went unreadable at the watch's first look: ${result.stdout}`);
+        await assertNoTurnLine(box, fleet, receiver, result);
       });
     }
   }

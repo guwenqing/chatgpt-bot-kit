@@ -289,6 +289,12 @@
 //               and 3); that Orca's notice lands as a user turn is from
 //               the request for #509 (Orca types it into an idle tab, and
 //               the harness takes it as a turn of the user's).
+//               `spoil`, with `record`: after that turn is written (or not),
+//               the record cannot be read any more: 'remove' takes it away,
+//               'mode000' leaves it with no permissions at all, 'folder'
+//               puts an empty folder in its place. A record that was
+//               readable when the send took its mark and is not by the watch
+//               (R1: it counts as no notice seen).
 //               `fired` is set once it has happened. Orca never lists it.
 //   hang        { command, ms, applied } — that command is answered as it would
 //               have been, `ms` later (a minute if left out): an Orca that is
@@ -415,7 +421,7 @@
 
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { foregroundOf, launchedIn, panePid, settingsFor } from './fake-ps.js';
@@ -936,6 +942,12 @@ function afterMailWait(terminal) {
     } catch {
       // A record that cannot be written to stays as it is: that is the test's point.
     }
+  }
+  if (spec.record != null && spec.spoil === 'remove') rmSync(spec.record.file, { force: true });
+  if (spec.record != null && spec.spoil === 'mode000') chmodSync(spec.record.file, 0o000);
+  if (spec.record != null && spec.spoil === 'folder') {
+    rmSync(spec.record.file, { force: true });
+    mkdirSync(spec.record.file);
   }
   if (spec.busy === true) terminal.tuiIdle = 'busy';
   save();
