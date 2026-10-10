@@ -17,6 +17,11 @@
 // Codex rollout `~/.codex/sessions/…/rollout-…-<id>.jsonl`, found by the
 // conversation id the book holds), read only:
 //
+//   (Cases 1 and 4 send only once the receiver is at rest, `atRest`: its record
+//   shows the turn over, Orca's tui-idle answers ok, on Codex the kit's naming
+//   hook (#480) has named the thread and left nothing in the input line, and
+//   all of it has held for SETTLE_MS with the record still.)
+//
 //   1. IDLE CLAUDE. One mail to an idle Claude session. The send's `signal` is
 //      "orca" or "line" (with `because: "no-turn"`), and the record holds
 //      exactly one signal for the mail, of that kind: Orca's notice for its
@@ -134,7 +139,7 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { mkdtemp, readdir, readFile, realpath, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -164,6 +169,9 @@ const LATE_MS = 60000;
 /** How long a line the kit typed is given to show in the record. */
 const RECORD_MS = 30000;
 
+/** How long a receiver must stay at rest, its record still, before mail that wants it idle is sent. */
+const SETTLE_MS = 5000;
+
 /** The busy loop: this many lines, one a second. */
 const LOOP_STEPS = 75;
 const PART_WAY = 'STEP-03';
@@ -172,6 +180,9 @@ const LAST_STEP = `STEP-${LOOP_STEPS}`;
 /** Claude Code's and Codex's own records (tech notes, sections 2 and 3): read only. */
 const CLAUDE_PROJECTS = path.join(os.homedir(), '.claude', 'projects');
 const CODEX_SESSIONS = path.join(os.homedir(), '.codex', 'sessions');
+
+/** Where Codex's `/rename` writes a thread's name (codex-thread-name.test.js): read only, and only this thread's lines. */
+const SESSION_INDEX = path.join(os.homedir(), '.codex', 'session_index.jsonl');
 
 /** The start of the kit's line, as src/message.js types it and test/message-nudge.test.js pins it. */
 const KIT_LINE = /Fleet mail from [^\s:]+: /;
@@ -469,6 +480,84 @@ function tailOf(entries, count = 20) {
 const isTurnStart = (entry) => entry?.type === 'event_msg' && ['task_started', 'turn_started'].includes(entry.payload?.type);
 const isTurnEnd = (entry) => entry?.type === 'event_msg' && ['task_complete', 'turn_complete', 'turn_aborted'].includes(entry.payload?.type);
 
+/** The newest name session_index.jsonl gives thread `id`, or undefined when it gives none. */
+function threadNameOf(id) {
+  let text;
+  try {
+    text = readFileSync(SESSION_INDEX, 'utf8');
+  } catch {
+    return undefined;
+  }
+  return text.split('\n').flatMap((line) => {
+    try {
+      const entry = JSON.parse(line);
+      return entry?.id === id ? [entry.thread_name] : [];
+    } catch {
+      return [];
+    }
+  }).at(-1);
+}
+
+/**
+ * Whether the record shows the last turn over. Claude: its last `user` or
+ * `assistant` line is the assistant's, with no tool call left open. Codex: a
+ * turn's end comes after its last turn start.
+ */
+function turnOverIn(harness, entries) {
+  if (harness === 'codex') return entries.findLastIndex(isTurnEnd) > entries.findLastIndex(isTurnStart);
+  const last = entries.findLast((entry) => entry?.type === 'user' || entry?.type === 'assistant');
+  if (last?.type !== 'assistant') return false;
+  const content = last.message?.content;
+  return !(Array.isArray(content) && content.some((block) => block?.type === 'tool_use'));
+}
+
+/** The record's size and last write, to tell whether it is still being written. */
+function stampOf(file) {
+  try {
+    const found = statSync(file);
+    return `${found.size}:${found.mtimeMs}`;
+  } catch {
+    return 'none';
+  }
+}
+
+/**
+ * Wait until a receiver is at rest, so mail sent now finds it idle (the
+ * second live run: the first mail came while an idle Claude was still ending
+ * its first turn, its stop hooks running, and while an idle Codex had the
+ * kit's naming hook, #480, typing `/rename` into it). At rest is all of these
+ * together, held for SETTLE_MS with the record not growing:
+ *
+ *   - the record shows the last turn over (`turnOverIn`);
+ *   - Orca's tui-idle answers ok, with nothing to answer on screen;
+ *   - on Codex, the kit's naming is done: session_index.jsonl names the thread
+ *     `<bot>.<session>`, and its input line holds no `/rename`.
+ */
+async function atRest(session) {
+  let settledSince;
+  let stamp;
+  let state = {};
+  await until(`${session.title} to be at rest`, ANSWER_MS, async () => {
+    const now = stampOf(session.recordOf());
+    state = {
+      turnOver: turnOverIn(session.harness, entriesOf(session.recordOf())),
+      idle: idleNow(session.handle),
+      ...(session.harness === 'codex' ? {
+        named: threadNameOf(session.id) === session.name,
+        inputClear: !/\/rename/.test(codexInputOf(rowsOf(session.handle) ?? [])),
+      } : {}),
+      recordStill: now === stamp,
+    };
+    stamp = now;
+    if (!Object.values(state).every(Boolean)) {
+      settledSince = undefined;
+      return undefined;
+    }
+    settledSince ??= Date.now();
+    return Date.now() - settledSince >= SETTLE_MS ? true : undefined;
+  }, () => ` What was not so at the last look: ${JSON.stringify(state)}.\n  the record's tail:\n  ${tailOf(entriesOf(session.recordOf()))}${whatIsUp(session.handle)}`, session.screen);
+}
+
 // ------------------------------------------------------------- the screens
 
 /** Claude's input box: the rows between its last two rules. */
@@ -575,7 +664,8 @@ async function together(t, cases) {
  * Cases 1 and 4: one mail to an idle session, and exactly one signal for it in
  * its record, of the kind the send said, watched LATE_MS after the signal.
  */
-async function idleCase(t, { bots, title, harness, handle, recordOf, mailbox, mailFile, screen, to, from, subject, word }) {
+async function idleCase(t, { bots, title, harness, handle, recordOf, mailbox, mailFile, screen, rest, to, from, subject, word }) {
+  await rest();
   const since = Date.now() - 1000;
   const answer = send(bots, { to, from, subject, word });
   const { signal, because, nudged, nudgeUnseen, nudgeTrouble, blocked, watchedMs } = answer;
@@ -745,6 +835,8 @@ test('one signal for each fleet mail: Orca\'s notice or the kit\'s line to an id
     const harness = bot === CLAUDE ? 'claude' : 'codex';
     sessions[`${bot}/${session}`] = {
       title,
+      name: `${bot}.${session}`,
+      id: held.session,
       harness,
       handle: entry.terminal,
       screen,
@@ -753,6 +845,7 @@ test('one signal for each fleet mail: Orca\'s notice or the kit\'s line to an id
       mailFile: mailFileOf(homeOf(bot), session),
       stepsFile: stepsFileOf(homeOf(bot), session),
     };
+    sessions[`${bot}/${session}`].rest = () => atRest(sessions[`${bot}/${session}`]);
     return sessions[`${bot}/${session}`];
   };
 
