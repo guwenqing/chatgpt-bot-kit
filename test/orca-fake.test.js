@@ -923,6 +923,37 @@ test('on 1.4.210 a tab acts as itself and no other: naming another terminal is r
   assert.equal(inA(['orchestration', 'check', '--run', held, '--peek']).ok, true, 'and so does naming none');
 });
 
+test('#508: a Run the fake does not have, and a legacy one, are refused by run-use in one set of Orca 1.4.223\'s words, and only run-show tells them apart', async (t) => {
+  // Read in Orca 1.4.223's bundle (out/main/index.js), not seen live: run-show
+  // refuses a Run that is not in Orca's database and answers a legacy one;
+  // run-use refuses both with the same code and the same words. The kit's step
+  // has only run-show to tell a Run gone with the old machine from one that is
+  // still there, so a fake that bound the legacy Run, or said "not found" the
+  // same way for both commands, would let a kit through that the real Orca
+  // stops.
+  const box = await createSandbox(t);
+  const { inA } = await twoTabs(box);
+  const legacy = { id: 'run_legacy', objective: 'old', coordinator_handle: null, consumer_generation: 0, legacy: 1, created_at: 'x', updated_at: 'x' };
+  await box.orca.set({ runs: [legacy] });
+
+  const gone = inA(['orchestration', 'run-show', '--id', 'run_gone']);
+  assert.equal(gone.ok, false);
+  assert.equal(gone.error.code, 'run_not_found');
+  assert.equal(gone.error.message, 'Run run_gone was not found.');
+
+  const shownLegacy = inA(['orchestration', 'run-show', '--id', 'run_legacy']);
+  assert.equal(shownLegacy.ok, true, `run-show answers a legacy Run, got: ${JSON.stringify(shownLegacy)}`);
+  assert.equal(shownLegacy.result.run.legacy, 1, 'with its legacy field as it is');
+
+  for (const id of ['run_gone', 'run_legacy']) {
+    const used = inA(['orchestration', 'run-use', '--id', id]);
+    assert.equal(used.ok, false, `run-use refuses ${id}, got: ${JSON.stringify(used)}`);
+    assert.equal(used.error.code, 'run_not_found');
+    assert.match(used.error.message, new RegExp(`^Run ${id} was not found or is inspect-only\\. Orchestration mutation request ID: [0-9a-f-]{36}\\.$`));
+  }
+  assert.deepEqual(await box.orca.runs(), [legacy], 'nothing was made, and the legacy Run was bound to nobody');
+});
+
 test('the fake writes down which terminal each call came from, and nothing for a plain shell', async (t) => {
   const box = await createSandbox(t);
   const { inA, inB, outside } = await twoTabs(box);

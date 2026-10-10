@@ -361,6 +361,17 @@
 //               1.4.209, #249).
 //               `consumer_generation` stays 0 here: what Orca counts in it was
 //               not measured, and nothing the kit does reads it.
+//               `legacy: true` (or 1, as Orca's own row has it) is a Run from
+//               before Runs could be bound, which Orca keeps to be inspected:
+//               `run-show` answers it, with `legacy` as it is, and `run-use`
+//               refuses it. A Run not in `runs` at all, as on a new machine
+//               whose Orca never made the Run a book names (#508), is refused
+//               by both, with code `run_not_found` and Orca 1.4.223's words
+//               (read in its bundle, out/main/index.js): `run-show` says
+//               "Run <id> was not found.", and `run-use` says "Run <id> was
+//               not found or is inspect-only." for a missing Run and a legacy
+//               one alike, so its refusal alone cannot tell the two apart. The
+//               request id after it is as the refusal in #508 showed it.
 //   closedHandles  [handle] — every terminal `terminal close` has closed:
 //               handles Orca issued and a Run may still name. Written by the
 //               fake, not by a test.
@@ -1274,7 +1285,12 @@ if (command === 'orchestration run-create') {
 if (command === 'orchestration run-use') {
   attested(flag('--from'));
   const wanted = runNamed(flag('--id'));
-  if (wanted === undefined) fail('run_not_found', `no run with id ${flag('--id')}`);
+  if (wanted === undefined || wanted.legacy === true || wanted.legacy === 1) {
+    fail(
+      'run_not_found',
+      `Run ${flag('--id')} was not found or is inspect-only. Orchestration mutation request ID: ${randomUUID()}.`,
+    );
+  }
   bind(wanted, coordinatorFor());
   save();
   ok({ run: wanted });
@@ -1282,7 +1298,7 @@ if (command === 'orchestration run-use') {
 
 if (command === 'orchestration run-show') {
   const wanted = runNamed(flag('--id'));
-  if (wanted === undefined) fail('run_not_found', `no run with id ${flag('--id')}`);
+  if (wanted === undefined) fail('run_not_found', `Run ${flag('--id')} was not found.`);
   ok({ run: wanted });
 }
 
