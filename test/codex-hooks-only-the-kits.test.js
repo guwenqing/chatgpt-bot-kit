@@ -33,6 +33,11 @@
 // the sandbox the home is the sandbox's own, and CODEX_HOME is taken out of the
 // environment unless a test sets it.
 //
+//   e. Codex also takes hook trust from the session's own `-c` flags, which
+//      the kit does not read. When the session's `extra_args` in bot.yaml (a
+//      list, or a plain string of shell text) mention `hooks` anywhere, the
+//      kit cannot tell, and refuses, saying why.
+//
 // Each refusal types nothing into any tab. The cases run for coder/daily, a
 // long-lived session of a Codex bot, through `session trust-hooks`, and the
 // ones marked `both` run for writer's temporary Codex session scout too,
@@ -44,8 +49,9 @@ import path from 'node:path';
 import { describe, it as test } from 'node:test';
 
 import { parse as parseToml } from 'smol-toml';
+import YAML from 'yaml';
 
-import { createSandbox, kitLaunchMark, sentInto, sessionIn } from './helpers/cli.js';
+import { botHomeOf, createSandbox, kitLaunchMark, sentInto, sessionIn } from './helpers/cli.js';
 import {
   codexHooksFileOf,
   codexHooksOf,
@@ -80,8 +86,9 @@ async function tabOf(box, bots, bot, name) {
  * on Claude Code (its long-lived session lead), brought up, and a temporary
  * Codex session scout that lead made. Both bots hold the kit's three Codex
  * hooks, by the sandbox's kit (the premise every count here rests on).
+ * `scoutExtra(bots)`, when given, is the extra arguments scout is made with.
  */
-async function fleet(box) {
+async function fleet(box, { scoutExtra } = {}) {
   const env = withoutCodexHome(box.env);
   const ok = async (args, extra = {}) => {
     const result = await box.run(args, { env: { ...env, ...extra } });
@@ -95,7 +102,8 @@ async function fleet(box) {
   await ok(['up', '--bots', 'bots']);
   const bots = box.path('bots');
   const lead = await tabOf(box, bots, 'writer', 'lead');
-  await ok(['temp', 'make', '--bots', 'bots', '--name', 'scout', '--harness', 'codex', '--prompt', TASK], {
+  const extra = scoutExtra === undefined ? [] : (await scoutExtra(bots)).map((arg) => `--extra-arg=${arg}`);
+  await ok(['temp', 'make', '--bots', 'bots', '--name', 'scout', '--harness', 'codex', '--prompt', TASK, ...extra], {
     ORCA_TERMINAL_HANDLE: lead.handle,
     ORCA_TAB_ID: lead.tabId,
     ...kitLaunchMark(box, lead),
@@ -252,6 +260,14 @@ test('K0 the premise: a TOML reader reads a key written with Unicode escapes as 
   assert.deepEqual(parseToml(escapedTrustTablesFor([entry])), plain, 'the usual table form, escaped');
   for (const [form, write] of Object.entries(ESCAPED_OTHER_FORMS)) assert.deepEqual(parseToml(write(entry)), plain, form);
   assert.deepEqual(parseToml(`[hooks.state.${escaped}]\n`), parseToml(`[hooks.state.${JSON.stringify(entry.key)}]\n`), 'a header with no trusted_hash, escaped');
+});
+
+test('K0 the premise: the -c value the K7 tests give a session reads, as TOML, as the same trust as the usual table', () => {
+  const entry = {
+    key: stateKey('/private/var/folders/x/T/obk-506/bots/bots/coder/.codex/hooks.json', 'SessionStart', 0, 0),
+    hash: trustedHash({ event: 'SessionStart', command: 'obk session record', timeout: 10 }),
+  };
+  assert.deepEqual(parseToml(hookStateFlag(entry)), parseToml(trustTablesFor([entry])));
 });
 
 for (const [name, target] of Object.entries(TARGETS)) {
@@ -527,6 +543,51 @@ for (const [name, target] of Object.entries(TARGETS)) {
       });
     }
 
+    // ---------------------------------------------------------- e. the session's own extra arguments
+
+    if (sessionOnly) {
+      for (const { label, extra } of [
+        { label: 'a list, -c hooks.state={…}', extra: (entry) => ['-c', hookStateFlag(entry)] },
+        { label: 'a list, --config hooks.state={…}', extra: (entry) => ['--config', hookStateFlag(entry)] },
+        { label: 'a plain string of shell text, -c \'hooks.state={…}\'', extra: (entry) => `-c '${hookStateFlag(entry)}'` },
+      ]) {
+        test(`K7 ${name}: the session's extra_args, ${label}, trusting the kit's SessionStart hook at its right hash: the kit cannot tell, so a review of 1, 2 or 3 is refused, saying why, and nothing is typed`, async (t) => {
+          const box = await createSandbox(t);
+          const ours = await fleet(box);
+          await setExtraArgs(box, ours, extra((await kitHooks(ours, target)).SessionStart));
+
+          await assertExtraArgsRefused(box, ours, target, label);
+        });
+      }
+
+      test(`K7 ${name}: the session's extra_args, -c tui.show_tooltips=false, which do not mention hooks: "3 hooks are new or changed." is answered`, async (t) => {
+        const box = await createSandbox(t);
+        const ours = await fleet(box);
+        await setExtraArgs(box, ours, ['-c', 'tui.show_tooltips=false']);
+
+        await assertCounts(box, ours, target, { refused: [1], answered: 3, what: 'extra_args with no hooks in them' });
+      });
+    } else {
+      test(`K7 ${name}: scout made with --extra-arg -c hooks.state={…}, trusting the kit's SessionStart hook at its right hash: the kit cannot tell, so a review of 1, 2 or 3 is refused, saying why, and nothing is typed`, async (t) => {
+        const box = await createSandbox(t);
+        // writer's .codex/hooks.json is only written when scout is made, so
+        // scout is made with a hash that is no hook's, and bot.yaml then gets
+        // the right one, which only then can be known.
+        const ours = await fleet(box, {
+          scoutExtra: async (bots) => ['-c', hookStateFlag({ key: stateKey(codexHooksFileOf(bots, target.bot), 'SessionStart', 0, 0), hash: WRONG_HASH })],
+        });
+        const k = await kitHooks(ours, target);
+        const file = path.join(botHomeOf(ours.bots, target.bot), 'bot.yaml');
+        const text = await readFile(file, 'utf8');
+        assert.ok(text.includes(WRONG_HASH), `the premise: writer's bot.yaml holds scout's flag: ${text}`);
+        await writeFile(file, text.replaceAll(WRONG_HASH, k.SessionStart.hash));
+        const scout = (await readYaml(file)).sessions.find((one) => one.name === 'scout');
+        assert.deepEqual(scout?.extra_args, ['-c', hookStateFlag(k.SessionStart)], `the premise: scout's extra_args trust the kit's SessionStart key at its right hash: ${JSON.stringify(scout)}`);
+
+        await assertExtraArgsRefused(box, ours, target, 'scout made with --extra-arg -c hooks.state={…}');
+      });
+    }
+
     // ---------------------------------------------------------- d. nothing else of config.toml is printed
 
     test(`K6 ${name}: no output, refused or answered, holds any part of config.toml but the kit's trust keys`, async (t) => {
@@ -592,6 +653,41 @@ for (const [name, target] of Object.entries(TARGETS)) {
       });
     }
   });
+}
+
+/** A `-c` value that trusts one hook, `{ key, hash }`, as Codex reads its session flags. */
+const hookStateFlag = ({ key, hash }) => `hooks.state={${JSON.stringify(key)}={trusted_hash=${JSON.stringify(hash)}}}`;
+
+const readYaml = async (file) => YAML.parse(await readFile(file, 'utf8'));
+
+/**
+ * Give coder/daily `extra` as its extra_args: a list through `obk session
+ * change`, a plain string written into bot.yaml by hand, as a user may.
+ */
+async function setExtraArgs(box, ours, extra) {
+  if (Array.isArray(extra)) {
+    const result = await box.run(['session', 'change', '--bots', 'bots', '--bot', 'coder', '--session', 'daily', ...extra.map((arg) => `--extra-arg=${arg}`)], { env: withoutCodexHome(box.env) });
+    assert.equal(result.code, 0, `obk session change: ${result.stdout}${result.stderr}`);
+  } else {
+    const file = path.join(botHomeOf(ours.bots, 'coder'), 'bot.yaml');
+    const book = await readYaml(file);
+    const daily = book.sessions.find((one) => one.name === 'daily');
+    assert.ok(daily, `the premise: coder's bot.yaml holds daily: ${JSON.stringify(book)}`);
+    daily.extra_args = extra;
+    await writeFile(file, YAML.stringify(book));
+  }
+  const daily = (await readYaml(path.join(botHomeOf(ours.bots, 'coder'), 'bot.yaml'))).sessions.find((one) => one.name === 'daily');
+  assert.deepEqual(daily.extra_args, extra, `the premise: daily's extra_args are as set: ${JSON.stringify(daily)}`);
+}
+
+/** Reviews of 3, 2 and 1 are each refused, naming the session's extra arguments as why, with nothing typed. */
+async function assertExtraArgsRefused(box, ours, target, what) {
+  for (const count of [3, 2, 1]) {
+    await showReview(box, ours, target, count, { goes: true });
+    const before = await sendsByTab(box);
+    const said = await assertRefusedUntyped(box, await trust(box, ours, target), before, `${what}, a review of ${count}`);
+    assert.match(said, /extra[ _-]?arg/i, `${what}: the refusal says it is the session's extra arguments: ${said}`);
+  }
 }
 
 /** The hooks with `event`'s first command run by `to` where it ran `from`. */
