@@ -106,7 +106,9 @@ Which signal goes (the architect's rulings for #509):
   work waits.
 - A Claude session's own `Stop` hook, at each turn end, tells it once about
   each message the kit sent it that Orca still lists as unread, and says
-  "still unread" and when it came. It types nothing. It says nothing when it
+  "still unread" and when it came. It types nothing. It tells as the Stop
+  event's additional context, which Claude Code draws as "Stop hook feedback",
+  and not as a block, which it draws as "Stop hook error". It says nothing when it
   cannot read Orca or the kit's record, never tells twice about one message,
   and lets the stop go when Claude Code says a stop hook is already active.
   Codex gets this reminder in #511, after #506, since it needs a new Codex hook
