@@ -29,6 +29,24 @@
 // run its start routine). This test waits for it to be idle only so that it
 // can type its own question safely, and checks nothing about it.
 //
+// The kit names a Codex thread `<bot>.<session>` (#480): at each turn end its
+// Stop hook types `/rename <bot>.<session>` into the tab, one character a
+// send, until Codex holds that name for the thread. That typing races with
+// whatever this test types next. On live run 2026-10-10 of #516 (Codex
+// 0.162.0) the clear on the idle session was refused as busy while the tab's
+// input line read "› /rename clear-codex", and the thread was never named.
+// So on Codex, after each turn ends and before the test types anything or
+// runs a kit command that types (step 0's "/", the busy turn, the clear, the
+// question, the compact), it waits for the naming of the thread the book
+// holds to land: the newest line for that thread's id in
+// ~/.codex/session_index.jsonl names it `<bot>.daily`. After the clear the
+// book holds a new thread, which the kit names after that thread's first
+// turn, so the wait is for the new id. The wait is 60 s from when the test
+// sees the tab idle after the turn. A name not there by then fails the run:
+// it is a finding about the naming, not something to wait out. The failure
+// names the thread and shows the tab's rows, Orca's draft and Codex's
+// warning. Claude Code threads are not named this way, so there is no wait.
+//
 // Every word the session is asked for is one the question does not carry, so
 // a wait cannot be satisfied by the question itself. Each answer is read from
 // the new conversation's own record, not from the screen, since the screen
@@ -42,7 +60,9 @@
 //     creates anything;
 //   - touches only what it created, matched by handle and by workspace path;
 //   - types only into its own bot's tab: the question, the busy turn, and
-//     nothing else;
+//     nothing else, but for step 0's "/" and its backspace, and, only when the
+//     wait for a Codex thread's name fails, F2 to open Codex's warning and Esc
+//     to close it again (#516);
 //   - closes its own tabs one by one (`--terminal <handle> --tab`) and then
 //     deletes its own workspaces, whatever happened, and checks afterwards that
 //     it closed no tab it did not create.
@@ -317,6 +337,41 @@ function codexRecord(id) {
   return name === undefined ? undefined : path.join(root, String(name));
 }
 
+/** How long the kit's naming of a Codex thread is given to land after a turn ends (#516). */
+const NAMED_MS = 60000;
+
+/** Codex's record of thread names, where `/rename` appends a line (#480). */
+const SESSION_INDEX = path.join(os.homedir(), '.codex', 'session_index.jsonl');
+
+/**
+ * The name Codex holds for thread `id`: the newest line for that id in
+ * session_index.jsonl, or undefined when it has none. Lines for other ids are
+ * not read.
+ */
+const threadNameOf = (id) => linesOf(SESSION_INDEX).filter((line) => line.id === id).at(-1)?.thread_name;
+
+/** The text Orca gives as the tab's input line, its `draft`, for a message. */
+function draftOf(handle) {
+  const answer = orca(['terminal', 'read', '--terminal', handle, '--screen']);
+  if (answer.ok !== true) return `(unreadable: ${JSON.stringify(answer.error)})`;
+  const draft = answer.result?.terminal?.draft;
+  return draft === undefined ? '(none: Orca gave no draft)' : JSON.stringify(draft);
+}
+
+/**
+ * Codex's warning, for a message: F2 opens its warning panel in the test's own
+ * tab, the screen is read, and Esc closes the panel again. Used only when a
+ * wait has already failed.
+ */
+async function codexWarning(handle) {
+  const opened = orca(['terminal', 'send', '--terminal', handle, '--text', '\x1bOQ']);
+  if (opened.ok !== true) return `(F2 could not be sent: ${JSON.stringify(opened.error)})`;
+  await setTimeout(1500);
+  const rows = rowsOf(handle) ?? ['(unreadable)'];
+  const closed = orca(['terminal', 'send', '--terminal', handle, '--text', '\x1b']);
+  return `${rows.join('\n    ')}${closed.ok === true ? '' : `\n  (Esc to close it could not be sent: ${JSON.stringify(closed.error)})`}`;
+}
+
 /** The harness's own record of conversation `id`, as its lines. */
 const recordOf = (harness, home, id) => linesOf(harness === 'codex' ? codexRecord(id) : claudeRecord(home, id));
 
@@ -496,6 +551,39 @@ for (const bot of BOTS) {
       t.diagnostic(`answered ${entry.title}'s Teach form with Esc; it went, and ~/.claude.json's autoModeEnvSetup stayed ${was}`);
     };
 
+    // The kit's naming of a Codex thread (#480, #516). At each turn end the
+    // kit's Stop hook types `/rename <bot>.<session>` into this tab, until
+    // Codex holds that name for the thread. It races with whatever this test
+    // types next. So, on Codex only, once the tab is idle after a turn and
+    // before the test types or runs a kit command that types, this waits for
+    // the newest line for the thread the book holds, in
+    // ~/.codex/session_index.jsonl, to give that name. Not by 60 s: the run
+    // fails there, naming the thread and showing the tab, its draft and
+    // Codex's warning. Then the tab is let go idle again.
+    const named = async (before) => {
+      if (bot.harness !== 'codex') return;
+      const id = sessionIn(home, 'daily').session;
+      assert.equal(typeof id, 'string', `the premise: the book holds a conversation for ${bot.name} daily before ${before}: ${JSON.stringify(sessionIn(home, 'daily'))}`);
+      const name = `${bot.name}.daily`;
+      if (threadNameOf(id) === name) return;
+      const started = Date.now();
+      while (threadNameOf(id) !== name) {
+        if (Date.now() - started >= NAMED_MS) {
+          const rows = screenRows(handle);
+          const draft = draftOf(handle);
+          const warning = await codexWarning(handle);
+          assert.fail(`the kit's naming of thread ${id} as ${name} did not land within ${NAMED_MS} ms of the turn's end, before ${before}:`
+            + ` the newest line for it in ${SESSION_INDEX} names it ${JSON.stringify(threadNameOf(id) ?? null)}.`
+            + `\n  orca terminal read --terminal ${handle} --screen\n    ${rows}`
+            + `\n  Orca's draft: ${draft}`
+            + `\n  Codex's warning, read with F2 and closed with Esc:\n    ${warning}`);
+        }
+        await setTimeout(1000);
+      }
+      t.diagnostic(`the kit named thread ${id} ${name} ${Date.now() - started} ms after the tab was idle, before ${before}`);
+      await idle(handle, teach);
+    };
+
     // The session's first conversation, reported by the hook, and the tab idle.
     const first = await until(
       `${bot.name} daily to report its conversation`,
@@ -504,6 +592,7 @@ for (const bot of BOTS) {
       () => whatIsUp(handle),
     );
     await idle(handle, teach);
+    await named('step 0\'s "/"');
 
     // 0. A recorded fact, not a check that fails the run either way: whether an
     //    open slash popup turns Orca's tui-idle off, which live run 3 worked
@@ -528,6 +617,7 @@ for (const bot of BOTS) {
     const input = shutRows.findLast((row) => /^\s*[›❯]/.test(row));
     assert.ok(input !== undefined && !/^\s*[›❯]\s*\//.test(input), `the "/" was taken back: the input line reads ${JSON.stringify(input)}:\n    ${shutRows.join('\n    ')}`);
     await idle(handle, teach);
+    await named('the busy turn');
 
     // The rules change before the clear: a line only the new AGENTS.md holds.
     obkJson(['bot', 'change', '--bots', bots, '--bot', bot.name, '--charter', `${bot.name} exists for one system test run and owns nothing. Its charter marker is ${bot.marker}.`]);
@@ -570,6 +660,7 @@ for (const bot of BOTS) {
 
     // 2. Idle: the clear gives a new conversation in the book.
     await idle(handle, teach);
+    await named('obk session clear');
     const clear = sessionCall('clear', ['--json']);
     assert.equal(clear.status, 0, `the clear on an idle session should go through: ${clear.stdout}${clear.stderr}\n  the tab's screen now:\n    ${screenRows(handle)}`);
     const { cleared } = JSON.parse(clear.stdout);
@@ -581,8 +672,11 @@ for (const bot of BOTS) {
     assert.equal(sessionIn(home, 'daily').session, cleared.now, 'the book holds the new conversation');
 
     // 3. The new conversation was briefed by the hook: asked for its word, it
-    //    answers it, though the question does not carry it.
+    //    answers it, though the question does not carry it. On Codex, the new
+    //    conversation is a new thread, which the kit names after its first
+    //    turn: the clear's own line. The wait is for that thread's name.
     await idle(handle, teach);
+    await named('the question');
     await pressIn(handle, 'What is your word? Reply with it and nothing else.');
     await until(
       `the new conversation ${cleared.now} to answer with its word`,
@@ -605,6 +699,7 @@ for (const bot of BOTS) {
 
     // 5. A compact, or the harness says it cannot.
     await idle(handle, teach);
+    await named('obk session compact');
     const compactions = compactionsIn(bot.harness, recordOf(bot.harness, home, cleared.now));
     const compact = sessionCall('compact', ['--json']);
     const said = compact.stdout + compact.stderr;
