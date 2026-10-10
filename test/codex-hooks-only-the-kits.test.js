@@ -34,9 +34,13 @@
 // environment unless a test sets it.
 //
 //   e. Codex also takes hook trust from the session's own `-c` flags, which
-//      the kit does not read. When the session's `extra_args` in bot.yaml (a
-//      list, or a plain string of shell text) mention `hooks` anywhere, the
-//      kit cannot tell, and refuses, saying why.
+//      the kit does not read. At each launch (`up`, `restart`, `temp make`)
+//      the kit writes into the session's book entry `launched_with`: its
+//      extra_args as bot.yaml gave them for that launch line (a list, a
+//      string, or `[]`). When it mentions `hooks` anywhere, in any letters,
+//      the kit cannot tell, and refuses, saying why. When it is missing, the
+//      kit cannot tell either, and says to restart the session. bot.yaml
+//      changed after the launch does not count.
 //
 // Each refusal types nothing into any tab. The cases run for coder/daily, a
 // long-lived session of a Codex bot, through `session trust-hooks`, and the
@@ -51,7 +55,7 @@ import { describe, it as test } from 'node:test';
 import { parse as parseToml } from 'smol-toml';
 import YAML from 'yaml';
 
-import { botHomeOf, createSandbox, kitLaunchMark, sentInto, sessionIn } from './helpers/cli.js';
+import { botHomeOf, conversationOnRecord, createSandbox, kitLaunchMark, recordSession, sentInto, sessionIn } from './helpers/cli.js';
 import {
   codexHooksFileOf,
   codexHooksOf,
@@ -86,9 +90,10 @@ async function tabOf(box, bots, bot, name) {
  * on Claude Code (its long-lived session lead), brought up, and a temporary
  * Codex session scout that lead made. Both bots hold the kit's three Codex
  * hooks, by the sandbox's kit (the premise every count here rests on).
- * `scoutExtra(bots)`, when given, is the extra arguments scout is made with.
+ * `dailyExtra`, when given, is the extra arguments daily is added with;
+ * `scoutExtra(bots)` those scout is made with.
  */
-async function fleet(box, { scoutExtra } = {}) {
+async function fleet(box, { dailyExtra = [], scoutExtra } = {}) {
   const env = withoutCodexHome(box.env);
   const ok = async (args, extra = {}) => {
     const result = await box.run(args, { env: { ...env, ...extra } });
@@ -96,7 +101,7 @@ async function fleet(box, { scoutExtra } = {}) {
   };
   await ok(['init', '--bots', 'bots', '--harness', 'claude']);
   await ok(['bot', 'create', '--bots', 'bots', '--name', 'coder', '--harness', 'codex']);
-  await ok(['session', 'add', '--bots', 'bots', '--bot', 'coder', '--name', 'daily']);
+  await ok(['session', 'add', '--bots', 'bots', '--bot', 'coder', '--name', 'daily', ...dailyExtra.map((arg) => `--extra-arg=${arg}`)]);
   await ok(['bot', 'create', '--bots', 'bots', '--name', 'writer', '--harness', 'claude']);
   await ok(['session', 'add', '--bots', 'bots', '--bot', 'writer', '--name', 'lead']);
   await ok(['up', '--bots', 'bots']);
@@ -543,7 +548,7 @@ for (const [name, target] of Object.entries(TARGETS)) {
       });
     }
 
-    // ---------------------------------------------------------- e. the session's own extra arguments
+    // ---------------------------------------------------------- e. what the session was launched with
 
     if (sessionOnly) {
       for (const { label, extra } of [
@@ -551,38 +556,99 @@ for (const [name, target] of Object.entries(TARGETS)) {
         { label: 'a list, --config hooks.state={…}', extra: (entry) => ['--config', hookStateFlag(entry)] },
         { label: 'a plain string of shell text, -c \'hooks.state={…}\'', extra: (entry) => `-c '${hookStateFlag(entry)}'` },
       ]) {
-        test(`K7 ${name}: the session's extra_args, ${label}, trusting the kit's SessionStart hook at its right hash: the kit cannot tell, so a review of 1, 2 or 3 is refused, saying why, and nothing is typed`, async (t) => {
+        test(`K7 ${name}: daily restarted with extra_args ${label}, trusting the kit's SessionStart hook at its right hash: the kit cannot tell, so a review of 1, 2 or 3 is refused, saying why, and nothing is typed`, async (t) => {
           const box = await createSandbox(t);
           const ours = await fleet(box);
           await setExtraArgs(box, ours, extra((await kitHooks(ours, target)).SessionStart));
+          await relaunchDaily(box, ours);
 
           await assertExtraArgsRefused(box, ours, target, label);
         });
       }
 
-      test(`K7 ${name}: the session's extra_args, -c tui.show_tooltips=false, which do not mention hooks: "3 hooks are new or changed." is answered`, async (t) => {
+      test(`K7 ${name}: daily's book entry says it was launched with "-c 'Hooks.state=…'", hooks in other letters, and bot.yaml has none: the kit cannot tell, so a review of 1, 2 or 3 is refused, saying why, and nothing is typed`, async (t) => {
+        const box = await createSandbox(t);
+        const ours = await fleet(box);
+        const k = await kitHooks(ours, target);
+        await setLaunchedWith(ours, `-c '${hookStateFlag(k.SessionStart).replace(/^hooks/, 'Hooks')}'`);
+
+        await assertExtraArgsRefused(box, ours, target, 'launched_with naming Hooks');
+      });
+
+      test(`K7 ${name}: daily's book entry has no launched_with, as for a session launched before the kit wrote one: the kit cannot tell, so a review of 1, 2 or 3 is refused, saying to restart it, and nothing is typed`, async (t) => {
+        const box = await createSandbox(t);
+        const ours = await fleet(box);
+        await setLaunchedWith(ours, undefined);
+
+        for (const count of [3, 2, 1]) {
+          await showReview(box, ours, target, count, { goes: true });
+          const before = await sendsByTab(box);
+          const said = await assertRefusedUntyped(box, await trust(box, ours, target), before, `no launched_with, a review of ${count}`);
+          assert.match(said, /\brestart\b/, `no launched_with: the refusal says to restart the session with the kit: ${said}`);
+        }
+      });
+
+      test(`K7 ${name}: bot.yaml's extra_args for daily name hooks, but only after its launch, with no restart: "3 hooks are new or changed." is answered`, async (t) => {
+        const box = await createSandbox(t);
+        const ours = await fleet(box);
+        await setExtraArgs(box, ours, ['-c', hookStateFlag((await kitHooks(ours, target)).SessionStart)]);
+
+        await assertCounts(box, ours, target, { refused: [1], answered: 3, what: 'hooks in bot.yaml after the launch' });
+        assert.deepEqual((await sessionIn(ours.bots, 'coder', 'daily'))?.launched_with, [], 'the premise: daily was launched with no extra arguments');
+      });
+
+      test(`K7 ${name}: daily restarted with extra_args -c tui.show_tooltips=false, which do not mention hooks: "3 hooks are new or changed." is answered`, async (t) => {
         const box = await createSandbox(t);
         const ours = await fleet(box);
         await setExtraArgs(box, ours, ['-c', 'tui.show_tooltips=false']);
+        await relaunchDaily(box, ours);
 
         await assertCounts(box, ours, target, { refused: [1], answered: 3, what: 'extra_args with no hooks in them' });
       });
-    } else {
-      test(`K7 ${name}: scout made with --extra-arg -c hooks.state={…}, trusting the kit's SessionStart hook at its right hash: the kit cannot tell, so a review of 1, 2 or 3 is refused, saying why, and nothing is typed`, async (t) => {
+
+      // ---------------------------------------------------------- e. the launch record itself
+
+      test(`K8 ${name}: the book's launched_with for daily is [] after up with no extra_args, then each restart replaces it with bot.yaml's extra_args, a list or a string`, async (t) => {
+        const box = await createSandbox(t);
+        const ours = await fleet(box);
+        const entry = () => sessionIn(ours.bots, 'coder', 'daily');
+        const first = await entry();
+        assert.equal(typeof first?.launched, 'string', `the premise: up set launched: ${JSON.stringify(first)}`);
+        assert.deepEqual(first.launched_with, [], `after up with no extra_args: ${JSON.stringify(first)}`);
+
+        const list = ['-c', 'tui.show_tooltips=false', '--search'];
+        await setExtraArgs(box, ours, list);
+        assert.deepEqual((await entry()).launched_with, [], 'bot.yaml changed but daily not launched again: the record stays');
+        await relaunchDaily(box, ours);
+        const second = await entry();
+        assert.deepEqual(second.launched_with, list, `after a restart with a list: ${JSON.stringify(second)}`);
+        assert.notEqual(second.launched, first.launched, 'the premise: the restart launched it again');
+
+        const text = "-c 'tui.show_tooltips=false' --search";
+        await setExtraArgs(box, ours, text);
+        await relaunchDaily(box, ours);
+        assert.deepEqual((await entry()).launched_with, text, `after a restart with a string: ${JSON.stringify(await entry())}`);
+      });
+    }
+
+    if (!sessionOnly) {
+      test(`K8 ${name}: a session given extra_args before its first launch, by session add or temp make --extra-arg, has them as launched_with in its book entry`, async (t) => {
+        const box = await createSandbox(t);
+        const extra = ['-c', 'tui.show_tooltips=false'];
+        const ours = await fleet(box, { dailyExtra: extra, scoutExtra: async () => extra });
+
+        assert.deepEqual((await sessionIn(ours.bots, 'coder', 'daily'))?.launched_with, extra, `coder/daily, after up: ${JSON.stringify(await sessionIn(ours.bots, 'coder', 'daily'))}`);
+        assert.deepEqual((await sessionIn(ours.bots, 'writer', 'scout'))?.launched_with, extra, `writer/scout, after temp make: ${JSON.stringify(await sessionIn(ours.bots, 'writer', 'scout'))}`);
+      });
+
+      test(`K7 ${name}: scout made with --extra-arg -c hooks.state={…}: the kit cannot tell, so a review of 1, 2 or 3 is refused, saying why, and nothing is typed`, async (t) => {
         const box = await createSandbox(t);
         // writer's .codex/hooks.json is only written when scout is made, so
-        // scout is made with a hash that is no hook's, and bot.yaml then gets
-        // the right one, which only then can be known.
+        // the flag names the kit's SessionStart key with a hash that is no
+        // hook's: what counts is that the launch mentions hooks.
         const ours = await fleet(box, {
           scoutExtra: async (bots) => ['-c', hookStateFlag({ key: stateKey(codexHooksFileOf(bots, target.bot), 'SessionStart', 0, 0), hash: WRONG_HASH })],
         });
-        const k = await kitHooks(ours, target);
-        const file = path.join(botHomeOf(ours.bots, target.bot), 'bot.yaml');
-        const text = await readFile(file, 'utf8');
-        assert.ok(text.includes(WRONG_HASH), `the premise: writer's bot.yaml holds scout's flag: ${text}`);
-        await writeFile(file, text.replaceAll(WRONG_HASH, k.SessionStart.hash));
-        const scout = (await readYaml(file)).sessions.find((one) => one.name === 'scout');
-        assert.deepEqual(scout?.extra_args, ['-c', hookStateFlag(k.SessionStart)], `the premise: scout's extra_args trust the kit's SessionStart key at its right hash: ${JSON.stringify(scout)}`);
 
         await assertExtraArgsRefused(box, ours, target, 'scout made with --extra-arg -c hooks.state={…}');
       });
@@ -678,6 +744,32 @@ async function setExtraArgs(box, ours, extra) {
   }
   const daily = (await readYaml(path.join(botHomeOf(ours.bots, 'coder'), 'bot.yaml'))).sessions.find((one) => one.name === 'daily');
   assert.deepEqual(daily.extra_args, extra, `the premise: daily's extra_args are as set: ${JSON.stringify(daily)}`);
+}
+
+/**
+ * coder/daily launched again by `obk restart`, and `ours.daily` its new tab.
+ * Restart closes only a tab whose conversation the book names, so daily is
+ * first given one, as a session that has had a turn has it.
+ */
+async function relaunchDaily(box, ours) {
+  if ((await sessionIn(ours.bots, 'coder', 'daily'))?.session === undefined) {
+    await recordSession(box, { bots: ours.bots, bot: 'coder', tab: ours.daily.tabId, session: 'sess-daily' });
+    await conversationOnRecord(box, { harness: 'codex', cwd: botHomeOf(ours.bots, 'coder'), id: 'sess-daily' });
+  }
+  const result = await box.run(['restart', '--bots', 'bots', '--bot', 'coder', '--session', 'daily'], { env: withoutCodexHome(box.env) });
+  assert.equal(result.code, 0, `obk restart: ${result.stdout}${result.stderr}`);
+  ours.daily = await tabOf(box, ours.bots, 'coder', 'daily');
+}
+
+/** Write coder/daily's `launched_with` in its book entry, or take it out when `value` is undefined. */
+async function setLaunchedWith(ours, value) {
+  const file = path.join(botHomeOf(ours.bots, 'coder'), 'sessions.yaml');
+  const book = await readYaml(file);
+  assert.ok(book?.sessions?.daily, `the premise: the book holds daily: ${JSON.stringify(book)}`);
+  if (value === undefined) delete book.sessions.daily.launched_with;
+  else book.sessions.daily.launched_with = value;
+  await writeFile(file, YAML.stringify(book));
+  assert.deepEqual((await sessionIn(ours.bots, 'coder', 'daily'))?.launched_with, value, 'the premise: the book entry is as written');
 }
 
 /** Reviews of 3, 2 and 1 are each refused, naming the session's extra arguments as why, with nothing typed. */
