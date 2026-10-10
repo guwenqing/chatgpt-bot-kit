@@ -6,6 +6,10 @@
 //
 // What is old on purpose is left alone: the whole text of a superseded record,
 // and the `Supersedes:` line and the `## History` section of a current one.
+// And, by the architect's ruling for #509, a citation in the body of an
+// accepted record of a superseded record whose Status line names its
+// successor: AssuredLoop lets nothing in an accepted record's body change but
+// its Status line, and the chain leads to the record in force.
 
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
@@ -65,30 +69,32 @@ function parseRecord(text) {
 async function records() {
   const names = (await readdir(adrDir)).filter((name) => /^\d{4}-.+\.md$/.test(name)).sort();
   const all = [];
-  for (const name of names) {
-    const text = await readFile(path.join(adrDir, name), 'utf8');
-    const { lines, header, sections } = parseRecord(text);
-    const status = /\bStatus:\s*([^\n]*)/.exec(header)?.[1] ?? null;
-    const by = status === null ? null : /^superseded by \[ADR (\d{4})\]\(((\d{4})-[^)\s]+\.md)\)/.exec(status);
-    const supersedesLine = lines.findIndex((line) => /^Supersedes:/.test(line));
-    const supersedes = supersedesLine === -1
-      ? []
-      : [...lines[supersedesLine].matchAll(RECORD_LINK)].map((match) => ({ number: match[1], file: match[2], fileNumber: match[3] }));
-    all.push({
-      name,
-      rel: `docs/adr/${name}`,
-      number: name.slice(0, 4),
-      text,
-      lines,
-      header,
-      sections,
-      status,
-      supersededBy: by === null ? null : { number: by[1], file: by[2], fileNumber: by[3] },
-      supersedesLine: supersedesLine === -1 ? null : supersedesLine + 1,
-      supersedes,
-    });
-  }
+  for (const name of names) all.push(recordOf(name, await readFile(path.join(adrDir, name), 'utf8')));
   return all;
+}
+
+/** One record, read from its file name and its text. */
+function recordOf(name, text) {
+  const { lines, header, sections } = parseRecord(text);
+  const status = /\bStatus:\s*([^\n]*)/.exec(header)?.[1] ?? null;
+  const by = status === null ? null : /^superseded by \[ADR (\d{4})\]\(((\d{4})-[^)\s]+\.md)\)/.exec(status);
+  const supersedesLine = lines.findIndex((line) => /^Supersedes:/.test(line));
+  const supersedes = supersedesLine === -1
+    ? []
+    : [...lines[supersedesLine].matchAll(RECORD_LINK)].map((match) => ({ number: match[1], file: match[2], fileNumber: match[3] }));
+  return {
+    name,
+    rel: `docs/adr/${name}`,
+    number: name.slice(0, 4),
+    text,
+    lines,
+    header,
+    sections,
+    status,
+    supersededBy: by === null ? null : { number: by[1], file: by[2], fileNumber: by[3] },
+    supersedesLine: supersedesLine === -1 ? null : supersedesLine + 1,
+    supersedes,
+  };
 }
 
 const byNumber = (all) => new Map(all.map((record) => [record.number, record]));
@@ -147,20 +153,65 @@ const nextToAmendment = (text, citation) => AMEND.test(text.slice(
   citation.index + citation.length + NEAR,
 ));
 
-/** Every citation in the repo that is meant to cite the record in force, with its file. */
-async function liveCitations() {
-  const all = await records();
+/**
+ * Every citation in `files` (`[{ rel, text }]`) that is meant to cite the
+ * record in force, with its file, given the records `all`.
+ */
+function citationsOf(all, files) {
   const exempt = new Map(all.map((record) => [record.rel, exemptLines(record)]));
   const out = [];
-  for (const rel of await repoFiles()) {
-    if (rel === THIS_FILE) continue;
-    const text = await readFile(path.join(repoRoot, rel), 'utf8');
+  for (const { rel, text } of files) {
     const isExempt = exempt.get(rel) ?? (() => false);
     for (const citation of citationsIn(text, rel)) {
       if (!isExempt(citation.line)) out.push({ rel, text, ...citation });
     }
   }
-  return { all, citations: out };
+  return out;
+}
+
+/** Every citation in the repo that is meant to cite the record in force, with its file. */
+async function liveCitations() {
+  const all = await records();
+  const files = [];
+  for (const rel of await repoFiles()) {
+    if (rel === THIS_FILE) continue;
+    files.push({ rel, text: await readFile(path.join(repoRoot, rel), 'utf8') });
+  }
+  return { all, citations: citationsOf(all, files) };
+}
+
+/**
+ * Whether a citation in `citer`, a record, of the superseded `record` may stay
+ * (the architect's ruling for #509): `citer` is accepted, so AssuredLoop lets
+ * nothing in its body change, and `record`'s Status line names its successor,
+ * a record that exists, so a reader can follow the chain to the record in force.
+ */
+const followable = (citer, record, known) => citer !== undefined
+  && isCurrent(citer)
+  && /^accepted\b/i.test(citer.status ?? '')
+  && record.supersededBy !== null
+  && known.get(record.supersededBy.number)?.name === record.supersededBy.file;
+
+/**
+ * What is wrong with the citations in `files` (`[{ rel, text }]`), given the
+ * records `all`: one line each for a record that does not exist, a link to a
+ * file that is not the record's, and a citation of a record that is not the
+ * one in force.
+ */
+function citationProblems(all, files) {
+  const known = byNumber(all);
+  const byFile = new Map(all.map((record) => [record.rel, record]));
+  const problems = [];
+  for (const citation of citationsOf(all, files)) {
+    const where = `${citation.rel}:${citation.line}`;
+    const record = known.get(citation.number);
+    if (record === undefined) problems.push(`${where}: cites ADR ${citation.number}, which does not exist`);
+    else if (citation.file !== null && citation.file !== record.name) problems.push(`${where}: links ${citation.file}, which is not in docs/adr/ (ADR ${citation.number} is ${record.name})`);
+    else if (!isCurrent(record) && !followable(byFile.get(citation.rel), record, known)) {
+      problems.push(`${where}: ${citation.file === null ? 'cites' : `links ${citation.file}, that is`} ADR ${citation.number}, which is superseded${record.supersededBy === null ? '' : ` by ADR ${record.supersededBy.number}`}`);
+    }
+  }
+  return problems;
 }
 
 test('the citation check sees every way the repo cites a record, and not other numbers', () => {
@@ -201,6 +252,75 @@ test('the amendment check sees a citation of an amendment, and not an amendment 
 
   assert.equal(flagged('the sandbox switch in ADR 0011.'), 0);
   assert.equal(flagged('makes sure some tab exists outside the book (amendment 4)'), 0);
+});
+
+// The citation rule on fixtures (the architect's ruling for #509): AssuredLoop
+// (`al check --strict`) refuses any edit to an accepted record's body beyond
+// its Status line, so a citation in the body of an accepted record may name a
+// superseded record whose Status line names its successor, and a reader
+// follows the chain from there. Everywhere else, a citation names the record
+// in force. A superseded record whose Status names no successor is no chain.
+
+/** A record of the format, with `status` and `body` as given. */
+const fixture = (number, slug, status, body = 'Nothing here.') => recordOf(`${number}-${slug}.md`, [
+  `# ADR ${number}: ${slug}`,
+  '',
+  'Date: 2026-10-09.',
+  `Status: ${status}`,
+  'Decided by: the owner.',
+  '',
+  '## Context', '', 'Context.', '',
+  '## Decision', '', 'Decision.', '',
+  '## Alternatives considered', '', 'None.', '',
+  '## Consequences', '', body, '',
+  '## History', '', '- 2026-10-09: made.', '',
+].join('\n'));
+
+/** The problems the citation check finds in these records, and in these other files, `[{ rel, text }]`. */
+const problemsIn = (all, others = []) => citationProblems(all, [...all.map((record) => ({ rel: record.rel, text: record.text })), ...others]);
+
+/** ADR 0001 superseded by ADR 0003, which is accepted: a chain a reader can follow. */
+const CHAIN = () => [
+  fixture('0001', 'old-way', 'superseded by [ADR 0003](0003-new-way.md).'),
+  fixture('0003', 'new-way', 'accepted.'),
+];
+
+test('an accepted record whose body cites a superseded record that names its successor passes', () => {
+  const plain = fixture('0002', 'citer', 'accepted.', 'The ask goes as ADR 0001 said.');
+  const linked = fixture('0004', 'linker', 'accepted.', 'See [ADR 0001](0001-old-way.md).');
+
+  assert.deepEqual(problemsIn([...CHAIN(), plain]), [], 'a plain citation');
+  assert.deepEqual(problemsIn([...CHAIN(), linked]), [], 'a linked citation');
+});
+
+test('an accepted record whose body cites a superseded record that names no successor fails', () => {
+  const nowhere = [
+    fixture('0001', 'old-way', 'superseded.'),
+    fixture('0002', 'citer', 'accepted.', 'The ask goes as ADR 0001 said.'),
+  ];
+
+  const problems = problemsIn(nowhere);
+
+  assert.equal(problems.length, 1, `one problem: ${problems.join('\n')}`);
+  assert.match(problems[0], /^docs\/adr\/0002-citer\.md:\d+: cites ADR 0001, which is superseded/);
+
+  // A Status that names a successor which is not in docs/adr/ is no chain either.
+  const gone = [
+    fixture('0001', 'old-way', 'superseded by [ADR 0009](0009-not-there.md).'),
+    fixture('0002', 'citer', 'accepted.', 'The ask goes as ADR 0001 said.'),
+  ];
+  assert.equal(problemsIn(gone).length, 1, `a successor that is not there: ${problemsIn(gone).join('\n')}`);
+});
+
+test('a record that is not accepted, and any other file, citing a superseded record fails, successor or not', () => {
+  const proposed = fixture('0002', 'citer', 'proposed.', 'The ask goes as ADR 0001 said.');
+  const doc = { rel: 'docs/prd/prd.md', text: 'The ask goes as ADR 0001 said.\n' };
+  const code = { rel: 'src/message.js', text: '// the road (ADR 0001)\n' };
+
+  assert.equal(problemsIn([...CHAIN(), proposed]).length, 1, 'a proposed record can still be edited, so it names the record in force');
+  const others = problemsIn(CHAIN(), [doc, code]);
+  assert.deepEqual(others.map((one) => one.split(':')[0]), ['docs/prd/prd.md', 'src/message.js'], `a doc and the code: ${others.join('\n')}`);
+  assert.deepEqual(problemsIn(CHAIN(), [{ rel: 'docs/prd/prd.md', text: 'As ADR 0003 says.\n' }]), [], 'the contrast: a doc citing the record in force');
 });
 
 test('every record is named NNNN-slug.md, is titled with its own number, and no number is used twice', async () => {
@@ -343,20 +463,14 @@ test('a record that supersedes others has a History line for each, down the chai
 });
 
 test('every ADR cited in the repo exists and is the record in force', async () => {
-  const { all, citations } = await liveCitations();
-  const known = byNumber(all);
-  assert.ok(citations.length > 0, 'no citation of a record was found anywhere, so the check sees nothing');
-
-  const problems = [];
-  for (const citation of citations) {
-    const where = `${citation.rel}:${citation.line}`;
-    const record = known.get(citation.number);
-    if (record === undefined) problems.push(`${where}: cites ADR ${citation.number}, which does not exist`);
-    else if (citation.file !== null && citation.file !== record.name) problems.push(`${where}: links ${citation.file}, which is not in docs/adr/ (ADR ${citation.number} is ${record.name})`);
-    else if (!isCurrent(record)) {
-      problems.push(`${where}: ${citation.file === null ? 'cites' : `links ${citation.file}, that is`} ADR ${citation.number}, which is superseded${record.supersededBy === null ? '' : ` by ADR ${record.supersededBy.number}`}`);
-    }
+  const all = await records();
+  const files = [];
+  for (const rel of await repoFiles()) {
+    if (rel !== THIS_FILE) files.push({ rel, text: await readFile(path.join(repoRoot, rel), 'utf8') });
   }
+  assert.ok(citationsOf(all, files).length > 0, 'no citation of a record was found anywhere, so the check sees nothing');
+
+  const problems = citationProblems(all, files);
   assert.deepEqual(problems, [], `${problems.length} citations do not point at the record in force:\n${problems.join('\n')}`);
 });
 

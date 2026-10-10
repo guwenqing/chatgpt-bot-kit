@@ -20,11 +20,15 @@
 //   T3  Run as Claude Code runs it (the Stop event on stdin, Orca's
 //       ORCA_TAB_ID and ORCA_TERMINAL_HANDLE of the session's own tab), when
 //       mail the kit sent to this session is still unread (Orca's `check
-//       --peek` as its own tab still lists it), it prints
-//       `{"decision":"block","reason":"…"}` and exits 0. The reason names each
-//       message's sender `<bot>/<session>`, its subject, "still unread", when
-//       it came, and the `message check` command to read it with. It reads
-//       nothing: the mail is still unread after it.
+//       --peek` as its own tab still lists it), it prints exactly one JSON
+//       object, `{"hookSpecificOutput":{"hookEventName":"Stop",
+//       "additionalContext":"<text>"}}`, and exits 0: no `decision` and no
+//       `reason`, so Claude Code 2.1.296 draws it as "Stop hook feedback", not
+//       as "Stop hook error" (the architect's ruling). The text starts "A
+//       fleet mail" or "<n> fleet mails", and names each message's sender
+//       `<bot>/<session>`, its subject, "still unread", when it came, and the
+//       `message check` command to read it with. It reads nothing: the mail is
+//       still unread after it.
 //   T4  Once for each message: a second turn end with the same mail prints
 //       nothing, and a later message is told on its own.
 //   T5  Nothing on stdout, exit 0: with `stop_hook_active: true` (and the mail
@@ -123,7 +127,13 @@ const turnEnds = (box, fleet, { active = false, command = mailCommand(box, fleet
   env: { ...(env ?? box.env), ...(handle === null ? {} : { ORCA_TERMINAL_HANDLE: handle }), ...kitLaunchMark(box, fleet.terminal) },
 });
 
-/** A turn end that tells: exit 0, one JSON object on stdout, a block with its reason. */
+/**
+ * A turn end that tells: exit 0, and on stdout exactly one JSON object,
+ * `{ hookSpecificOutput: { hookEventName: 'Stop', additionalContext } }`, with
+ * nothing else in it: no `decision` and no `reason`, which Claude Code draws as
+ * an error. The text starts with plain words that say it is fleet mail.
+ * Returns the text.
+ */
 function toldIn(ran) {
   assert.equal(ran.code, 0, `the hook exits 0: ${ran.stdout}${ran.stderr}`);
   let said;
@@ -132,9 +142,14 @@ function toldIn(ran) {
   } catch (error) {
     return assert.fail(`the hook prints one JSON object, got: ${JSON.stringify(ran.stdout)} ${ran.stderr} (${error.message})`);
   }
-  assert.equal(said.decision, 'block', `a block, so the session goes on to read it: ${ran.stdout}`);
-  assert.equal(typeof said.reason, 'string', `with its reason: ${ran.stdout}`);
-  return said.reason;
+  assert.ok(said !== null && typeof said === 'object' && !Array.isArray(said), `one JSON object, got: ${ran.stdout}`);
+  assert.deepEqual(Object.keys(said), ['hookSpecificOutput'], `hookSpecificOutput and nothing else: no decision, no reason, got: ${ran.stdout}`);
+  const { hookEventName, additionalContext, ...more } = said.hookSpecificOutput ?? {};
+  assert.equal(hookEventName, 'Stop', `the Stop event's context, got: ${ran.stdout}`);
+  assert.deepEqual(more, {}, `and nothing else in it, got: ${ran.stdout}`);
+  assert.equal(typeof additionalContext, 'string', `the text in additionalContext, got: ${ran.stdout}`);
+  assert.match(additionalContext, /^(?:A fleet mail|\d+ fleet mails)\b/, `it starts by saying it is fleet mail, not a fault: ${additionalContext}`);
+  return additionalContext;
 }
 
 /** A turn end that says nothing: exit 0 and an empty stdout. */
@@ -260,7 +275,7 @@ test('T2 a Codex bot\'s .codex/hooks.json is exactly as before #509: its three k
 
 // ------------------------------------------------------------ T3: it tells
 
-test('T3 the installed line, run at a turn end in the session\'s tab with mail unread, blocks the stop with a reason', async (t) => {
+test('T3 the installed line, run at a turn end in the session\'s tab with mail unread, tells it as the Stop hook\'s context', async (t) => {
   const box = await createSandbox(t);
   const fleet = await fleetIn(box);
   const [entry] = (eventsIn(await hooksIn(fleet.bots, READER, 'claude'))?.Stop ?? []).flatMap((group) => group.hooks ?? []).filter(runsMail);
@@ -272,13 +287,14 @@ test('T3 the installed line, run at a turn end in the session\'s tab with mail u
   assert.ok(reason.includes('the staging host'), `it names the mail: ${reason}`);
 });
 
-test('T3 the reason names the sender, the subject, says still unread, when it came, and how to read it', async (t) => {
+test('T3 the text names the sender, the subject, says still unread, when it came, and how to read it', async (t) => {
   const box = await createSandbox(t);
   const fleet = await fleetIn(box);
   await mail(box, 'coder', 'the staging host');
 
   const reason = toldIn(await turnEnds(box, fleet));
 
+  assert.match(reason, /^A fleet mail\b/, `one mail: it starts "A fleet mail": ${reason}`);
   assert.ok(reason.includes('coder/daily'), `the sender as <bot>/<session>: ${reason}`);
   assert.ok(reason.includes('the staging host'), `the subject: ${reason}`);
   assert.match(reason, /still unread/, `"still unread", so it does not read as new mail: ${reason}`);
@@ -288,7 +304,7 @@ test('T3 the reason names the sender, the subject, says still unread, when it ca
   assert.ok(spellingsOf(fleet.bots).some((bots) => reason.includes(`--bots ${bots}`)), `in this bots folder: ${reason}`);
 });
 
-test('T3 two unread messages from two senders are both in the reason', async (t) => {
+test('T3 two unread messages from two senders are both in the text, which starts "2 fleet mails"', async (t) => {
   const box = await createSandbox(t);
   const fleet = await fleetIn(box);
   await mail(box, 'coder', 'the staging host');
@@ -296,8 +312,9 @@ test('T3 two unread messages from two senders are both in the reason', async (t)
 
   const reason = toldIn(await turnEnds(box, fleet));
 
+  assert.match(reason, /^2 fleet mails\b/, `it starts with how many: ${reason}`);
   for (const said of ['coder/daily', 'the staging host', 'tester/daily', 'the flaky test']) {
-    assert.ok(reason.includes(said), `${said} is in the reason: ${reason}`);
+    assert.ok(reason.includes(said), `${said} is in the text: ${reason}`);
   }
 });
 

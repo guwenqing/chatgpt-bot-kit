@@ -31,9 +31,13 @@
 //      gives it. Each send says `signal: "hook"`, `because: "busy"`, nothing
 //      typed. While the loop runs, nothing that looks like the kit's line is on
 //      its screen. When the loop's turn ends, the kit's Stop hook tells it: its
-//      record gets the hook's reason, with "still unread", after the send; then
+//      record gets the hook's text, with "still unread", after the send; then
 //      it reads the mail, after the loop's last line. Afterwards its input box
-//      holds no kit line and no Orca notice.
+//      holds no kit line and no Orca notice. The hook answers with Stop hook
+//      context, not a block (the architect's ruling), so its screen shows it as
+//      "Stop hook feedback": the case fails when a screen row draws the hook's
+//      fleet mail text as "Stop hook error". Whether "Stop hook feedback" was
+//      seen is observed.
 //   3. TWO MAILS. Case 2 sends two mails in the one busy turn: one reason names
 //      both, it is given once, and the receiver reads both.
 //   4. IDLE CODEX. One mail to an idle Codex session: one signal, Orca's notice
@@ -465,7 +469,7 @@ function signalsIn(harness, entries, { since, mailbox, subject }) {
 }
 
 /**
- * The kit's Stop hook reasons in a Claude transcript since `since` that name
+ * The kit's Stop hook tellings in a Claude transcript since `since` that name
  * `subject`: lines that are not the assistant's holding "still unread" and the
  * subject, gathered into tellings (lines within 2 s of each other are one
  * telling written down more than once).
@@ -734,11 +738,25 @@ async function busyClaudeCase(t, { bots, title, handle, recordOf, stepsFile, mai
     await setTimeout(2000);
   }
 
+  // From the turn end on, how the hook's text is drawn: Claude Code 2.1.296
+  // draws a Stop hook's context as "Stop hook feedback: …" and a block as
+  // "Stop hook error: …" (the architect's ruling). A row (or the row after it)
+  // that names the hook's fleet mail under "Stop hook error" fails the case.
+  const drawn = { feedback: false, error: [] };
+  const looks = async () => {
+    await screen();
+    const rows = rowsOf(handle) ?? [];
+    rows.forEach((row, at) => {
+      const near = `${row} ${rows[at + 1] ?? ''}`;
+      if (row.includes('Stop hook feedback')) drawn.feedback = true;
+      if (row.includes('Stop hook error') && /fleet mail/i.test(near)) drawn.error.push(near.trim());
+    });
+  };
   const record = () => entriesOf(recordOf());
   const read = await until(`${title} to read both mails after its turn end`, ANSWER_MS, async () => {
     const found = await mailReadIn(mailFile);
     return mails.every((mail) => found.text.includes(mail.word)) ? found : undefined;
-  }, () => `\n  the record's tail:\n  ${tailOf(record())}${whatIsUp(handle)}`, screen);
+  }, () => `\n  the record's tail:\n  ${tailOf(record())}${whatIsUp(handle)}`, looks);
   assert.ok(read.at > ended, `${title}: the mail was read after the loop's last line (${new Date(ended).toISOString()}), not during it: read at ${new Date(read.at).toISOString()}`);
 
   const [first, second] = mails.map((mail) => tellingsIn(record(), { since, subject: mail.subject }));
@@ -752,7 +770,10 @@ async function busyClaudeCase(t, { bots, title, handle, recordOf, stepsFile, mai
     if (found.notices.length > 0) t.diagnostic(`${title}: Orca typed its own notice for its mailbox ${found.notices.length} time(s) after the send (out of scope, observed)`);
   }
 
-  await until(`${title} to be idle after reading`, ANSWER_MS, async () => (idleNow(handle) ? true : undefined), () => whatIsUp(handle), screen);
+  await until(`${title} to be idle after reading`, ANSWER_MS, async () => (idleNow(handle) ? true : undefined), () => whatIsUp(handle), looks);
+  await looks();
+  t.diagnostic(`${title}: the screen ${drawn.feedback ? 'showed' : 'did not show'} "Stop hook feedback" after the turn end`);
+  assert.deepEqual(drawn.error, [], `${title}: the hook's fleet mail text was drawn as "Stop hook error" in the owner's tab; it must be Stop hook context, drawn as feedback:\n  ${drawn.error.join('\n  ')}`);
   const input = claudeInputOf(rowsOf(handle) ?? []);
   assert.ok(!KIT_LINE.test(input) && !input.includes('orchestration check'), `${title}: its input box holds no line for the mail:\n  ${input}`);
 }
