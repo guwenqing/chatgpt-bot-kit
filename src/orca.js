@@ -473,13 +473,16 @@ export const QUESTION_ON_SCREEN = 'question-on-screen';
  */
 function screenOf(handle, readMs) {
   const read = screenRows(handle, readMs);
-  return read.rows === undefined ? { screenUnreadable: read.unreadable } : { question: questionIn(read.rows), rows: read.rows };
+  return read.rows === undefined ? { screenUnreadable: read.unreadable } : { question: questionIn(read.rows), rows: read.rows, draft: read.draft };
 }
 
 /**
- * The rows the tab `handle` renders, `{ rows }`, or `{ unreadable: <why> }`.
+ * The rows the tab `handle` renders, `{ rows, draft }`, or `{ unreadable: <why> }`.
  * Orca refusing, or answering with anything but the rendered screen, is a
- * screen that cannot be read, not an error.
+ * screen that cannot be read, not an error. `draft` is the text in the
+ * harness's input line, undefined when there is none: Orca 1.4.223 gives it
+ * beside the rows, and Claude Code 2.1.296's input line in the rows then reads
+ * its pointer alone (#510, probe 4).
  */
 export function screenRows(handle, readMs) {
   let read;
@@ -491,7 +494,7 @@ export function screenRows(handle, readMs) {
   if (read?.source !== 'screen' || !Array.isArray(read.tail)) {
     return { unreadable: `Orca gave no rendered screen for it (source: ${read?.source ?? 'none'})` };
   }
-  return { rows: read.tail };
+  return { rows: read.tail, draft: typeof read.draft === 'string' && read.draft !== '' ? read.draft : undefined };
 }
 
 /** A row the harness starts with its selection pointer: `›` on Codex, `❯` on Claude Code. */
@@ -602,7 +605,7 @@ function pointedChoiceAt(rows, at) {
  * may: `{ handle, agent }`, with the agent Orca names there. Otherwise nothing
  * is typed, and the answer says why. `idle` says whether Orca's `tui-idle` wait
  * answered ok, and `rows` is the screen the gate read, for a caller that must
- * not type into a busy harness (#391):
+ * not type into a busy harness (#391), with the `draft` Orca gave beside it (#510):
  * `{}` for a tab with no harness in it (none in the book, none Orca lists, or
  * the shell in front), `{ blocked }` for one with something on screen waiting
  * to be answered, and `{ unsure }`, a sentence, for one the kit cannot tell
@@ -665,7 +668,7 @@ export function tabToTypeInto(home, tabId, timeoutMs) {
   if (seen.question === undefined) {
     return { unsure: `the kit could not tell whether a question is waiting on its screen (${seen.screenUnreadable}), so nothing was typed` };
   }
-  return { handle: live.handle, agent: seen.agent, idle: seen.answered, rows: seen.rows };
+  return { handle: live.handle, agent: seen.agent, idle: seen.answered, rows: seen.rows, draft: seen.draft };
 }
 
 /**

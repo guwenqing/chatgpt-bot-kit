@@ -223,14 +223,18 @@ async function enter(it, verb, before = () => {}) {
 export async function typeCommand(it, command, { before = () => {}, check = menuWrong, cannot = () => '', deadline = Infinity } = {}) {
   // On Codex, what is typed cannot be read back once its menu is open, so
   // nothing may be in its input line before: no draft for the command to join.
-  const emptyLine = (rows) => {
-    if (it.harness !== 'codex') return;
+  // On Claude Code, Orca gives a draft in the line beside the screen (#510).
+  const emptyLine = ({ rows, draft }) => {
+    if (it.harness !== 'codex') {
+      if (draft !== undefined) throw new Error(`${it.name}: nothing was typed, because its input line holds a draft: it reads "${draft}".${shownEnd(rows)}`);
+      return;
+    }
     const line = rows.findLast((row) => /^ *›/.test(row))?.trim();
     if (!CODEX_EMPTY.includes(line)) {
       throw new Error(`${it.name}: nothing was typed, because its input line is not empty: it reads "${line ?? 'nothing'}".${shownEnd(rows)}`);
     }
   };
-  emptyLine((await idleTab(it)).rows);
+  emptyLine(await idleTab(it));
   const version = it.harness === 'codex' ? codexVersion(readBook(it.home).sessions[it.session]?.session) : undefined;
 
   before();
@@ -238,7 +242,7 @@ export async function typeCommand(it, command, { before = () => {}, check = menu
   // with no wait, before the first key (#480 review).
   const ready = lookAt(it);
   if (ready.why !== undefined) throw new Error(`${it.name}: nothing was typed, because ${ready.why}.`);
-  emptyLine(ready.rows);
+  emptyLine(ready);
   const { handle } = ready;
   const typedAt = Date.now();
   // One character a send, each after a look through the gate, so nothing goes
@@ -329,7 +333,7 @@ async function idleTab(it) {
 }
 
 /**
- * One look through the typing gate at the session's tab: `{ handle }` when
+ * One look through the typing gate at the session's tab: `{ handle, rows, draft }` when
  * nothing on its screen asks a question and nothing says it is at work, and,
  * with `idle`, Orca's tui-idle answered ok; or `{ why }`, naming the signal,
  * with `moved` when the book holds another tab for the session now, or, where
@@ -364,7 +368,7 @@ function lookAt(it, { idle = true } = {}) {
   const signal = signalIn(found.rows);
   if (signal !== undefined) return { why: signal };
   if (idle && !found.idle) return { why: 'it is busy with a turn: Orca\'s tui-idle did not answer ok' };
-  return { handle: found.handle, rows: found.rows };
+  return { handle: found.handle, rows: found.rows, draft: found.draft };
 }
 
 /**
@@ -384,7 +388,7 @@ async function typedWrong(handle, harness, command, version, check) {
     // a question that shows on it stops it at once (review of c1e5ba4).
     const signal = seen.rows === undefined ? undefined : signalIn(seen.rows);
     if (signal !== undefined) return { why: signal, rows: seen.rows };
-    const wrong = seen.rows === undefined ? { why: `its screen could not be read (${seen.unreadable})` } : check(seen.rows, harness, command, version);
+    const wrong = seen.rows === undefined ? { why: `its screen could not be read (${seen.unreadable})` } : check(seen.rows, harness, command, version, seen.draft);
     if (wrong === undefined || Date.now() >= until) return wrong && { ...wrong, rows: seen.rows };
     await pause(ASK_MS);
   }
@@ -406,13 +410,16 @@ function signalIn(rows) {
   return undefined;
 }
 
-function menuWrong(rows, harness, command, version) {
+function menuWrong(rows, harness, command, version, draft) {
   const at = rows.findLastIndex((row) => /^ *[›❯]/.test(row));
   if (at < 0) return { why: 'its screen shows no input line' };
   // Claude Code 2.1.288 puts a non-breaking space after its pointer (live run 4).
   const line = rows[at].replaceAll('\u00a0', ' ').trim();
   if (harness === 'codex') return codexMenuWrong(rows, at, line, command, version);
-  if (line !== `${POINTER[harness]} ${command}`) return { why: `its input line reads "${line}"` };
+  // Orca 1.4.223 gives the line's text as the draft, and Claude Code 2.1.296's
+  // line on the screen then reads its pointer alone (#510, probe 4).
+  const text = draft === undefined ? line : `${POINTER[harness]} ${draft}`;
+  if (text !== `${POINTER[harness]} ${command}`) return { why: `its input line reads "${text}"` };
   return claudeMenuWrong(rows, at, command);
 }
 
@@ -420,15 +427,19 @@ function menuWrong(rows, harness, command, version) {
  * Claude Code 2.1.288 draws its slash menu above its input box's top rule, a
  * row of ─: a row per command, starting with it, its description wrapped onto
  * rows set far in (live run 4). No pointer marks a selection, so the first
- * command row there has to be the command.
+ * command row there has to be the command. Claude Code 2.1.296 starts the
+ * selected row with its pointer, `  ❯ /compact`, and that row has to be the
+ * command (#510, probes 1 and 2). The menu's pointer is above the rule, the
+ * input line's below it, so the one is never taken for the other.
  */
 function claudeMenuWrong(rows, at, command) {
   const rule = rows.slice(0, at).findLastIndex((row) => /^\s*─{3}/.test(row));
   const menu = [];
-  for (let up = rule - 1; up >= 0 && (/^ {1,4}\/\S/.test(rows[up]) || /^ {20,}\S/.test(rows[up])); up -= 1) menu.unshift(rows[up]);
-  const first = menu.find((row) => /^ {1,4}\//.test(row));
-  if (rule < 0 || first === undefined) return { why: 'no menu of commands came up above its input box', menu: true };
-  if (first.trim().split(/\s+/)[0] !== command) return { why: `the first row of its menu is "${first.trim()}"`, menu: true };
+  for (let up = rule - 1; up >= 0 && (/^ {1,4}(?:❯ +)?\/\S/.test(rows[up]) || /^ {20,}\S/.test(rows[up])); up -= 1) menu.unshift(rows[up]);
+  const pointed = menu.find((row) => /^ {1,4}❯ +\//.test(row));
+  const selected = pointed === undefined ? menu.find((row) => /^ {1,4}\//.test(row)) : pointed.replace(/^ *❯ +/, '');
+  if (rule < 0 || selected === undefined) return { why: 'no menu of commands came up above its input box', menu: true };
+  if (selected.trim().split(/\s+/)[0] !== command) return { why: `the ${pointed === undefined ? 'first' : 'selected'} row of its menu is "${selected.trim()}"`, menu: true };
   return undefined;
 }
 

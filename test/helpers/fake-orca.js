@@ -120,6 +120,13 @@
 //               output. Those three words are Orca's help text; only `screen`
 //               was seen live. One terminal can carry a `screenSource` of its
 //               own, as with `screen`.
+//   draft       on one terminal only: the text in the harness's input line,
+//               which `terminal read` answers as `draft` beside `tail`, with or
+//               without `--screen`. Orca 1.4.223 does so for Claude Code
+//               2.1.296, whose `tail` shows that line as a bare `❯`, and leaves
+//               the key out when the line is empty (#510, seen live). Its help:
+//               "When present, draft is UI-only composer text excluded from
+//               tail". Left out, a read gives no `draft`.
 //   screenAfterSend  on one terminal only: the rows its screen shows once the
 //               next `terminal send` reaches it, as a screen that moves on when
 //               a key answers it. That send puts it in place as the terminal's
@@ -135,7 +142,9 @@
 //               When a terminal carries both, `screenAfterSend` is used first.
 //               An entry may be `{ screen, tuiIdle }` in place of the rows: it
 //               puts up `screen` and sets the terminal's own `tuiIdle` to what
-//               it says, or takes it away when it says nothing. With `then`,
+//               it says, or takes it away when it says nothing. Its `draft`
+//               is the terminal's `draft` from then on; an entry with none,
+//               rows alone included, takes the draft away. With `then`,
 //               and `reads` (1 if left out), the screen moves on by itself:
 //               `screen` answers the next `reads` reads of that tab, and
 //               `then` every read after them, until a send moves it on again.
@@ -663,7 +672,7 @@ if (command === 'project setup-delete') {
  * a test gave it, which only `terminal read` shows, and what a send into it is
  * seen to do, which only `terminal send` answers.
  */
-const asReported = ({ typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, nextScreens: _nextScreens, tuiIdle: _tuiIdle, thenScreen: _thenScreen, readsBeforeThen: _readsBeforeThen, submit: _submit, refuseClose: _refuseClose, ...rest }) => (rest.orphaned === true
+const asReported = ({ typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, nextScreens: _nextScreens, tuiIdle: _tuiIdle, thenScreen: _thenScreen, readsBeforeThen: _readsBeforeThen, submit: _submit, refuseClose: _refuseClose, draft: _draft, ...rest }) => (rest.orphaned === true
   ? { ...rest, ...identity(), tabId: `pty:${rest.ptyId}`, leafId: `pty:${rest.ptyId}`, orphaned: true }
   : { ...rest, ...identity(), orphaned: false });
 
@@ -796,7 +805,7 @@ if (command === 'terminal close') {
 if (command === 'terminal show') {
   const terminal = (state.terminals ?? []).find((entry) => entry.handle === flag('--terminal'));
   if (!terminal) fail('terminal_not_found', `no terminal with handle ${flag('--terminal')}`);
-  const { typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, nextScreens: _nextScreens, tuiIdle: _tuiIdle, thenScreen: _thenScreen, readsBeforeThen: _readsBeforeThen, submit: _submit, refuseClose: _refuseClose, ...rest } = terminal;
+  const { typed: _typed, notices: _notices, closingFor: _closingFor, foreground: _foreground, screen: _screen, screenSource: _screenSource, screenAfterSend: _screenAfterSend, nextScreens: _nextScreens, tuiIdle: _tuiIdle, thenScreen: _thenScreen, readsBeforeThen: _readsBeforeThen, submit: _submit, refuseClose: _refuseClose, draft: _draft, ...rest } = terminal;
   ok({ terminal: { ...rest, ...identity(), orphaned: terminal.orphaned === true } });
 }
 
@@ -833,6 +842,7 @@ if (command === 'terminal read') {
       latestCursor: String(tail.length),
       returnedLineCount: tail.length,
       source,
+      ...(terminal.draft === undefined ? {} : { draft: terminal.draft }),
     },
   });
 }
@@ -919,10 +929,12 @@ if (command === 'terminal send') {
     const next = terminal.nextScreens.shift();
     delete terminal.thenScreen;
     delete terminal.readsBeforeThen;
+    delete terminal.draft;
     if (Array.isArray(next)) {
       terminal.screen = next;
     } else {
       terminal.screen = next.screen;
+      if (next.draft !== undefined) terminal.draft = next.draft;
       if (next.tuiIdle === undefined) delete terminal.tuiIdle;
       else terminal.tuiIdle = next.tuiIdle;
       if (next.then !== undefined) {
