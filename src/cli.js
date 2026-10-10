@@ -25,7 +25,7 @@ import { pauseSessions, unpauseSessions } from './pause.js';
 import { recordSession, SHELL_ENV, TAB_ENV } from './record.js';
 import { restartSessions } from './restart.js';
 import { clearSession, compactSession } from './clear.js';
-import { retireBot, retireSession } from './retire.js';
+import { retireBot, retireSession, unreadWords } from './retire.js';
 import { sentWarning } from './sent.js';
 import { readRoster } from './roster.js';
 import { buildAgents, buildRules, CODEX_CAP } from './rules.js';
@@ -1350,16 +1350,8 @@ const withLines = (retiredWith, session) => retiredWith.flatMap((gone) => [
   ...leftLines(gone.promptsLeft),
 ]);
 
-/**
- * The mail a retired session did not read, as far as the kit knows (#509): the
- * kit cannot see a read made with Orca's own check, so it says only this.
- */
-const unreadLines = (unread, who = 'it') => (unread === undefined ? [] : [
-  `unread     ${unread.count} ${unread.count === 1 ? 'message' : 'messages'} sent to ${who} ${unread.count === 1 ? 'was' : 'were'} not read with obk message check, from ${andList(unread.from)}.`,
-]);
-
-/** `a`, `a and b`, `a, b and c`. */
-const andList = (items) => (items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
+/** The mail a retired session did not read, as far as the kit knows (#509). */
+const unreadLines = (unread, who = 'it') => (unread === undefined ? [] : [`unread     ${unreadWords(unread, who)}`]);
 
 /** What a retire could not remove, and how to: nothing reads these files now (#393). */
 const leftLines = (left = []) => left.flatMap(({ file, reason }) => [

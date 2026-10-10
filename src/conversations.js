@@ -183,7 +183,7 @@ export function recordMark(harness, home, id) {
  * seeing it.
  */
 export function userTurnSince(mark, text) {
-  if (mark === undefined) return false;
+  if (mark === undefined || mark === null) return false;
   let held = false;
   try {
     eachLine(mark.file, (line) => {

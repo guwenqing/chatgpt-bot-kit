@@ -13,10 +13,12 @@
 // it, and loses no mail: the message still waits in the mailbox.
 //
 // One file for each message, `<session folder>/<message id>.json`, so senders
-// writing at once never write the same file; and a `<message id>.told` beside
-// it once the session's hook told it, so it is told once.
+// writing at once never write the same file; a `<message id>.told` beside it
+// once the session's hook told it, so it is told once; and a `<message
+// id>.read` once `obk message check` read it, so a send whose answer came back
+// after that read does not leave an entry for read mail (#509 review).
 
-import { mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -34,6 +36,9 @@ function sessionDir(home, session) {
   return path.join(unreadRoot(), encodeURIComponent(real), encodeURIComponent(session));
 }
 
+/** How long a read mark is kept for a send still waiting on Orca's answer. */
+const READ_MARK_MS = 60 * 60 * 1000;
+
 /** A message id as a file name: Orca's ids are plain, and anything else is made plain. */
 const fileOf = (id) => encodeURIComponent(String(id));
 
@@ -50,6 +55,14 @@ export function noteUnread(home, session, { id, from, subject, at }) {
     // Written aside, then put in place whole: a reader never takes half a file.
     writeFileSync(`${file}.${process.pid}.writing`, `${JSON.stringify({ id, from, subject, at })}\n`, { mode: 0o600 });
     renameSync(`${file}.${process.pid}.writing`, file);
+    // Read already, while the send waited for Orca's answer: the entry is
+    // written first and taken out here, and a check writes its mark before it
+    // takes an entry out, so in either order no entry is left.
+    const read = path.join(dir, `${fileOf(id)}.read`);
+    if (existsSync(read)) {
+      rmSync(file, { force: true });
+      rmSync(read, { force: true });
+    }
   } catch {
     // Nothing: the hint is lost, the mail is not.
   }
@@ -94,10 +107,27 @@ export function markTold(home, session, ids) {
   for (const id of ids) writeFileSync(path.join(dir, `${fileOf(id)}.told`), '', { mode: 0o600 });
 }
 
-/** Take these messages out: they were read. Quiet whatever happens. */
+/**
+ * Take these messages out: they were read. Each gets a read mark first, for a
+ * send still waiting on Orca's answer (see `noteUnread`); marks older than an
+ * hour are cleared here, since no send waits that long. Quiet whatever happens.
+ */
 export function forgetUnread(home, session, ids) {
   const dir = sessionDir(home, session);
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    for (const name of readdirSync(dir).filter((one) => one.endsWith('.read'))) {
+      if (Date.now() - statSync(path.join(dir, name)).mtimeMs > READ_MARK_MS) rmSync(path.join(dir, name), { force: true });
+    }
+  } catch {
+    // Nothing: a mark that stays is a few bytes in the temp folder.
+  }
   for (const id of ids) {
+    try {
+      writeFileSync(path.join(dir, `${fileOf(id)}.read`), '', { mode: 0o600 });
+    } catch {
+      // Nothing: the entry is still taken out below.
+    }
     for (const end of ['.json', '.told']) {
       try {
         rmSync(path.join(dir, `${fileOf(id)}${end}`), { force: true });

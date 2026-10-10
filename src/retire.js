@@ -90,8 +90,21 @@ function goneBefore(session, retiredWith) {
   const names = retiredWith.map((gone) => `${gone.bot}/${gone.session}, a temporary session of ${gone.maker}'s`);
   const left = retiredWith.flatMap((gone) => gone.promptsLeft ?? [])
     .map(({ file, reason }) => ` ${file} could not be removed (${reason}), and nothing reads it. Remove it with  rm ${shellWord(file)}`);
-  return `Retired along with ${session} before that, and still retired: ${names.join('; ')}.${left.join('')}`;
+  // Their hint of unread mail went with them, so this is the only place it is
+  // said (#509 review).
+  const unread = retiredWith.flatMap((gone) => (gone.unread === undefined ? [] : [` ${unreadWords(gone.unread, `${gone.bot}/${gone.session}`)}`]));
+  return `Retired along with ${session} before that, and still retired: ${names.join('; ')}.${unread.join('')}${left.join('')}`;
 }
+
+/**
+ * The mail a retired session did not read, as far as the kit knows (#509): the
+ * kit cannot see a read made with Orca's own check, so it says only this.
+ */
+export const unreadWords = (unread, who) =>
+  `${unread.count} ${unread.count === 1 ? 'message' : 'messages'} sent to ${who} ${unread.count === 1 ? 'was' : 'were'} not read with obk message check, from ${andList(unread.from)}.`;
+
+/** `a`, `a and b`, `a, b and c`. */
+const andList = (items) => (items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
 
 /**
  * Retire the bot `bot`. Returns `{ bot, closed, project, windowReloaded, moved }`:

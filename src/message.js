@@ -490,13 +490,13 @@ async function nudge(to, from, subject, tab, mark = recordMark(to.harness, to.ho
   if (to.tab === undefined) return { nudged: false };
   const notice = `orchestration check --run ${to.mailbox}`;
 
-  const first = atTheGate(to, from, subject, tab, (found) => (found.idle ? { watch: found.handle } : { busy: true }));
+  const first = atTheGate(to, from, subject, tab, mark, (found) => (found.idle ? { watch: found.handle } : { busy: true }));
   if (first.busy) {
     // Busy at the first look may be Orca's notice, typed the moment the mail
     // was in: an idle Codex took it as a turn before the kit looked, live.
     if (await noticeShows(mark, notice)) return { nudged: false, signal: 'orca' };
     if (to.harness === 'claude') return { nudged: false, signal: 'hook', because: 'busy' };
-    return atTheGate(to, from, subject, tab, (found) => (userTurnSince(mark, notice)
+    return atTheGate(to, from, subject, tab, mark, (found) => (userTurnSince(mark, notice)
       ? { nudged: false, signal: 'orca' }
       : line(found.handle, to, from, subject, 'busy')));
   }
@@ -507,7 +507,7 @@ async function nudge(to, from, subject, tab, mark = recordMark(to.harness, to.ho
   if (watched.notice) return { nudged: false, signal: 'orca', watchedMs };
   if (watched.turn && to.harness === 'claude') return { nudged: false, signal: 'hook', because: 'other-turn', watchedMs };
 
-  const last = atTheGate(to, from, subject, tab, (found) => {
+  const last = atTheGate(to, from, subject, tab, mark, (found) => {
     // What came while the gate looked, said as it was.
     if (userTurnSince(mark, notice)) return { nudged: false, signal: 'orca' };
     const because = watched.turn || !found.idle ? 'other-turn' : 'no-turn';
@@ -574,7 +574,7 @@ async function watch(handle, mark, notice) {
  * holding its turn for a line, and answer what `then` makes of a tab that
  * passed; a tab that did not pass is answered as it was before #509.
  */
-function atTheGate(to, from, subject, tab, then) {
+function atTheGate(to, from, subject, tab, mark, then) {
   // A line typed while the kit types a command one key at a time would land
   // in it and send it with its own return (#480): so the receiver's turn for
   // a line first, for a bounded time, and the mail waits in its mailbox if not.
@@ -591,7 +591,7 @@ function atTheGate(to, from, subject, tab, then) {
     const found = lookAt(to);
     if (found.blocked !== undefined) return { nudged: false, blocked: found.blocked };
     // A line that lands in a shell is run there, with the sender's subject in it.
-    if (found.unsure !== undefined) return { nudged: false, nudgeTrouble: found.unsure, ...(found.psUnread ? leftForHook(to, from, subject, tab) : {}) };
+    if (found.unsure !== undefined) return { nudged: false, nudgeTrouble: found.unsure, ...(found.psUnread ? leftForHook(to, from, subject, tab, mark) : {}) };
     if (found.handle === undefined) return { nudged: false };
     return then(found);
   } catch (error) {
@@ -638,12 +638,15 @@ function line(handle, to, from, subject, because) {
  * the receiver's tab: anywhere else no hook would see it, or would see no more
  * than the send did.
  */
-function leftForHook(to, from, subject, tab) {
+function leftForHook(to, from, subject, tab, mark) {
   if (tab === undefined || from.tab !== tab || from.harness !== 'codex') return {};
   try {
     const dir = leftDir(tab);
     mkdirSync(dir, { recursive: true });
-    const left = { bots: to.bots, to: `${to.bot}/${to.session}`, from: `${from.bot}/${from.session}`, subject };
+    // The receiver's record as it stood before the post, so the hook reads
+    // what came after the post and not after itself (#509 review): Orca's
+    // notice can land before the hook runs. None stays none.
+    const left = { bots: to.bots, to: `${to.bot}/${to.session}`, from: `${from.bot}/${from.session}`, subject, mark: mark ?? null };
     // Written under a name the hook does not take, then put in place whole: a
     // hook running beside this send never takes a file still being written.
     const name = path.join(dir, `${stamp()}.${process.pid}`);
@@ -694,7 +697,7 @@ export async function decideLeftNudges(tab) {
     try {
       const to = findSession(left.bots, left.to);
       const from = findSession(left.bots, left.from);
-      decided.push({ to: left.to, subject: left.subject, ...(await nudge(to, from, left.subject)) });
+      decided.push({ to: left.to, subject: left.subject, ...(await nudge(to, from, left.subject, undefined, left.mark ?? null)) });
     } catch (error) {
       decided.push({ to: left.to, subject: left.subject, nudged: false, nudgeTrouble: error.message });
     }
@@ -720,6 +723,10 @@ export function stillUnread(bots, bot, said, tab, handle) {
   if (tab === undefined || handle === undefined) return undefined;
   const who = sessionInTab(bots, tab);
   if (who === undefined || who.bot !== bot || who.mailbox === undefined) return undefined;
+  // Only the conversation the book holds for this tab: a harness started
+  // inside the session runs the same hook in the same tab, and would take the
+  // session's one telling (#509 review), as the naming hook guards (#480).
+  if (typeof said.session_id !== 'string' || said.session_id !== who.conversation) return undefined;
   const untold = unreadOf(who.home, who.session).filter((entry) => !entry.told);
   if (untold.length === 0) return undefined;
 
