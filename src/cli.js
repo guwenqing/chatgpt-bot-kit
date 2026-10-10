@@ -584,14 +584,16 @@ async function nudgeLeft() {
 
 /**
  * What the kit's Claude Code Stop hook does at a turn end (#509, ADR 0035): tell
- * the session once about fleet mail still unread, as a block with its reason,
- * which the session goes on with. Nothing typed into the tab; never anything
+ * the session once about fleet mail still unread, as the Stop event's
+ * additional context, which the session goes on with. Not a block: Claude Code
+ * 2.1.296 draws a block's reason in red as "Stop hook error", and its additional
+ * context as "Stop hook feedback". Nothing typed into the tab; never anything
  * but exit 0; silent whenever it cannot be sure.
  */
 function mailHook(bots, bot) {
   try {
     const reason = stillUnread(sameFleet(bots), bot, JSON.parse(readFileSync(0, 'utf8')), process.env[TAB_ENV], process.env[TERMINAL_ENV]);
-    if (reason !== undefined) process.stdout.write(`${JSON.stringify({ decision: 'block', reason })}\n`);
+    if (reason !== undefined) process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: 'Stop', additionalContext: reason } })}\n`);
   } catch {
     // Nothing: a hook does not disturb the session it runs in.
   }
