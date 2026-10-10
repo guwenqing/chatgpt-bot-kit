@@ -223,6 +223,54 @@ export const CODEX_NEW_MENU = [
 ];
 
 /**
+ * Codex 0.162.0's `/new` question, put up after one turn, the echo of that
+ * turn above it: its first choice is renamed "Use current Git worktree". A
+ * capture from a probe for #516 (2026-10-10, Orca 1.4.223), the key
+ * "/new entered +1500ms" of its captures2.json, a read with no draft; the read
+ * at +3000ms gave the same rows. The probe's folder,
+ * /private/tmp/obk-probe-516b.EK7BP1, is put back to
+ * `<tmp>/obk-probe-516b.EK7BP1`, and nothing else changed.
+ */
+export const CODEX_162_NEW_MENU = [
+  '  >_ OpenAI Codex (v0.162.0)',
+  '     <tmp>/obk-probe-516b.EK7BP1',
+  '› Reply with the single word ok, and do nothing else.',
+  '• ok',
+  '  Worked for 3s • 4:24 AM',
+  '  Where should the new conversation run?',
+  '› 1. Use current Git worktree  Keep using the current working directory',
+  '  2. Create new Git worktree   Create a separate checkout of this repository in another directory',
+  '  enter select · esc back',
+];
+
+/**
+ * CODEX_162_NEW_MENU with its selection moved down to `2. Create new Git
+ * worktree`. A reconstruction: only the pointer moved.
+ */
+export const CODEX_162_NEW_MENU_ON_TWO = CODEX_162_NEW_MENU.map((row) => {
+  if (row.startsWith('› 1. Use current Git worktree')) return `  ${row.slice(2)}`;
+  if (row.startsWith('  2. Create new Git worktree')) return `› ${row.slice(2)}`;
+  return row;
+});
+
+/**
+ * CODEX_162_NEW_MENU with the selected row's choice as captured and another
+ * description after it. A reconstruction made up to test the rule: no such
+ * row was seen, and its words are made up.
+ */
+export const CODEX_162_NEW_MENU_OTHER_WORDS = CODEX_162_NEW_MENU.map((row) => (
+  row.startsWith('› 1. Use current Git worktree') ? '› 1. Use current Git worktree  Move the working directory into a new checkout' : row
+));
+
+/**
+ * CODEX_162_NEW_MENU with the selected row's choice as captured and no
+ * description after it. A reconstruction made up to test the rule.
+ */
+export const CODEX_162_NEW_MENU_NO_WORDS = CODEX_162_NEW_MENU.map((row) => (
+  row.startsWith('› 1. Use current Git worktree') ? '› 1. Use current Git worktree' : row
+));
+
+/**
  * Codex 0.157.1's folder-trust question, its selection on the first choice: a
  * capture, from an orphaned tab, read with `source: "screen"`. Orca named a
  * reason for this one, `agent-trust-workspace`; a test that puts it in front

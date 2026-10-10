@@ -151,6 +151,10 @@ import {
   CODEX_162_DRAFT,
   CODEX_162_DRAFT_COMPACT,
   CODEX_162_IDLE,
+  CODEX_162_NEW_MENU,
+  CODEX_162_NEW_MENU_NO_WORDS,
+  CODEX_162_NEW_MENU_ON_TWO,
+  CODEX_162_NEW_MENU_OTHER_WORDS,
   CODEX_162_NEW_NO_MENU,
   CODEX_162_NEW_OTHER_DRAFT,
   CODEX_162_NEW_OTHER_SELECTED,
@@ -1587,6 +1591,78 @@ describe('#516: Codex refusals once the command is typed, side by side', { concu
       assert.deepEqual(await sendsInto(box, bots), [...typed(command), { text: backspaces(command), enter: false }], 'the command a character a send, then exactly those taken back in one send, and no return');
       assert.deepEqual(await sessionIn(bots, BOT, 'daily'), book, 'the book is as it was');
       if (shows !== undefined) assert.ok(said.includes(shows), `the refusal shows the draft the line held, ${shows}, got:\n${said}`);
+    });
+  }
+});
+
+// Codex 0.162.0's "Where should the new conversation run?" (#516, the second
+// live run). Codex 0.162.0 renamed its first choice "1. Use current Git
+// worktree" (helpers/screens.js CODEX_162_NEW_MENU, a capture). The
+// architect's ruling, as these tests hold it:
+//
+//   - With the selection on exactly that row, "› 1. Use current Git worktree
+//     Keep using the current working directory", the whole row, the kit
+//     answers it as it answers "1. Current checkout": one `\r`. Then the clear
+//     goes on as before: the ruled line, and the new conversation in the book.
+//   - The kit never chooses "Create new Git worktree". With the selection on
+//     it, or on a row that only looks like row 1 (another description, or
+//     none), it sends Esc, refuses, and types nothing more.
+//   - The 0.160.0 question with "1. Current checkout" is answered as before:
+//     the tests further up.
+//
+// The clear up to the question is the 0.162.0 live read of `/new` with its
+// draft, which the tests above enter.
+
+test('#516: clear on Codex 0.162.0 whose question has its selection on "1. Use current Git worktree", the live capture: one return takes it, then the ruled line, and the new conversation is the answer', async (t) => {
+  const box = await createSandbox(t);
+  const bots = await running(box, { harness: 'codex', cliVersion: '0.162.0' });
+  await changeTab(box, (await liveTab(box, bots)).tabId, {
+    screen: CODEX_162_IDLE,
+    nextScreens: [...whileTypingCodex162('/new'), CODEX_162_NEW_READ, CODEX_162_NEW_MENU, CODEX_162_IDLE],
+  });
+
+  const { result, played } = await runPlaying(box, bots, 'clear', {
+    when: CODEX_ENTERED.clear.when,
+    then: () => CODEX_ENTERED.clear.then(box, bots),
+  });
+
+  const answer = answered(result, 'the clear');
+  assert.ok(played, 'the premise: the line was typed and the hook reported the new conversation');
+  assert.deepEqual(await sendsInto(box, bots), [
+    ...typed('/new'),
+    { text: '\r', enter: false },
+    { text: '\r', enter: false },
+    { text: RECORD_LINE, enter: true },
+  ], '/new as text, its return, the return that takes "Use current Git worktree", and the ruled line, once, with a return');
+  assert.deepEqual(answer.cleared, CODEX_ENTERED.clear.answer);
+  assert.equal((await sessionIn(bots, BOT, 'daily')).session, 'sess-new', 'the book holds the new conversation');
+});
+
+// Side by side, since a kit that wrongly answers one of these goes on to its
+// ruled line and waits out its 30 s for the book.
+describe('#516: Codex 0.162.0\'s question with its selection anywhere but on "1. Use current Git worktree" as captured, side by side', { concurrency: true }, () => {
+  for (const { menu, what } of [
+    { menu: CODEX_162_NEW_MENU_ON_TWO, what: 'on "2. Create new Git worktree" (reconstruction: the pointer moved)' },
+    { menu: CODEX_162_NEW_MENU_OTHER_WORDS, what: 'on "1. Use current Git worktree" with another description (reconstruction, made-up words)' },
+    { menu: CODEX_162_NEW_MENU_NO_WORDS, what: 'on "1. Use current Git worktree" with no description (reconstruction)' },
+  ]) {
+    it(`#516: clear on Codex 0.162.0 with the selection ${what}: Esc, a refusal, and never a 2, a return or the line`, async (t) => {
+      const box = await createSandbox(t);
+      const bots = await running(box, { harness: 'codex', cliVersion: '0.162.0' });
+      await changeTab(box, (await liveTab(box, bots)).tabId, {
+        screen: CODEX_162_IDLE,
+        nextScreens: [...whileTypingCodex162('/new'), CODEX_162_NEW_READ, menu, CODEX_162_IDLE],
+      });
+      const book = await sessionIn(bots, BOT, 'daily');
+
+      assertRefused(await sessionCommand(box, 'clear'));
+
+      assert.deepEqual(await sendsInto(box, bots), [
+        ...typed('/new'),
+        { text: '\r', enter: false },
+        { text: '\x1b', enter: false },
+      ], 'the question is backed out of with Esc, and nothing picks a worktree');
+      assert.deepEqual(await sessionIn(bots, BOT, 'daily'), book, 'the book is as it was');
     });
   }
 });

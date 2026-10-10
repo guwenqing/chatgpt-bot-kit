@@ -282,6 +282,13 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
     warnings". Seen in one probe on 2026-10-10 (#516), in a throwaway tab, launched with the folder's
     trust and without `--dangerously-bypass-hook-trust`. So the kit reads `draft` on Codex as on
     Claude Code, and takes a bare line only with no `draft` on 0.160.0. **verified** (live, once)
+  - Codex 0.162.0 renamed the first answer to "Where should the new conversation run?" after `/new`:
+    `› 1. Use current Git worktree  Keep using the current working directory`, then `  2. Create new
+    Git worktree   Create a separate checkout of this repository in another directory` and `  enter
+    select · esc back`, in a git-initialized folder, with no `draft`. Esc closed it, and no new
+    conversation began. 0.160.0 said `1. Current checkout`, and 0.162.0's binary holds no "Current
+    checkout". The kit answers that whole row 1, as it answers `1. Current checkout`, and never row 2.
+    Seen in a probe on 2026-10-10 (#516). **verified** (live, once)
   - At work, Codex shows `• Working (5s • esc to interrupt)` or `• Executing requested command (36s •
     esc to interrupt)`. Claude Code 2.1.288 never showed "esc to interrupt": its row is a spinner
     glyph, a word ending in `…`, then the time (`✶ Unfurling… (36s · ↓ 131 tokens)`); a finished turn's

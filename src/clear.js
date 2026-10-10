@@ -38,9 +38,13 @@ const POINTER = { claude: '❯', codex: '›' };
  */
 const RECORD_LINE = 'obk: this conversation was started by obk session clear, and this line is only so the kit can record it. Reply "ok"; nothing else is asked.';
 
-/** What Codex asks after `/new`, and the one answer the kit gives it: the bot home it runs in. */
+/**
+ * What Codex asks after `/new`, and the one answer the kit gives it: the bot
+ * home it runs in. Codex 0.162.0 calls it by another name, and its whole row
+ * has to be as captured (#516).
+ */
 const WHERE_TO_RUN = 'Where should the new conversation run?';
-const CURRENT_CHECKOUT = /^ *› +1\. Current checkout\b/;
+const CURRENT_CHECKOUT = /^ *› +1\. Current checkout\b|^ *› 1\. Use current Git worktree {2}Keep using the current working directory *$/;
 
 /** Codex's empty input line: its pointer alone, or with its placeholder. */
 const CODEX_EMPTY = ['›', '› Ask Codex to do anything'];
@@ -496,7 +500,7 @@ async function answerWhereToRun(it, handle, command) {
       const pointer = rows.findLast((row) => /^ *›/.test(row));
       if (pointer === undefined || !CURRENT_CHECKOUT.test(pointer)) {
         send(handle, '\x1b');
-        throw new Error(`${it.name}: after ${command}, Codex asked "${WHERE_TO_RUN}" with its selection on "${pointer?.trim() ?? 'nothing'}" rather than "1. Current checkout", so it was backed out of with Esc and nothing else was typed. Look at its tab.`);
+        throw new Error(`${it.name}: after ${command}, Codex asked "${WHERE_TO_RUN}" with its selection on "${pointer?.trim() ?? 'nothing'}" rather than "1. Current checkout" (on Codex 0.162.0, "1. Use current Git worktree"), so it was backed out of with Esc and nothing else was typed. Look at its tab.`);
       }
       send(handle, '\r');
       return;
