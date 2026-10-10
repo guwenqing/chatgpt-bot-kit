@@ -383,8 +383,15 @@ async function trustAll(target, kind) {
   if (typeof launchedWith === 'string' && !SHELL_PLAIN.test(launchedWith)) {
     throw new Error(`${target.run} was launched with extra arguments written as shell text the kit does not read, and Codex takes hooks and their trust from a session's own -c flags as well, so the kit cannot tell which hooks its review covers. ${nothing}`);
   }
-  if ([launchedWith].flat().some((arg) => /hooks/i.test(String(arg)))) {
+  const words = typeof launchedWith === 'string' ? launchedWith.split(' ') : [launchedWith].flat().map(String);
+  if (words.some((word) => /hooks/i.test(word))) {
     throw new Error(`${target.run} was launched with extra arguments that mention hooks, and Codex takes hooks and their trust from a session's own -c flags as well, so the kit cannot tell which hooks its review covers. ${nothing}`);
+  }
+  // `--profile <name>` (`-p`) adds `<name>.config.toml` from Codex's home as a
+  // second user layer, and Codex reads hook trust from it too (codex-rs
+  // 0.162.0, cli/src/main.rs:1954-1962, config/src/loader/mod.rs:290-332).
+  if (words.some((word) => /profile/i.test(word) || /^-[^-]*p/.test(word))) {
+    throw new Error(`${target.run} was launched with a Codex profile, whose own config file can hold hook trust the kit does not read, so the kit cannot tell which hooks its review covers. ${nothing}`);
   }
   const { untrusted, file } = untrustedKitHooks(target.home, target.run, nothing);
   await answerScreen(target, {
