@@ -13,9 +13,10 @@
 //   2. daily is launched with the folder's trust as a launch-time override and
 //      no hooks bypass (helpers/codex-trust.js, `codexTrustArgs(bots, { hooks:
 //      false })`), so Codex shows no folder trust and does show "Hooks need
-//      review" for the kit's three hooks. Should a folder trust or any other
-//      question come up all the same, the test stops with the screen and types
-//      nothing into it.
+//      review" for the kit's three hooks. The book's entry for daily holds
+//      `launched_with`, equal to bot.yaml's extra_args for daily, as typed
+//      (#506). Should a folder trust or any other question come up all the
+//      same, the test stops with the screen and types nothing into it.
 //   3. From lead's tab, a session of another bot than Bot Father, `obk session
 //      trust-hooks` for daily is refused, names Bot Father, and leaves daily
 //      untouched: the review still up with the same rows, and no conversation
@@ -505,6 +506,11 @@ test('a long-lived session\'s first-run screens answered through the kit: Codex\
   const daily = { handle: openedFor(obkJson(['up', '--bots', bots, '--bot', CODEX_BOT]), CODEX_SESSION).terminal };
   daily.tabId = sessionIn(codexHome, CODEX_SESSION).tab;
   assert.equal(typeof daily.tabId, 'string', `the premise: the book holds daily's tab, got: ${JSON.stringify(sessionIn(codexHome, CODEX_SESSION))}`);
+  // The launch wrote what daily was launched with into the book: bot.yaml's
+  // extra_args for daily, as typed, which trust-hooks reads in step 4.
+  const dailyInBotYaml = (parse(readFileSync(path.join(codexHome, 'bot.yaml'), 'utf8'))?.sessions ?? []).find((one) => one.name === CODEX_SESSION);
+  assert.ok(Array.isArray(dailyInBotYaml?.extra_args) && dailyInBotYaml.extra_args.length > 0, `the premise: bot.yaml holds daily's extra_args, got: ${JSON.stringify(dailyInBotYaml)}`);
+  assert.deepEqual(sessionIn(codexHome, CODEX_SESSION).launched_with, dailyInBotYaml.extra_args, `the book's launched_with for daily is bot.yaml's extra_args, got: ${JSON.stringify(sessionIn(codexHome, CODEX_SESSION))}`);
 
   // ---------------------------------------------------------------------------
   // 2. daily's hooks review, and no other question.
