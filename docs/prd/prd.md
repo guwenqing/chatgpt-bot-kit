@@ -183,7 +183,7 @@ Each line is a check a developer can run. Issues turn these into acceptance test
 
 ### [PRD-16] 6.9 Messaging
 
-- Sessions and bots can talk. Same harness: native messaging when it works; across harnesses: Orca. [decided] → ADR 0035
+- Sessions and bots can talk. Same harness: native messaging when it works; across harnesses: Orca. [decided] → ADR 0030
 - Research result: Claude-to-Claude native messaging is documented and addressable by session name; Codex-to-Codex (`codex queue`) is not trustworthy yet. So: Claude↔Claude native; everything else through the Orca mailbox; retest Codex during the build. [decided rule, researched outcome]
 - A message through Orca goes as plain text up to a size limit; above the limit it must go as a file that the message refers to. One simple rule, no judgement needed. [decided]
 - Default behaviour is "good enough": queued, not interrupting; no waiting for an ack; a reply only when asked for; interrupt supported but used with caution; no over-broadcasting. [decided]
