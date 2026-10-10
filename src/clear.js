@@ -41,10 +41,10 @@ const RECORD_LINE = 'obk: this conversation was started by obk session clear, an
 /**
  * What Codex asks after `/new`, and the one answer the kit gives it: the bot
  * home it runs in. Codex 0.162.0 calls it by another name, and its whole row
- * has to be as captured (#516).
+ * has to be as captured, but for the padding before its description (#516).
  */
 const WHERE_TO_RUN = 'Where should the new conversation run?';
-const CURRENT_CHECKOUT = /^ *› +1\. Current checkout\b|^ *› 1\. Use current Git worktree {2}Keep using the current working directory *$/;
+const CURRENT_CHECKOUT = /^ *› +1\. Current checkout\b|^ *› 1\. Use current Git worktree\s+Keep using the current working directory *$/;
 
 /** Codex's empty input line: its pointer alone, or with its placeholder. */
 const CODEX_EMPTY = ['›', '› Ask Codex to do anything'];

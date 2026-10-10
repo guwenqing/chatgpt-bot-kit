@@ -254,6 +254,25 @@ export const CODEX_162_NEW_MENU_ON_TWO = CODEX_162_NEW_MENU.map((row) => {
 });
 
 /**
+ * CODEX_162_NEW_MENU with the selected row's choice and description as
+ * captured, and `spaces` spaces between them in place of the captured two:
+ * column padding, which row 2 of the capture shows as three, so it can change
+ * with the pane's width or the next Codex. A reconstruction: only the padding
+ * changed.
+ */
+const codex162NewMenuPadded = (spaces) => CODEX_162_NEW_MENU.map((row) => (
+  row.startsWith('› 1. Use current Git worktree')
+    ? `› 1. Use current Git worktree${' '.repeat(spaces)}Keep using the current working directory`
+    : row
+));
+
+/** CODEX_162_NEW_MENU with three spaces before the selected row's description. A reconstruction. */
+export const CODEX_162_NEW_MENU_PADDED_3 = codex162NewMenuPadded(3);
+
+/** CODEX_162_NEW_MENU with eight spaces before the selected row's description. A reconstruction. */
+export const CODEX_162_NEW_MENU_PADDED_8 = codex162NewMenuPadded(8);
+
+/**
  * CODEX_162_NEW_MENU with the selected row's choice as captured and another
  * description after it. A reconstruction made up to test the rule: no such
  * row was seen, and its words are made up.

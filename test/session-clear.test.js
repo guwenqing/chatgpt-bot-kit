@@ -154,6 +154,8 @@ import {
   CODEX_162_NEW_MENU,
   CODEX_162_NEW_MENU_NO_WORDS,
   CODEX_162_NEW_MENU_ON_TWO,
+  CODEX_162_NEW_MENU_PADDED_3,
+  CODEX_162_NEW_MENU_PADDED_8,
   CODEX_162_NEW_MENU_OTHER_WORDS,
   CODEX_162_NEW_NO_MENU,
   CODEX_162_NEW_OTHER_DRAFT,
@@ -1637,6 +1639,40 @@ test('#516: clear on Codex 0.162.0 whose question has its selection on "1. Use c
   assert.deepEqual(answer.cleared, CODEX_ENTERED.clear.answer);
   assert.equal((await sessionIn(bots, BOT, 'daily')).session, 'sess-new', 'the book holds the new conversation');
 });
+
+// The gap between the choice and its description is column padding: row 2 of
+// the capture has three spaces there. So other padding, with the choice and
+// the description word for word as captured, is the same row, and taken the
+// same way.
+for (const { menu, spaces } of [
+  { menu: CODEX_162_NEW_MENU_PADDED_3, spaces: 'three' },
+  { menu: CODEX_162_NEW_MENU_PADDED_8, spaces: 'eight' },
+]) {
+  test(`#516: clear on Codex 0.162.0 whose question has its selection on "1. Use current Git worktree" with ${spaces} spaces before "Keep using the current working directory" (reconstruction: only the padding changed): one return takes it, then the ruled line, and the new conversation is the answer`, async (t) => {
+    const box = await createSandbox(t);
+    const bots = await running(box, { harness: 'codex', cliVersion: '0.162.0' });
+    await changeTab(box, (await liveTab(box, bots)).tabId, {
+      screen: CODEX_162_IDLE,
+      nextScreens: [...whileTypingCodex162('/new'), CODEX_162_NEW_READ, menu, CODEX_162_IDLE],
+    });
+
+    const { result, played } = await runPlaying(box, bots, 'clear', {
+      when: CODEX_ENTERED.clear.when,
+      then: () => CODEX_ENTERED.clear.then(box, bots),
+    });
+
+    const answer = answered(result, 'the clear');
+    assert.ok(played, 'the premise: the line was typed and the hook reported the new conversation');
+    assert.deepEqual(await sendsInto(box, bots), [
+      ...typed('/new'),
+      { text: '\r', enter: false },
+      { text: '\r', enter: false },
+      { text: RECORD_LINE, enter: true },
+    ], '/new as text, its return, the return that takes "Use current Git worktree", and the ruled line, once, with a return');
+    assert.deepEqual(answer.cleared, CODEX_ENTERED.clear.answer);
+    assert.equal((await sessionIn(bots, BOT, 'daily')).session, 'sess-new', 'the book holds the new conversation');
+  });
+}
 
 // Side by side, since a kit that wrongly answers one of these goes on to its
 // ruled line and waits out its 30 s for the book.
