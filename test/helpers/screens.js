@@ -972,6 +972,17 @@ export const CLAUDE_296_COMPACT_SHOWN = TURN_COMPACT_ROWS.map((row) => (row === 
 export const CLAUDE_296_CLEAR_SHOWN = CLAUDE_296_TURN_CLEAR_TYPED.map((row) => (row === '❯' ? claudeInput('/clear') : row));
 
 /**
+ * `/compact` typed after a draft the kit could not see before its first key:
+ * CLAUDE_296_TURN_COMPACT's rows as captured, the menu's pointer on
+ * `/compact`, and the draft `x/compact`. A reconstruction: only the draft
+ * changed; no live read showed it.
+ */
+export const CLAUDE_296_COMPACT_OTHER_DRAFT = { screen: TURN_COMPACT_ROWS, draft: 'x/compact' };
+
+/** The same for `/clear`: CLAUDE_296_TURN_CLEAR_TYPED's rows as captured, the pointer on `/clear`, and the draft `x/clear`. A reconstruction. */
+export const CLAUDE_296_CLEAR_OTHER_DRAFT = { screen: CLAUDE_296_TURN_CLEAR_TYPED, draft: 'x/clear' };
+
+/**
  * The draft `/compact`, and the menu's pointer moved down onto
  * `/autocompact`: `/compact` is the first command row, not selected. A
  * reconstruction from CLAUDE_296_TURN_COMPACT: only the pointer moved.

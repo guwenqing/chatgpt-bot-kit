@@ -110,10 +110,12 @@ import {
   tabsOfBot,
 } from './helpers/cli.js';
 import {
+  CLAUDE_296_CLEAR_OTHER_DRAFT,
   CLAUDE_296_CLEAR_READ,
   CLAUDE_296_CLEAR_SHOWN,
   CLAUDE_296_COMPACT_ECHOED,
   CLAUDE_296_COMPACT_MENU_BELOW,
+  CLAUDE_296_COMPACT_OTHER_DRAFT,
   CLAUDE_296_COMPACT_READ,
   CLAUDE_296_COMPACT_SHOWN,
   CLAUDE_296_IDLE,
@@ -1282,7 +1284,7 @@ for (const verb of VERBS) {
 // exactly the characters typed are taken back in one send. Side by side,
 // since a check that wrongly lets a compact in waits out its 300 s.
 describe('#510: the refusals once the command is typed, side by side', { concurrency: true }, () => {
-  for (const { verb, command, idle = CLAUDE_296_TURN_IDLE, read, names, what } of [
+  for (const { verb, command, idle = CLAUDE_296_TURN_IDLE, read, names, shows, what } of [
     {
       verb: 'compact', command: COMPACT, read: CLAUDE_296_ON_AUTOCOMPACT, names: '/autocompact',
       what: 'the draft "/compact" and the pointer moved down onto /autocompact, /compact the first command row and not selected',
@@ -1309,6 +1311,16 @@ describe('#510: the refusals once the command is typed, side by side', { concurr
       // "hello/compact".
       verb: 'compact', command: COMPACT, read: CLAUDE_296_TURN_DRAFT_COMPACT,
       what: 'the draft "hello/compact" and no menu, the live read, the read before the first key giving no draft',
+    },
+    {
+      // The draft alone is wrong: the menu is as captured, its pointer on the
+      // command. Stands for a draft the kit could not see before its first key.
+      verb: 'compact', command: COMPACT, read: CLAUDE_296_COMPACT_OTHER_DRAFT, shows: 'x/compact',
+      what: 'the draft "x/compact" under the live read\'s menu, its pointer on /compact, the read before the first key giving no draft',
+    },
+    {
+      verb: 'clear', command: '/clear', read: CLAUDE_296_CLEAR_OTHER_DRAFT, shows: 'x/clear',
+      what: 'the draft "x/clear" under the captured menu, its pointer on /clear, the read before the first key giving no draft',
     },
     {
       verb: 'compact', command: COMPACT, read: CLAUDE_296_COMPACT_ECHOED,
@@ -1342,6 +1354,7 @@ describe('#510: the refusals once the command is typed, side by side', { concurr
 
       assert.deepEqual(await sendsInto(box, bots), [...typed(command), { text: backspaces(command), enter: false }]);
       assert.deepEqual(await sessionIn(bots, BOT, 'daily'), book, 'the book is as it was');
+      if (shows !== undefined) assert.ok(said.includes(shows), `the refusal shows the draft the line held, ${shows}, got:\n${said}`);
       if (names !== undefined) {
         assert.ok(timesIn(said, names) >= 2, `the reason names the selected row, ${names}, beside the screen rows it quotes, got:\n${said}`);
       }
