@@ -257,6 +257,41 @@ test('#508 4: a session of a paused bot whose mailbox Orca does not have is name
   assert.ok(!givesAny(finding.says, box, 'restart'), `and not a restart, got: ${finding.says}`);
 });
 
+/** Where in `says` the first of `commands` begins that `ok` accepts there, or -1. */
+function firstAt(says, commands, ok = () => true) {
+  const at = [];
+  for (const command of commands) {
+    for (let from = says.indexOf(command); from >= 0; from = says.indexOf(command, from + 1)) {
+      if (ok(says.slice(from + command.length))) at.push(from);
+    }
+  }
+  return at.length === 0 ? -1 : Math.min(...at);
+}
+
+test('#508 4: a paused session of a paused bot whose mailbox Orca does not have is named with the bot\'s unpause and then the session\'s', async (t) => {
+  // `obk unpause --bot` takes off the bot's mark only; the session's own mark
+  // stays, and it stays paused. So both unpauses are the fix, the bot's first.
+  const box = await createSandbox(t);
+  const bots = await seeded(box);
+  await botUp(box, 'api-bot', { sessions: ['daily', 'review'] });
+  await conversationsFor(bots, 'api-bot', ['daily', 'review']);
+  await obk(box, 'pause', '--bots', 'bots', '--bot', 'api-bot', '--session', 'daily');
+  await obk(box, 'pause', '--bots', 'bots', '--bot', 'api-bot');
+  const gone = await mailboxOf(bots, 'api-bot', 'daily');
+  await goneFromOrca(box, gone);
+
+  const answer = await found(box);
+
+  const { says } = assertNamedGone(answer, bots, 'api-bot', 'daily', gone);
+  const commands = commandsOf(box, bots, 'unpause', 'api-bot');
+  const theBot = firstAt(says, commands, (rest) => !rest.trimStart().startsWith('--session'));
+  const theSession = firstAt(says, commands, (rest) => /^ --session daily($|[^A-Za-z0-9_-])/.test(rest));
+  assert.ok(theBot >= 0, `the bot's unpause, ${shellWord(box.cli)} unpause --bots ${shellWord(bots)} --bot api-bot, with no --session, got: ${says}`);
+  assert.ok(theSession >= 0, `and the session's, ${shellWord(box.cli)} unpause --bots ${shellWord(bots)} --bot api-bot --session daily, got: ${says}`);
+  assert.ok(theBot < theSession, `the bot's unpause first, then the session's, got: ${says}`);
+  assert.ok(!givesAny(says, box, 'restart'), `and not a restart, got: ${says}`);
+});
+
 // ---------------------------------------------------------------------------
 // Nothing when Orca has the Run, or will not say
 // ---------------------------------------------------------------------------

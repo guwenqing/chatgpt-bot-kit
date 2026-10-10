@@ -391,10 +391,14 @@ function inOrca(bots, home, bot, setups, sessions) {
     // machine: mail sent to it is refused. The session's next start makes it
     // a new one (#508).
     if (typeof entry?.mailbox === 'string' && runMissing(entry.mailbox)) {
+      // The bot's unpause leaves a session paused on its own as it is, so a
+      // session under both marks needs both commands.
       const unpause = `${shellWord(ownCli())} unpause --bots ${shellWord(bots)} --bot ${bot.name}`;
-      const fix = bot.paused === true ? unpause
-        : closed.has(name) ? `${unpause} --session ${name}`
-          : `${shellWord(ownCli())} restart --bots ${shellWord(bots)} --bot ${bot.name} --session ${name}`;
+      const steps = [
+        ...(bot.paused === true ? [unpause] : []),
+        ...(bot.sessions.some((session) => session.name === name && session.paused === true) ? [`${unpause} --session ${name}`] : []),
+      ];
+      const fix = steps.length > 0 ? steps.join(', then ') : `${shellWord(ownCli())} restart --bots ${shellWord(bots)} --bot ${bot.name} --session ${name}`;
       found.push(finding('session', bookFile(home), `${bot.name}'s session ${name} has the mailbox ${entry.mailbox} in the book, and Orca has no Run of that id: it was made by another Orca, as on another machine, so mail sent to it is refused. The session's next start makes it a new one: ${fix}`, bot.name));
     }
 
