@@ -97,6 +97,20 @@ export const trustTablesFor = (entries) => entries
   .map(({ key, hash }) => `[hooks.state.${tomlString(key)}]\ntrusted_hash = ${tomlString(hash)}\n`)
   .join('\n');
 
+/**
+ * A TOML basic string of `text` with TOML's Unicode escapes in it: each `/` as
+ * `/` and each `:` as `\U0000003a`. Any TOML reader decodes it to `text`,
+ * so to Codex it is the same key as `tomlString(text)`.
+ */
+export const escapedTomlString = (text) => tomlString(text)
+  .replaceAll('/', '\\u002F')
+  .replaceAll(':', '\\U0000003a');
+
+/** As `trustTablesFor`, with each key written by `escapedTomlString`. */
+export const escapedTrustTablesFor = (entries) => entries
+  .map(({ key, hash }) => `[hooks.state.${escapedTomlString(key)}]\ntrusted_hash = ${tomlString(hash)}\n`)
+  .join('\n');
+
 /** Write `text` as the config.toml in Codex's folder `dir`: `<home>/.codex`, or what CODEX_HOME names. */
 export async function writeCodexConfig(dir, text) {
   await mkdir(dir, { recursive: true });

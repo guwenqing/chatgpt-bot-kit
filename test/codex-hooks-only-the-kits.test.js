@@ -20,7 +20,10 @@
 //      `trusted_hash` under it, or a kit key in any other form (an inline
 //      table, a key line under `[hooks.state]`, a dotted key under `[hooks]`),
 //      is "cannot tell". A missing config.toml is clean: nothing is trusted.
-//      Other hooks' keys in the usual form are fine and do not count.
+//      Other hooks' keys in the usual form are fine and do not count. A key
+//      written with TOML's escapes (`\u002F` for `/`) is the key it decodes
+//      to: in the usual form its trust counts, in any other form it is
+//      "cannot tell".
 //   d. It never prints any other part of config.toml, which can hold the
 //      user's secrets.
 //
@@ -40,10 +43,14 @@ import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, it as test } from 'node:test';
 
+import { parse as parseToml } from 'smol-toml';
+
 import { createSandbox, kitLaunchMark, sentInto, sessionIn } from './helpers/cli.js';
 import {
   codexHooksFileOf,
   codexHooksOf,
+  escapedTomlString,
+  escapedTrustTablesFor,
   stateKey,
   trustedHash,
   trustTablesFor,
@@ -206,6 +213,20 @@ const homeCodex = (box) => path.join(box.home, '.codex');
 /** A hash that is no hook's. */
 const WRONG_HASH = `sha256:${'0'.repeat(64)}`;
 
+/**
+ * The forms of one trust entry, `{ key, hash }`, other than the usual table,
+ * with the key written with TOML's Unicode escapes: each is trust to Codex,
+ * and none is a form the kit reads.
+ */
+const ESCAPED_OTHER_FORMS = {
+  'an inline table, hooks.state = { "<key>" = { trusted_hash = … } }':
+    ({ key, hash }) => `hooks.state = { ${escapedTomlString(key)} = { trusted_hash = ${JSON.stringify(hash)} } }\n`,
+  'a key line under a [hooks.state] table':
+    ({ key, hash }) => `[hooks.state]\n${escapedTomlString(key)} = { trusted_hash = ${JSON.stringify(hash)} }\n`,
+  'a dotted key under a [hooks] table':
+    ({ key, hash }) => `[hooks]\nstate.${escapedTomlString(key)}.trusted_hash = ${JSON.stringify(hash)}\n`,
+};
+
 /** How many of the tests below run at once: each brings up a fleet of its own in its own sandbox. */
 const AT_ONCE = { concurrency: 8 };
 
@@ -216,6 +237,21 @@ test('K0 the helper\'s hash agrees with the entry Codex wrote for a real kit hoo
     timeout: 10,
   });
   assert.equal(hash, 'sha256:2f8ef3e0ee8c9652b6838816fa5c2ea4998031c2e1378ea505b96ab31792dd77');
+});
+
+test('K0 the premise: a TOML reader reads a key written with Unicode escapes as the same key, in every form the tests write', () => {
+  const entry = {
+    key: stateKey('/private/var/folders/x/T/obk-506/bots/bots/coder/.codex/hooks.json', 'SessionStart', 0, 0),
+    hash: trustedHash({ event: 'SessionStart', command: 'obk session record', timeout: 10 }),
+  };
+  const plain = parseToml(trustTablesFor([entry]));
+  const escaped = escapedTomlString(entry.key);
+  assert.ok(escaped.includes('\\u002F') && escaped.includes('\\U0000003a'), `both kinds of escape are in it: ${escaped}`);
+  assert.ok(!escaped.includes('/') && !escaped.includes(entry.key), `the key's own text is not in it: ${escaped}`);
+
+  assert.deepEqual(parseToml(escapedTrustTablesFor([entry])), plain, 'the usual table form, escaped');
+  for (const [form, write] of Object.entries(ESCAPED_OTHER_FORMS)) assert.deepEqual(parseToml(write(entry)), plain, form);
+  assert.deepEqual(parseToml(`[hooks.state.${escaped}]\n`), parseToml(`[hooks.state.${JSON.stringify(entry.key)}]\n`), 'a header with no trusted_hash, escaped');
 });
 
 for (const [name, target] of Object.entries(TARGETS)) {
@@ -325,6 +361,13 @@ for (const [name, target] of Object.entries(TARGETS)) {
         ].join('\n'),
         answered: 3,
         refused: [2],
+      },
+      {
+        label: 'PostToolUse and Stop trusted at their right hashes, their keys written with TOML\'s Unicode escapes, which are the same keys: 1 is not trusted yet',
+        inBoth: true,
+        config: (k) => escapedTrustTablesFor([k.PostToolUse, k.Stop]),
+        answered: 1,
+        refused: [3, 2],
       },
     ]) {
       if (!sessionOnly && !inBoth) continue;
@@ -452,6 +495,18 @@ for (const [name, target] of Object.entries(TARGETS)) {
         config: (k) => `[hooks]\nstate.${JSON.stringify(k.SessionStart.key)}.trusted_hash = ${JSON.stringify(k.SessionStart.hash)}\n`,
         clean: (k) => trustTablesFor([k.SessionStart]),
         answered: 2,
+      },
+      ...Object.entries(ESCAPED_OTHER_FORMS).map(([form, write]) => ({
+        label: `the kit's SessionStart key written with TOML's Unicode escapes, in ${form}`,
+        config: (k) => write(k.SessionStart),
+        clean: (k) => trustTablesFor([k.SessionStart]),
+        answered: 2,
+      })),
+      {
+        label: 'a header for the kit\'s SessionStart key written with TOML\'s Unicode escapes, with no trusted_hash under it, another table after it',
+        config: (k) => `[hooks.state.${escapedTomlString(k.SessionStart.key)}]\n\n${trustTablesFor([k.PostToolUse, k.Stop])}`,
+        clean: (k) => trustTablesFor([k.PostToolUse, k.Stop]),
+        answered: 1,
       },
     ]) {
       if (!sessionOnly && !inBoth) continue;
