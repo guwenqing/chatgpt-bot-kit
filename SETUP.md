@@ -261,6 +261,8 @@ are its own: the bot's `.codex/hooks.json` holds only the kit's hooks, and the
 count on the screen is the number of the kit's hooks that Codex does not trust
 yet. When it refuses, it says what it saw: type nothing, and tell them what it
 said. Use the keys in the table for the screens the kit does not answer.
+The kit reads Codex's trust from the caller's `CODEX_HOME`, else `~/.codex`;
+a bot run under another `CODEX_HOME` is outside what the kit can see.
 
 **Anything you do not recognise: type nothing.** Tell them what is on the
 screen and which tab it is in, and wait. A keypress into a menu you have not read
