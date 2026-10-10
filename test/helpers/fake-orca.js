@@ -295,6 +295,10 @@
 //               puts an empty folder in its place. A record that was
 //               readable when the send took its mark and is not by the watch
 //               (R1: it counts as no notice seen).
+//               `busyFor`, with `busy: true`: the turn is over after that
+//               many more looks, and the tab answers idle again (its own
+//               `tuiIdle` taken away). Left out, it stays busy. A turn of
+//               other work that started and ended within the watch.
 //               `fired` is set once it has happened. Orca never lists it.
 //   hang        { command, ms, applied } — that command is answered as it would
 //               have been, `ms` later (a minute if left out): an Orca that is
@@ -885,6 +889,7 @@ if (command === 'terminal wait') {
   const terminal = (state.terminals ?? []).find((entry) => entry.handle === flag('--terminal'));
   if (!terminal) fail('terminal_not_found', `no terminal with handle ${flag('--terminal')}`);
   if (terminal.afterMail?.armed === true && terminal.afterMail.fired !== true) afterMailWait(terminal);
+  else if (terminal.afterMail?.fired === true && terminal.afterMail.busyLeft !== undefined) turnGoesOn(terminal);
 
   // One answer per call when a test gave a list, so a tab can hold a TUI on
   // one look and none on the next; the last entry stands for every call after.
@@ -950,6 +955,22 @@ function afterMailWait(terminal) {
     mkdirSync(spec.record.file);
   }
   if (spec.busy === true) terminal.tuiIdle = 'busy';
+  if (spec.busy === true && Number.isInteger(spec.busyFor)) spec.busyLeft = spec.busyFor;
+  save();
+}
+
+/**
+ * One more look at a tab whose `afterMail` turn has `busyFor` looks left: it is
+ * busy for those, and then idle again, its own `tuiIdle` taken away.
+ */
+function turnGoesOn(terminal) {
+  const spec = terminal.afterMail;
+  if (spec.busyLeft <= 0) {
+    delete terminal.tuiIdle;
+    delete spec.busyLeft;
+  } else {
+    spec.busyLeft -= 1;
+  }
   save();
 }
 

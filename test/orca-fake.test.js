@@ -1390,3 +1390,18 @@ test('the fake writes a Codex receiver\'s turn in a rollout\'s own shape, and wr
   assert.equal(busy.error?.code, 'timeout', 'the turn still starts');
   assert.ok(statSync(folder).isDirectory(), 'and the folder is left as it was');
 });
+
+test('the fake ends a receiver\'s turn after busyFor more looks: busy, then idle again (#509)', async (t) => {
+  const box = await createSandbox(t);
+  const { inA, outside } = await twoTabs(box);
+  const toA = inA(['orchestration', 'run-create', '--objective', 'a']).result.run.id;
+  await box.orca.set({
+    terminals: (await box.orca.terminals()).map((one) => (one.handle === 'term_a' ? { ...one, afterMail: { waits: 2, busy: true, busyFor: 1, text: null } } : one)),
+  });
+  const look = () => outside(['terminal', 'wait', '--terminal', 'term_a', '--for', 'tui-idle', '--timeout-ms', '100']);
+
+  outside(['orchestration', 'send', '--to', `run:${toA}`, '--subject', 'hello']);
+  const answers = [look(), look(), look(), look(), look()].map((one) => (one.ok ? 'idle' : one.error?.code));
+
+  assert.deepEqual(answers, ['idle', 'timeout', 'timeout', 'idle', 'idle'], 'as before, the turn at the second look, one more busy look, then idle for good');
+});

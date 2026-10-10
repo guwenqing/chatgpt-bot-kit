@@ -124,11 +124,12 @@ const busy = (box, fleet, receiver) => setTab(box, fleet.tabs[receiver.bot], { t
  * record: 'notice' for Orca's notice for its own mailbox, a string for any
  * other turn, null for none. `record` false writes nowhere.
  */
-const reacts = (box, fleet, receiver, { busy: turn = true, text = 'notice', record = true, waits = 2, spoil } = {}) => setTab(box, fleet.tabs[receiver.bot], {
+const reacts = (box, fleet, receiver, { busy: turn = true, text = 'notice', record = true, waits = 2, spoil, busyFor } = {}) => setTab(box, fleet.tabs[receiver.bot], {
   afterMail: {
     waits,
     busy: turn,
     text,
+    ...(busyFor === undefined ? {} : { busyFor }),
     ...(spoil === undefined ? {} : { spoil }),
     ...(record ? { record: { file: fleet.records[receiver.bot], harness: receiver.harness } } : {}),
   },
@@ -401,6 +402,35 @@ test('S2 an idle Codex receiver that starts a turn of other work gets the line: 
 
   assertSignal(answer, 'line', 'other-turn');
   assert.ok(answer.watchedMs < WATCH_MS, `it stopped when the turn started, got watchedMs ${answer.watchedMs}`);
+  await assertOneLine(box, fleet, RECEIVERS.codex);
+});
+
+test('S2 an idle Claude Code receiver whose turn of other work starts in the watch and is over again by the last look gets nothing typed: hook, other-turn', async (t) => {
+  // R2: a turn of other work started, so its own hook tells it at that turn's
+  // end, whatever the tab shows by the time the kit would type. The review of
+  // PR #514's hand mutation check (M6): with the tab idle again at the final
+  // look (`busyFor: 0`: the turn shows at one look only), only the watch's own
+  // finding keeps the line out.
+  const box = await createSandbox(t);
+  const fleet = await fleetIn(box);
+  await reacts(box, fleet, RECEIVERS.claude, { text: 'Run the tests again, please.', busyFor: 0 });
+
+  const answer = answerOf(await send(box, RECEIVERS.claude));
+
+  const terminal = (await box.orca.terminals()).find((one) => one.tabId === fleet.tabs.writer);
+  assert.equal(terminal.afterMail?.fired, true, `the premise: the turn started in the watch: ${JSON.stringify(answer)}`);
+  assertSignal(answer, 'hook', 'other-turn');
+  await assertNothingTyped(box);
+});
+
+test('S2 an idle Codex receiver whose turn of other work starts in the watch and is over again by the last look still gets the line: line, other-turn', async (t) => {
+  const box = await createSandbox(t);
+  const fleet = await fleetIn(box);
+  await reacts(box, fleet, RECEIVERS.codex, { text: 'Run the tests again, please.', busyFor: 0 });
+
+  const answer = answerOf(await send(box, RECEIVERS.codex));
+
+  assertSignal(answer, 'line', 'other-turn');
   await assertOneLine(box, fleet, RECEIVERS.codex);
 });
 
