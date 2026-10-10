@@ -5,7 +5,7 @@
 
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { statSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -1356,4 +1356,86 @@ test('#438 twenty callers that save at once each read the world whole and answer
     return [`caller ${n}: exit ${done.code}, stdout ${JSON.stringify(done.stdout.slice(0, 200))}, stderr ${JSON.stringify(done.stderr.slice(0, 300))}`];
   });
   assert.deepEqual(broken, [], 'every caller answered JSON, having read the world whole');
+});
+
+test('the fake plays a receiver\'s turn after its mail: at the chosen look its tab goes busy and its record gains the turn, once (#509)', async (t) => {
+  const box = await createSandbox(t);
+  const { inA, outside } = await twoTabs(box);
+  const toA = inA(['orchestration', 'run-create', '--objective', 'a']).result.run.id;
+  const claude = path.join(box.home, 'claude.jsonl');
+  const codex = path.join(box.home, 'codex.jsonl');
+  writeFileSync(claude, '{"type":"system"}\n');
+  writeFileSync(codex, '{"type":"session_meta"}\n');
+  const terminals = await box.orca.terminals();
+  await box.orca.set({
+    terminals: terminals.map((one) => (one.handle === 'term_a'
+      ? { ...one, afterMail: { waits: 2, busy: true, record: { file: claude, harness: 'claude' } } }
+      : { ...one, afterMail: { waits: 1, busy: false, text: 'Other work.', record: { file: codex, harness: 'codex' } } })),
+  });
+  const wait = (handle) => outside(['terminal', 'wait', '--terminal', handle, '--for', 'tui-idle', '--timeout-ms', '100']);
+
+  assert.equal(wait('term_a').ok, true, 'before any mail, nothing happens');
+  outside(['orchestration', 'send', '--to', `run:${toA}`, '--subject', 'hello']);
+  assert.equal(wait('term_a').ok, true, 'the first look after the mail finds the tab as it was');
+  assert.equal(readFileSync(claude, 'utf8').split('\n').filter(Boolean).length, 1, 'and its record as it was');
+  assert.equal(wait('term_a').error?.code, 'timeout', 'the second finds a turn under way');
+  assert.equal(wait('term_a').error?.code, 'timeout', 'and so does every one after it');
+  const lines = readFileSync(claude, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+  assert.equal(lines.length, 2, `one turn written, once: ${JSON.stringify(lines)}`);
+  assert.equal(lines[1].type, 'user');
+  assert.equal(lines[1].message.content, `You have 1 orchestration message. Run \`orca orchestration check --run ${toA}\``, 'Orca\'s notice, as it typed it into the tab');
+  assert.ok(Date.now() - Date.parse(lines[1].timestamp) < 60_000, `stamped when written: ${lines[1].timestamp}`);
+
+  // term_b coordinates no Run that got mail, so it is never armed.
+  assert.equal(wait('term_b').ok, true);
+  assert.equal(readFileSync(codex, 'utf8').split('\n').filter(Boolean).length, 1, 'no mail to term_b, so nothing in its record');
+  assert.equal(JSON.stringify(answer(ask(box, ['terminal', 'list', '--json'])).result.terminals).includes('afterMail'), false, 'Orca never lists it');
+});
+
+test('the fake writes a Codex receiver\'s turn in a rollout\'s own shape, and writes nothing where a folder stands in the record\'s place (#509)', async (t) => {
+  const box = await createSandbox(t);
+  const { inA, outside } = await twoTabs(box);
+  const toA = inA(['orchestration', 'run-create', '--objective', 'a']).result.run.id;
+  const codex = path.join(box.home, 'codex.jsonl');
+  writeFileSync(codex, '{"type":"session_meta"}\n');
+  await box.orca.set({
+    terminals: (await box.orca.terminals()).map((one) => (one.handle === 'term_a'
+      ? { ...one, afterMail: { waits: 1, text: 'Other work.', record: { file: codex, harness: 'codex' } } }
+      : one)),
+  });
+
+  outside(['orchestration', 'send', '--to', `run:${toA}`, '--subject', 'hello']);
+  const look = outside(['terminal', 'wait', '--terminal', 'term_a', '--for', 'tui-idle', '--timeout-ms', '100']);
+
+  assert.equal(look.ok, true, 'busy left out: the tab answers as before');
+  const [, turn] = readFileSync(codex, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+  assert.deepEqual(turn.payload, { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Other work.' }] });
+  assert.equal(turn.type, 'response_item');
+
+  const folder = path.join(box.home, 'a-folder.jsonl');
+  mkdirSync(folder);
+  await box.orca.set({
+    terminals: (await box.orca.terminals()).map((one) => (one.handle === 'term_a'
+      ? { ...one, afterMail: { waits: 1, busy: true, record: { file: folder, harness: 'claude' } } }
+      : one)),
+  });
+  outside(['orchestration', 'send', '--to', `run:${toA}`, '--subject', 'again']);
+  const busy = outside(['terminal', 'wait', '--terminal', 'term_a', '--for', 'tui-idle', '--timeout-ms', '100']);
+  assert.equal(busy.error?.code, 'timeout', 'the turn still starts');
+  assert.ok(statSync(folder).isDirectory(), 'and the folder is left as it was');
+});
+
+test('the fake ends a receiver\'s turn after busyFor more looks: busy, then idle again (#509)', async (t) => {
+  const box = await createSandbox(t);
+  const { inA, outside } = await twoTabs(box);
+  const toA = inA(['orchestration', 'run-create', '--objective', 'a']).result.run.id;
+  await box.orca.set({
+    terminals: (await box.orca.terminals()).map((one) => (one.handle === 'term_a' ? { ...one, afterMail: { waits: 2, busy: true, busyFor: 1, text: null } } : one)),
+  });
+  const look = () => outside(['terminal', 'wait', '--terminal', 'term_a', '--for', 'tui-idle', '--timeout-ms', '100']);
+
+  outside(['orchestration', 'send', '--to', `run:${toA}`, '--subject', 'hello']);
+  const answers = [look(), look(), look(), look(), look()].map((one) => (one.ok ? 'idle' : one.error?.code));
+
+  assert.deepEqual(answers, ['idle', 'timeout', 'timeout', 'idle', 'idle'], 'as before, the turn at the second look, one more busy look, then idle for good');
 });

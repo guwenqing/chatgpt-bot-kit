@@ -100,9 +100,11 @@ test('a look refused as a stale handle is tried once more after a fresh listing,
   assert.equal((await box.orca.messages()).length, 1, 'the message is in the mailbox');
 
   const calls = await callsSince(box, before);
+  // Since #509 an idle tab is watched for up to 8 s after the gate's look, and
+  // the watch looks again; the gate's own looks are the first two.
   const waits = calls.flatMap((call, at) => (orcaCommand(call) === 'terminal wait' ? [at] : []));
-  assert.equal(waits.length, 2, `two looks, got: ${JSON.stringify(calls.map((call) => call.args))}`);
-  assert.deepEqual(waits.map((at) => orcaFlag(calls[at], '--terminal')), [reader.handle, reader.handle], 'both at the receiver\'s tab');
+  assert.ok(waits.length >= 2, `two looks, got: ${JSON.stringify(calls.map((call) => call.args))}`);
+  assert.deepEqual(waits.map((at) => orcaFlag(calls[at], '--terminal')), waits.map(() => reader.handle), 'all at the receiver\'s tab');
   assert.ok(
     calls.slice(waits[0] + 1, waits[1]).some((call) => orcaCommand(call) === 'terminal list'),
     `the tab is listed afresh between the refused look and the next, got: ${JSON.stringify(calls.map((call) => call.args))}`,
@@ -132,11 +134,14 @@ test('the second look is made with the handle the fresh listing gives, and so is
 
   assert.equal(answer.nudged, true, `the tab should have been told, got: ${JSON.stringify(answer)}`);
   const calls = await callsSince(box, before);
+  // Since #509 the watch after the gate looks again, by the fresh handle too.
+  const looks = orcaCallsOf(calls, 'terminal wait').map((call) => orcaFlag(call, '--terminal'));
   assert.deepEqual(
-    orcaCallsOf(calls, 'terminal wait').map((call) => orcaFlag(call, '--terminal')),
-    [reader.handle, 'term_90'],
-    'the first look with the handle first listed, the second with the one listed after the refusal',
+    looks,
+    [reader.handle, ...looks.slice(1).map(() => 'term_90')],
+    'the first look with the handle first listed, every one after it with the one listed after the refusal',
   );
+  assert.ok(looks.length >= 2, `the refused look and one more, got: ${JSON.stringify(looks)}`);
   assert.deepEqual(
     orcaCallsOf(calls, 'terminal send').map((call) => orcaFlag(call, '--terminal')),
     ['term_90'],
@@ -231,9 +236,10 @@ test('a show refused as a stale handle after a good wait is tried once more afte
   assert.equal((await box.orca.messages()).length, 1, 'the message is in the mailbox');
 
   const calls = await callsSince(box, before);
+  // Since #509 the watch after the gate may look again; the gate's own are the first two.
   const shows = calls.flatMap((call, at) => (orcaCommand(call) === 'terminal show' ? [at] : []));
-  assert.equal(shows.length, 2, `the refused show and one more, got: ${JSON.stringify(calls.map((call) => call.args))}`);
-  assert.deepEqual(shows.map((at) => orcaFlag(calls[at], '--terminal')), [reader.handle, reader.handle], 'both at the receiver\'s tab');
+  assert.ok(shows.length >= 2, `the refused show and one more, got: ${JSON.stringify(calls.map((call) => call.args))}`);
+  assert.deepEqual(shows.map((at) => orcaFlag(calls[at], '--terminal')), shows.map(() => reader.handle), 'all at the receiver\'s tab');
   assert.ok(
     calls.slice(shows[0] + 1, shows[1]).some((call) => orcaCommand(call) === 'terminal list'),
     `the tab is listed afresh between the refused show and the next look, got: ${JSON.stringify(calls.map((call) => call.args))}`,
@@ -260,11 +266,14 @@ test('after a stale show, the next look is made with the handle the fresh listin
 
   assert.equal(answer.nudged, true, `the tab should have been told, got: ${JSON.stringify(answer)}`);
   const calls = await callsSince(box, before);
+  // Since #509 the watch after the gate may show the tab again, by the fresh handle too.
+  const shown = orcaCallsOf(calls, 'terminal show').map((call) => orcaFlag(call, '--terminal'));
   assert.deepEqual(
-    orcaCallsOf(calls, 'terminal show').map((call) => orcaFlag(call, '--terminal')),
-    [reader.handle, 'term_90'],
-    'the first show with the handle first listed, the second with the one listed after the refusal',
+    shown,
+    [reader.handle, ...shown.slice(1).map(() => 'term_90')],
+    'the first show with the handle first listed, every one after it with the one listed after the refusal',
   );
+  assert.ok(shown.length >= 2, `the refused show and one more, got: ${JSON.stringify(shown)}`);
   assert.deepEqual(
     orcaCallsOf(calls, 'terminal send').map((call) => orcaFlag(call, '--terminal')),
     ['term_90'],
