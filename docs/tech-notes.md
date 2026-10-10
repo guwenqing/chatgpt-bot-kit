@@ -273,6 +273,22 @@ project → repo (`kind: "git" | "folder"`) → worktree (id = `<repoId>::<absPa
     `/compact`, and no `draft` key when the line is empty. With `hello/compact` no menu came up.
     Seen in four probes on 2026-10-09 (#510), in a throwaway tab, before and after a turn.
     Whether the same `draft` is what made Codex 0.160.0's line bare is **not checked**.
+  - Codex 0.162.0 under Orca 1.4.223 does the same: the screen's input line reads `›` alone whenever
+    it holds text, and `draft` gives the text: `/`, `hello`, `hello/compact`, `/compact`, `/new`, the
+    same at 300, 1000 and 3000 ms. An empty line gives no `draft`, and the screen shows `› Ask Codex
+    to do anything`. With `/compact` or `/new` typed, the menu is the command's one row, selected,
+    and the input line comes right under it, with no blank row between. `/` and one backspace left the
+    line empty, with no turn before and after one. No warning row showed, and F2 showed "No
+    warnings". Seen in one probe on 2026-10-10 (#516), in a throwaway tab, launched with the folder's
+    trust and without `--dangerously-bypass-hook-trust`. So the kit reads `draft` on Codex as on
+    Claude Code, and takes a bare line only with no `draft` on 0.160.0. **verified** (live, once)
+  - Codex 0.162.0 renamed the first answer to "Where should the new conversation run?" after `/new`:
+    `› 1. Use current Git worktree  Keep using the current working directory`, then `  2. Create new
+    Git worktree   Create a separate checkout of this repository in another directory` and `  enter
+    select · esc back`, in a git-initialized folder, with no `draft`. Esc closed it, and no new
+    conversation began. 0.160.0 said `1. Current checkout`, and 0.162.0's binary holds no "Current
+    checkout". The kit answers that whole row 1, as it answers `1. Current checkout`, and never row 2.
+    Seen in a probe on 2026-10-10 (#516). **verified** (live, once)
   - At work, Codex shows `• Working (5s • esc to interrupt)` or `• Executing requested command (36s •
     esc to interrupt)`. Claude Code 2.1.288 never showed "esc to interrupt": its row is a spinner
     glyph, a word ending in `…`, then the time (`✶ Unfurling… (36s · ↓ 131 tokens)`); a finished turn's
