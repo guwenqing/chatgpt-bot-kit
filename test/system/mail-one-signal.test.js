@@ -48,6 +48,11 @@
 //   Code's own at its start (the new Stop hook is a new entry in the bot's
 //   `.claude/settings.json`; the tech notes read 2.1.296 as asking nothing).
 //
+// Every case runs every time (the architect's ruling after the first live
+// run): a case that fails is recorded, the run goes on to the next group, and
+// the test fails at its end with every failure together. Only the two senders'
+// bring-up, which every case needs, ends the run when it fails.
+//
 // What is OBSERVED, NOT JUDGED (printed as diagnostics): every send's answer;
 // in case 2, whether Orca typed its own notice into the busy Claude tab after
 // its turn ended (out of #509's scope: "Orca's own notice when Orca itself
@@ -551,14 +556,17 @@ async function loopEndIn(file) {
 }
 
 /**
- * Run cases side by side and wait for every one, so each reports what it saw;
- * then fail with every failure there was.
+ * Run cases side by side and wait for every one, so each reports what it saw,
+ * and answer every failure there was, by its case. A failure does not stop the
+ * run: the architect's ruling after the first live run, where case 4 failing
+ * stopped cases 2, 3, 5 and 6 from running at all. The test fails at its end,
+ * with every case's failure together.
  */
 async function together(t, cases) {
   const settled = await Promise.allSettled(Object.values(cases).map((one) => one()));
   const failed = settled.flatMap((one, at) => (one.status === 'rejected' ? [`${Object.keys(cases)[at]}: ${one.reason?.message ?? one.reason}`] : []));
-  for (const line of failed) t.diagnostic(line);
-  assert.deepEqual(failed, [], `${failed.length} case(s) failed:\n${failed.join('\n\n')}`);
+  for (const line of failed) t.diagnostic(`FAILED ${line}`);
+  return failed;
 }
 
 // ------------------------------------------------------------- the cases
@@ -748,53 +756,68 @@ test('one signal for each fleet mail: Orca\'s notice or the kit\'s line to an id
     return sessions[`${bot}/${session}`];
   };
 
+  // The two senders, which every case needs: a failure here ends the run.
   await bringUp(CODEX, 'idle');
   await bringUp(CLAUDE, 'idle');
-  await bringUp(CLAUDE, 'quiet');
+
+  // Every case runs, whatever an earlier one did; each failure is kept, and
+  // all of them are reported together at the end.
+  const failures = [];
 
   // 1 and 4, side by side.
   const idleClaude = sessions[`${CLAUDE}/idle`];
   const idleCodex = sessions[`${CODEX}/idle`];
-  await together(t, {
+  failures.push(...await together(t, {
     'case 1, idle Claude': () => idleCase(t, {
       bots, ...idleClaude, to: `${CLAUDE}/idle`, from: `${CODEX}/idle`, subject: 'the heron report', word: 'HERON-6120',
     }),
     'case 4, idle Codex': () => idleCase(t, {
       bots, ...idleCodex, to: `${CODEX}/idle`, from: `${CLAUDE}/idle`, subject: 'the kestrel report', word: 'KESTREL-3381',
     }),
-  });
+  }));
 
   // 6: mail the quiet session is told to ignore, and a retire at once.
-  const quiet = sessions[`${CLAUDE}/quiet`];
-  const toQuiet = send(bots, { to: `${CLAUDE}/quiet`, from: `${CODEX}/idle`, subject: 'the plover report', word: 'PLOVER-5512' });
-  t.diagnostic(`${quiet.title}: the send said ${JSON.stringify({ signal: toQuiet.signal, because: toQuiet.because, nudged: toQuiet.nudged })}`);
-  const retired = obkJson(['retire', '--bots', bots, '--bot', CLAUDE, '--session', 'quiet']);
-  guard.closedByKit(retired.closed);
-  assert.deepEqual(
-    { count: retired.unread?.count, from: retired.unread?.from },
-    { count: 1, from: [`${CODEX}/idle`] },
-    `${quiet.title}: the retire says one message was not read with obk message check, and who sent it: ${JSON.stringify(retired)}`,
-  );
+  failures.push(...await together(t, {
+    'case 6, retire': async () => {
+      const quiet = await bringUp(CLAUDE, 'quiet');
+      const toQuiet = send(bots, { to: `${CLAUDE}/quiet`, from: `${CODEX}/idle`, subject: 'the plover report', word: 'PLOVER-5512' });
+      t.diagnostic(`${quiet.title}: the send said ${JSON.stringify({ signal: toQuiet.signal, because: toQuiet.because, nudged: toQuiet.nudged })}`);
+      const retired = obkJson(['retire', '--bots', bots, '--bot', CLAUDE, '--session', 'quiet']);
+      guard.closedByKit(retired.closed);
+      assert.deepEqual(
+        { count: retired.unread?.count, from: retired.unread?.from },
+        { count: 1, from: [`${CODEX}/idle`] },
+        `${quiet.title}: the retire says one message was not read with obk message check, and who sent it: ${JSON.stringify(retired)}`,
+      );
+    },
+  }));
 
-  // 2, 3 and 5, side by side: the busy sessions come up now, so their loops start now.
-  const busyClaude = await bringUp(CLAUDE, 'busy', { wait: false });
-  const busyCodex = await bringUp(CODEX, 'busy', { wait: false });
-  await together(t, {
-    'cases 2 and 3, busy Claude': () => busyClaudeCase(t, {
-      bots,
-      ...busyClaude,
-      mails: [
-        { to: `${CLAUDE}/busy`, from: `${CODEX}/idle`, subject: 'the osprey report', word: 'OSPREY-7745', mailbox: busyClaude.mailbox },
-        { to: `${CLAUDE}/busy`, from: `${CODEX}/idle`, subject: 'the curlew report', word: 'CURLEW-2209', mailbox: busyClaude.mailbox },
-      ],
-    }),
-    'case 5, busy Codex': () => busyCodexCase(t, {
-      bots,
-      ...busyCodex,
-      mail: { to: `${CODEX}/busy`, from: `${CLAUDE}/idle`, subject: 'the avocet report', word: 'AVOCET-4038', mailbox: busyCodex.mailbox },
-    }),
-  });
+  // 2, 3 and 5, side by side: each busy session comes up in its own case, now,
+  // so its loop starts now.
+  failures.push(...await together(t, {
+    'cases 2 and 3, busy Claude': async () => {
+      const busyClaude = await bringUp(CLAUDE, 'busy', { wait: false });
+      await busyClaudeCase(t, {
+        bots,
+        ...busyClaude,
+        mails: [
+          { to: `${CLAUDE}/busy`, from: `${CODEX}/idle`, subject: 'the osprey report', word: 'OSPREY-7745', mailbox: busyClaude.mailbox },
+          { to: `${CLAUDE}/busy`, from: `${CODEX}/idle`, subject: 'the curlew report', word: 'CURLEW-2209', mailbox: busyClaude.mailbox },
+        ],
+      });
+    },
+    'case 5, busy Codex': async () => {
+      const busyCodex = await bringUp(CODEX, 'busy', { wait: false });
+      await busyCodexCase(t, {
+        bots,
+        ...busyCodex,
+        mail: { to: `${CODEX}/busy`, from: `${CLAUDE}/idle`, subject: 'the avocet report', word: 'AVOCET-4038', mailbox: busyCodex.mailbox },
+      });
+    },
+  }));
 
   // And no tab here showed a hooks question of its harness's own at its start.
-  assert.deepEqual(hooksScreens, [], `a tab showed a hooks question; the kit's new Stop hook must bring up none:\n${hooksScreens.join('\n\n')}`);
+  if (hooksScreens.length > 0) failures.push(`hooks question: a tab showed a hooks question; the kit's new Stop hook must bring up none:\n${hooksScreens.join('\n\n')}`);
+
+  assert.deepEqual(failures, [], `${failures.length} of the checks failed; every case ran:\n\n${failures.join('\n\n')}`);
 });
