@@ -26,7 +26,7 @@ import { botDir, botNames, botsDir, readBot, tempRoles, unknownKeys } from './bo
 import { transcriptsIn } from './conversations.js';
 import { hookTrouble } from './hooks.js';
 import { bypassFlags, harnessOf, HARNESSES, isAddressOf, ownCli, sessionTrouble, SHELL_ENV, shellWord } from './launch.js';
-import { frontOfTab, orcaDefaultArgs, projects, tabs, wordsOfProcess } from './orca.js';
+import { frontOfTab, orcaDefaultArgs, projects, runMissing, tabs, wordsOfProcess } from './orca.js';
 import { permissionsTrouble } from './permissions.js';
 import { TAB_ENV } from './record.js';
 import { agentsTrouble, rulesStamp } from './rules.js';
@@ -385,6 +385,17 @@ function inOrca(bots, home, bot, setups, sessions) {
   for (const [name, entry] of Object.entries(book.sessions)) {
     if (typeof entry?.tab === 'string' && !there.has(entry.tab) && !closed.has(name)) {
       found.push(finding('session', entry.tab, `${bot.name}'s session ${name} is in the book with tab ${entry.tab}, and Orca has no tab of that id: the tab was closed, or the machine was restarted. The conversation is in the book, and obk up opens a tab and brings it back.`, bot.name));
+    }
+
+    // A Run Orca does not have, as when the book was written on another
+    // machine: mail sent to it is refused. The session's next start makes it
+    // a new one (#508).
+    if (typeof entry?.mailbox === 'string' && runMissing(entry.mailbox)) {
+      const unpause = `${shellWord(ownCli())} unpause --bots ${shellWord(bots)} --bot ${bot.name}`;
+      const fix = bot.paused === true ? unpause
+        : closed.has(name) ? `${unpause} --session ${name}`
+          : `${shellWord(ownCli())} restart --bots ${shellWord(bots)} --bot ${bot.name} --session ${name}`;
+      found.push(finding('session', bookFile(home), `${bot.name}'s session ${name} has the mailbox ${entry.mailbox} in the book, and Orca has no Run of that id: it was made by another Orca, as on another machine, so mail sent to it is refused. The session's next start makes it a new one: ${fix}`, bot.name));
     }
 
     const unclaimed = (Array.isArray(entry?.unclaimed) ? entry.unclaimed : []).filter((id) => !helpers.has(id));
