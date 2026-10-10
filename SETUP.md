@@ -263,6 +263,10 @@ yet. When it refuses, it says what it saw: type nothing, and tell them what it
 said. Use the keys in the table for the screens the kit does not answer.
 The kit reads Codex's trust from the caller's `CODEX_HOME`, else `~/.codex`;
 a bot run under another `CODEX_HOME` is outside what the kit can see.
+The kit also records the extra arguments it launched each session with, and
+refuses when they mention hooks, or when there is no record. A Codex that
+someone started again by hand in that tab, with other flags, is outside what
+the kit records.
 
 **Anything you do not recognise: type nothing.** Tell them what is on the
 screen and which tab it is in, and wait. A keypress into a menu you have not read
