@@ -449,9 +449,10 @@ test('D4 health writes nothing and types nothing when a session\'s shell is in f
   assert.deepEqual(await snapshot(box.root, skipOrcaFake), before, 'every file and every link is as it was');
   assert.deepEqual(await box.orca.setups(), setups, 'no Orca project made, changed or taken away');
   assert.deepEqual(await box.orca.terminals(), terminals, 'no tab opened, closed, retitled or typed into: health does not bring it back');
+  // `orchestration run-show` reads whether Orca has each mailbox the book names (#508).
   assert.deepEqual(
     [...new Set((await box.orca.calls()).slice(asked).map(orcaCommand))].sort(),
-    ['diagnostics memory', 'project setups', 'status', 'terminal list', 'terminal show'],
+    ['diagnostics memory', 'orchestration run-show', 'project setups', 'status', 'terminal list', 'terminal show'],
     'the only things health asks Orca are the ones that tell it something',
   );
 });

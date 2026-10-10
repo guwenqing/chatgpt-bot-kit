@@ -14,7 +14,7 @@ import { conversationsIn, hasConversation, heldAsUserTurn, transcriptsIn } from 
 import { installHook } from './hooks.js';
 import { writePermissions } from './permissions.js';
 import { addressOf, harnessOf, isAddressOf, isShortPrompt, launchCommand, mailboxStep, reachesMail, sessionTrouble, startPrompt, workDirOf } from './launch.js';
-import { asFolderProject, coordinatorOf, findProject, harnessInTab, makeMailbox, makeProject, openTab, QUESTION_ON_SCREEN, retitleTab, screenRows, shellInTab, tabs, tabToTypeInto, TERMINAL_ENV, TIMED_OUT, tellWindow, typeIntoTab, useMailbox } from './orca.js';
+import { asFolderProject, coordinatorOf, findProject, harnessInTab, makeMailbox, makeProject, openTab, QUESTION_ON_SCREEN, retitleTab, runMissing, screenRows, shellInTab, tabs, tabToTypeInto, TERMINAL_ENV, TIMED_OUT, tellWindow, typeIntoTab, useMailbox } from './orca.js';
 import { TAB_ENV } from './record.js';
 import { buildAgents, rulesStamp } from './rules.js';
 import { linkSkills } from './skills.js';
@@ -651,7 +651,8 @@ async function writeAddress(home, session, address) {
  * a restart (tech notes, section 1). Orca offers no way to delete one, so this
  * makes one for a session whose book names none, and otherwise binds the one
  * the book names to this tab: after a restart, or a closed tab brought back,
- * it would stay with the tab that is gone (review of PR #248, finding 1).
+ * it would stay with the tab that is gone (review of PR #248, finding 1). A
+ * Run the book names and this Orca does not have at all is replaced (#508).
  *
  * Only inside an Orca tab. Asked from anywhere else, Orca picks a terminal
  * itself, and seen live that was not the asker's (tech notes, section 1), so
@@ -708,20 +709,34 @@ async function mailboxInTurn(home, botName, sessionName, who) {
       if (error.code === TIMED_OUT) {
         throw new Error(`${error.message}\n${who}'s mailbox ${held} may now be bound to this tab, or may still be bound where it was: Orca did not say which.`);
       }
-      throw new Error(`${error.message}\n${who}'s mailbox ${held} is unchanged: it is still bound to ${boundTo(held)}.`);
+      // A Run this Orca has never had, as when the book was written on another
+      // machine, can never be bound, so every start would fail the same way.
+      // It is replaced as a session with none would be given one (#508).
+      if (!runMissing(held, STEP_WAIT)) {
+        throw new Error(`${error.message}\n${who}'s mailbox ${held} is unchanged: it is still bound to ${boundTo(held)}.`);
+      }
+      return newMailbox(home, botName, sessionName, who, here, held);
     }
     return { bot: botName, session: sessionName, mailbox: held, change: 'bound' };
   }
+  return newMailbox(home, botName, sessionName, who, here);
+}
 
+/**
+ * Make a mailbox in this tab and write it into the book, for a session whose
+ * book names none, or names `stale`, a Run this Orca does not have.
+ */
+async function newMailbox(home, botName, sessionName, who, here, stale) {
   // Made outside the book's lock, which is held for one read and one write
   // (book.js).
   let made;
   try {
     made = makeMailbox(who, STEP_WAIT);
   } catch (error) {
+    const written = stale === undefined ? 'none is written down' : `the book still names ${stale}, which this Orca does not have`;
     const left = error.code === TIMED_OUT
-      ? `None is written down for ${who}; a Run Orca made after the kit stopped waiting is left unused.`
-      : `No mailbox was made for ${who}, and none is written down.`;
+      ? `For ${who}, ${written}; a Run Orca made after the kit stopped waiting is left unused.`
+      : `No mailbox was made for ${who}, and ${written}.`;
     throw new Error(`${error.message}\n${left} It gets one the next time the kit starts it.`);
   }
 
@@ -737,10 +752,11 @@ async function mailboxInTurn(home, botName, sessionName, who) {
         movedTo = now.tab ?? 'none';
         return undefined;
       }
-      // Under the lock, and only if the book still has none: two runs at once
-      // would each have made one, and a session with two mailboxes is a session
-      // half its mail never reaches. The loser's Run is left unused.
-      if (typeof now.mailbox !== 'string') now.mailbox = made;
+      // Under the lock, and only if the book still has none, or still the
+      // stale one: two runs at once would each have made one, and a session
+      // with two mailboxes is a session half its mail never reaches. The
+      // loser's Run is left unused.
+      if (typeof now.mailbox !== 'string' || now.mailbox === stale) now.mailbox = made;
       kept = now.mailbox;
       current.sessions[sessionName] = now;
       return undefined;
@@ -753,8 +769,13 @@ async function mailboxInTurn(home, botName, sessionName, who) {
   }
   // One terminal holds one Run, so making the loser took this tab off the one
   // the book kept. It goes back.
-  if (kept !== made) useMailbox(kept, undefined, STEP_WAIT);
-  return { bot: botName, session: sessionName, mailbox: kept, change: kept === made ? 'made' : 'bound' };
+  if (kept !== made) {
+    useMailbox(kept, undefined, STEP_WAIT);
+    return { bot: botName, session: sessionName, mailbox: kept, change: 'bound' };
+  }
+  return stale === undefined
+    ? { bot: botName, session: sessionName, mailbox: made, change: 'made' }
+    : { bot: botName, session: sessionName, mailbox: made, change: 'replaced', replaced: stale };
 }
 
 /**

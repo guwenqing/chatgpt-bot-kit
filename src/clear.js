@@ -38,9 +38,13 @@ const POINTER = { claude: '❯', codex: '›' };
  */
 const RECORD_LINE = 'obk: this conversation was started by obk session clear, and this line is only so the kit can record it. Reply "ok"; nothing else is asked.';
 
-/** What Codex asks after `/new`, and the one answer the kit gives it: the bot home it runs in. */
+/**
+ * What Codex asks after `/new`, and the one answer the kit gives it: the bot
+ * home it runs in. Codex 0.162.0 calls it by another name, and its whole row
+ * has to be as captured, but for the padding before its description (#516).
+ */
 const WHERE_TO_RUN = 'Where should the new conversation run?';
-const CURRENT_CHECKOUT = /^ *› +1\. Current checkout\b/;
+const CURRENT_CHECKOUT = /^ *› +1\. Current checkout\b|^ *› 1\. Use current Git worktree\s+Keep using the current working directory *$/;
 
 /** Codex's empty input line: its pointer alone, or with its placeholder. */
 const CODEX_EMPTY = ['›', '› Ask Codex to do anything'];
@@ -51,7 +55,8 @@ const CODEX_EMPTY = ['›', '› Ask Codex to do anything'];
  * selected row stands for what Return will run: with the menu open, Return
  * runs the selected command, and the menu is narrowed to what was typed
  * (codex-rs/tui/src/bottom_pane/chat_composer.rs, rust-v0.160.0). The
- * architect's ruling on #391, after live run 4.
+ * architect's ruling on #391, after live run 4. Only where Orca gives no
+ * draft: a draft is the line's text, and has to be the command (#516).
  */
 const CODEX_BARE_LINE = '0.160.0';
 
@@ -221,14 +226,13 @@ async function enter(it, verb, before = () => {}) {
  * when it was typed.
  */
 export async function typeCommand(it, command, { before = () => {}, check = menuWrong, cannot = () => '', deadline = Infinity } = {}) {
-  // On Codex, what is typed cannot be read back once its menu is open, so
-  // nothing may be in its input line before: no draft for the command to join.
-  // On Claude Code, Orca gives a draft in the line beside the screen (#510).
+  // Nothing may be in the input line before: no draft for the command to join.
+  // Orca gives a draft in the line beside the screen, and the screen's line
+  // then reads the pointer alone (#510, #516). Where it gives none, Codex's
+  // line on the screen has to be empty.
   const emptyLine = ({ rows, draft }) => {
-    if (it.harness !== 'codex') {
-      if (draft !== undefined) throw new Error(`${it.name}: nothing was typed, because its input line holds a draft: it reads "${draft}".${shownEnd(rows)}`);
-      return;
-    }
+    if (draft !== undefined) throw new Error(`${it.name}: nothing was typed, because its input line holds a draft: it reads "${draft}".${shownEnd(rows)}`);
+    if (it.harness !== 'codex') return;
     const line = rows.findLast((row) => /^ *›/.test(row))?.trim();
     if (!CODEX_EMPTY.includes(line)) {
       throw new Error(`${it.name}: nothing was typed, because its input line is not empty: it reads "${line ?? 'nothing'}".${shownEnd(rows)}`);
@@ -415,10 +419,11 @@ function menuWrong(rows, harness, command, version, draft) {
   if (at < 0) return { why: 'its screen shows no input line' };
   // Claude Code 2.1.288 puts a non-breaking space after its pointer (live run 4).
   const line = rows[at].replaceAll('\u00a0', ' ').trim();
-  if (harness === 'codex') return codexMenuWrong(rows, at, line, command, version);
-  // Orca 1.4.223 gives the line's text as the draft, and Claude Code 2.1.296's
-  // line on the screen then reads its pointer alone (#510, probe 4).
+  // Orca 1.4.223 gives the line's text as the draft, and the line on the
+  // screen then reads the pointer alone: Claude Code 2.1.296's (#510, probe 4)
+  // and Codex 0.162.0's (#516).
   const text = draft === undefined ? line : `${POINTER[harness]} ${draft}`;
+  if (harness === 'codex') return codexMenuWrong(rows, at, text, command, version);
   if (text !== `${POINTER[harness]} ${command}`) return { why: `its input line reads "${text}"` };
   return claudeMenuWrong(rows, at, command);
 }
@@ -445,11 +450,12 @@ function claudeMenuWrong(rows, at, command) {
 
 /**
  * Codex draws its slash menu above the input line: a row per command, the
- * selected one starting with its pointer, then a blank row, then the input
- * line (its own snapshot tests, chat_composer slash_popup_*.snap,
- * rust-v0.160.0; live run 4). The menu has to hold one command row, the
- * selected one, naming the command. The input line reads the command, or, on
- * the Codex whose line Orca shows bare, its pointer alone.
+ * selected one starting with its pointer, then a blank row on 0.160.0 and none
+ * on 0.162.0, then the input line (its own snapshot tests, chat_composer
+ * slash_popup_*.snap, rust-v0.160.0; live run 4; #516's probe). The menu has
+ * to hold one command row, the selected one, naming the command. The input
+ * line, Orca's draft where it gives one, reads the command, or, with no draft
+ * on the Codex whose line Orca shows bare, its pointer alone.
  */
 function codexMenuWrong(rows, at, line, command, version) {
   const bare = line === '›' && version === CODEX_BARE_LINE;
@@ -494,7 +500,7 @@ async function answerWhereToRun(it, handle, command) {
       const pointer = rows.findLast((row) => /^ *›/.test(row));
       if (pointer === undefined || !CURRENT_CHECKOUT.test(pointer)) {
         send(handle, '\x1b');
-        throw new Error(`${it.name}: after ${command}, Codex asked "${WHERE_TO_RUN}" with its selection on "${pointer?.trim() ?? 'nothing'}" rather than "1. Current checkout", so it was backed out of with Esc and nothing else was typed. Look at its tab.`);
+        throw new Error(`${it.name}: after ${command}, Codex asked "${WHERE_TO_RUN}" with its selection on "${pointer?.trim() ?? 'nothing'}" rather than "1. Current checkout" (on Codex 0.162.0, "1. Use current Git worktree"), so it was backed out of with Esc and nothing else was typed. Look at its tab.`);
       }
       send(handle, '\r');
       return;

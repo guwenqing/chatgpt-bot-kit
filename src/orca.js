@@ -1017,6 +1017,22 @@ export const useMailbox = (id, handle, options) =>
 export const coordinatorOf = (id, options) =>
   orca(['orchestration', 'run-show', '--id', id], options).run.coordinator_handle ?? undefined;
 
+/**
+ * Whether this Orca has no Run of that id at all, as when the book was written
+ * on another machine (#508). Only `run-show` refused `run_not_found` says so:
+ * `run-use` gives a legacy Run the same code and words, and a Run shown, a
+ * time-out or any other refusal is not a Run known to be missing (tech notes,
+ * section 1).
+ */
+export function runMissing(id, options) {
+  try {
+    orca(['orchestration', 'run-show', '--id', id], options);
+    return false;
+  } catch (error) {
+    return error.code === 'run_not_found';
+  }
+}
+
 /** Queue one message. `to` and `from` are mailboxes, written `run:<id>`. */
 export function postMessage({ to, from, subject, body, type = 'status', thread }) {
   const args = ['orchestration', 'send', '--to', to, '--subject', subject, '--body', body, '--type', type];

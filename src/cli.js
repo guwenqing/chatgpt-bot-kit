@@ -1239,6 +1239,7 @@ const commands = {
     const said = {
       made: `${who} has its mailbox ${answer.mailbox}, made in this tab.`,
       bound: `${who}'s mailbox ${answer.mailbox} is bound to this tab.`,
+      replaced: `${who}'s mailbox ${answer.replaced} is not one this Orca has, as when the book was written on another machine, so it has a new one, ${answer.mailbox}, made in this tab and written into the book.`,
       none: `${who} gets no mailbox: it is a Codex session with its sandbox switch off, which could not read one.`,
     };
     return { answer, lines: [said[answer.change]] };
