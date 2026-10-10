@@ -110,11 +110,32 @@ import {
   tabsOfBot,
 } from './helpers/cli.js';
 import {
+  CLAUDE_296_CLEAR_OTHER_DRAFT,
+  CLAUDE_296_CLEAR_READ,
+  CLAUDE_296_CLEAR_SHOWN,
+  CLAUDE_296_COMPACT_ECHOED,
+  CLAUDE_296_COMPACT_MENU_BELOW,
+  CLAUDE_296_COMPACT_OTHER_DRAFT,
+  CLAUDE_296_COMPACT_READ,
+  CLAUDE_296_COMPACT_SHOWN,
+  CLAUDE_296_IDLE,
+  CLAUDE_296_ON_AUTOCOMPACT,
+  CLAUDE_296_ON_CLEAR_HISTORY,
+  CLAUDE_296_ON_COMPACT_X,
+  CLAUDE_296_TURN_CLEAR_READ,
+  CLAUDE_296_TURN_CLEAR_TYPED,
+  CLAUDE_296_TURN_COMPACT,
+  CLAUDE_296_TURN_DRAFT,
+  CLAUDE_296_TURN_DRAFT_COMPACT,
+  CLAUDE_296_TURN_IDLE,
   CLAUDE_CLEAR_AFTER_DRAFT,
+  CLAUDE_CLEAR_BARE,
   CLAUDE_CLEAR_MENU_BELOW,
   CLAUDE_CLEAR_NO_MENU,
   CLAUDE_CLEAR_OTHER_FIRST,
   CLAUDE_CLEAR_TYPED,
+  CLAUDE_COMPACT_BARE,
+  CLAUDE_COMPACT_OTHER_FIRST,
   CLAUDE_COMPACT_TYPED,
   CLAUDE_AT_WORK,
   CLAUDE_FEEDBACK_PANEL,
@@ -1147,6 +1168,198 @@ test('#502: compact on Claude Code with no slash menu above its input box: taken
   assert.match(said, /no menu/i, `it says no menu came up, got:\n${said}`);
   assert.ok(said.includes('auto mode on (shift+tab to cycle)'), `it shows the screen's last rows, got:\n${said}`);
   assert.doesNotMatch(said, /can(?:not|'t|’t) compact/i, `it does not say Claude Code cannot compact, got:\n${said}`);
+});
+
+// ------------------------------------- Claude Code 2.1.296's menu pointer (#510)
+//
+// Claude Code 2.1.296 marks the selected row of its slash menu with a pointer,
+// `  ❯ /compact`, above the input box's top rule. Its input line under the
+// rule reads `❯` alone whatever is in it, and Orca 1.4.223's screen read gives
+// the line's text as `draft` beside the rows, leaving the key out when the
+// line is empty (helpers/screens.js, the 2.1.296 captures). The architect's
+// final ruling on #510, as these tests hold it:
+//
+//   - The menu's selected row, above the input box's top rule, is its pointer
+//     row when it has one, and its first command row when it has none, as on
+//     2.1.288. Its first word is exactly the command: not `/compact-x`, not
+//     `/autocompact`. A refusal on the menu names the selected row.
+//   - The input line's text is Orca's `draft` when the read gives one, and it
+//     equals the command exactly. With no `draft`, the line is read from the
+//     rows as before: `❯ /compact`, with a space or a non-breaking space,
+//     passes, and a bare `❯` is refused.
+//   - Before the first key: a read that gives a non-empty `draft` means the
+//     user has a draft in the line. Refused, nothing typed into the tab at
+//     all, and the refusal says the input line holds a draft.
+//   - Not tied to a Claude Code version, and `/clear` is read as `/compact` is.
+//     Codex is as it was.
+//
+// The screens while the command is typed are whileTyping's, on 2.1.288's
+// layout and with no draft: the probes read the screen only once the whole
+// command was in, and the looks between characters ask the gate only. A
+// refused command's backspaces put up the read taken after them.
+
+/** How many times `word` is in `said`: a row the refusal quotes from the screen counts once. */
+const timesIn = (said, word) => said.split(word).length - 1;
+
+/** How Claude Code's part is played once the return is in, and what the kit answers once it is done. */
+const ENTERED = {
+  compact: {
+    then: async (box) => compactionIn(await recordFileOf(box, 'sess-daily'), 'claude'),
+    key: 'compacted',
+    answer: { bot: BOT, session: 'daily', harness: 'claude', conversation: 'sess-daily', confirmed: true },
+  },
+  clear: {
+    then: (box, bots) => hookReports(box, bots, 'sess-cleared', 'clear'),
+    key: 'cleared',
+    answer: { bot: BOT, session: 'daily', harness: 'claude', was: 'sess-daily', now: 'sess-cleared' },
+  },
+};
+
+for (const { verb, command, idle, read, what } of [
+  {
+    verb: 'compact', command: COMPACT, idle: CLAUDE_296_TURN_IDLE, read: CLAUDE_296_TURN_COMPACT,
+    what: 'the live read after a turn: the pointer on /compact, the input line "❯" alone, and the draft "/compact"',
+  },
+  {
+    verb: 'clear', command: '/clear', idle: CLAUDE_296_TURN_IDLE, read: CLAUDE_296_TURN_CLEAR_READ,
+    what: 'the capture after a turn, the pointer on /clear and the input line "❯" alone, with the draft "/clear" (rebuilt pairing)',
+  },
+  {
+    verb: 'compact', command: COMPACT, idle: CLAUDE_296_IDLE, read: CLAUDE_296_COMPACT_READ,
+    what: 'the capture with no turn yet, the pointer on /compact, with the draft "/compact" (rebuilt pairing)',
+  },
+  {
+    verb: 'clear', command: '/clear', idle: CLAUDE_296_IDLE, read: CLAUDE_296_CLEAR_READ,
+    what: 'the capture with no turn yet, the pointer on /clear, with the draft "/clear" (rebuilt pairing)',
+  },
+  {
+    verb: 'compact', command: COMPACT, idle: CLAUDE_296_TURN_IDLE, read: CLAUDE_296_COMPACT_SHOWN,
+    what: 'no draft, the input line reading "❯ /compact" and the pointer on /compact (rebuilt)',
+  },
+  {
+    verb: 'clear', command: '/clear', idle: CLAUDE_296_TURN_IDLE, read: CLAUDE_296_CLEAR_SHOWN,
+    what: 'no draft, the input line reading "❯ /clear" and the pointer on /clear (rebuilt)',
+  },
+]) {
+  test(`#510: ${verb} on Claude Code 2.1.296 from ${what}: ${command} typed, entered, and the ${verb} confirmed`, async (t) => {
+    const box = await createSandbox(t);
+    const bots = await running(box);
+    await changeTab(box, (await liveTab(box, bots)).tabId, { screen: idle, nextScreens: screensFor('claude', command, read, idle) });
+
+    const { result, played } = await runPlaying(box, bots, verb, {
+      when: (sends) => sends.some((one) => one.text === '\r'),
+      then: () => ENTERED[verb].then(box, bots),
+    });
+
+    const answer = answered(result, `the ${verb}`);
+    assert.ok(played, `the premise: the return was sent and Claude Code did the ${verb}`);
+    assert.deepEqual(await sendsInto(box, bots), [...typed(command), { text: '\r', enter: false }], 'the command, a character a send, then its return, and nothing taken back');
+    assert.deepEqual(answer[ENTERED[verb].key], ENTERED[verb].answer);
+  });
+}
+
+for (const verb of VERBS) {
+  test(`#510: ${verb} on Claude Code 2.1.296 with a draft in its input line before the first key, the live read with the draft "hello": refused, nothing typed into any tab, and the refusal says the line holds a draft`, async (t) => {
+    const box = await createSandbox(t);
+    const bots = await running(box);
+    const command = verb === 'clear' ? '/clear' : COMPACT;
+    await changeTab(box, (await liveTab(box, bots)).tabId, {
+      screen: CLAUDE_296_TURN_DRAFT.screen,
+      draft: CLAUDE_296_TURN_DRAFT.draft,
+      nextScreens: screensFor('claude', command, { screen: CLAUDE_296_TURN_DRAFT.screen, draft: `hello${command}` }, CLAUDE_296_TURN_DRAFT),
+    });
+    const before = await typedEverywhere(box);
+    const book = await sessionIn(bots, BOT, 'daily');
+
+    const said = assertRefused(await sessionCommand(box, verb));
+
+    await assertNothingTyped(box, before, 'a draft in the input line');
+    assert.match(said, /draft/i, `it says the input line holds a draft, got:\n${said}`);
+    assert.deepEqual(await sessionIn(bots, BOT, 'daily'), book, 'the book is as it was');
+  });
+}
+
+// The refusals once the command is typed. In each, the command is not the
+// menu's selected row, or the input line does not read it: no return, and
+// exactly the characters typed are taken back in one send. Side by side,
+// since a check that wrongly lets a compact in waits out its 300 s.
+describe('#510: the refusals once the command is typed, side by side', { concurrency: true }, () => {
+  for (const { verb, command, idle = CLAUDE_296_TURN_IDLE, read, names, shows, what } of [
+    {
+      verb: 'compact', command: COMPACT, read: CLAUDE_296_ON_AUTOCOMPACT, names: '/autocompact',
+      what: 'the draft "/compact" and the pointer moved down onto /autocompact, /compact the first command row and not selected',
+    },
+    {
+      verb: 'compact', command: COMPACT, read: CLAUDE_296_ON_COMPACT_X, names: '/compact-x',
+      what: 'the draft "/compact" and the pointer on /compact-x, a command whose name only starts with /compact, /compact under it not selected',
+    },
+    {
+      verb: 'clear', command: '/clear', read: CLAUDE_296_ON_CLEAR_HISTORY, names: '/clear-history',
+      what: 'the draft "/clear" and the pointer on /clear-history, /clear under it not selected',
+    },
+    {
+      verb: 'compact', command: COMPACT, read: CLAUDE_296_TURN_COMPACT.screen,
+      what: 'no draft, the input line "❯" alone and the pointer on /compact: the live read\'s rows with its draft left out',
+    },
+    {
+      verb: 'clear', command: '/clear', read: CLAUDE_296_TURN_CLEAR_TYPED,
+      what: 'no draft, the input line "❯" alone and the pointer on /clear: the capture after a turn, with no draft',
+    },
+    {
+      // Stands for a draft the kit could not see before the first key: the
+      // read before it gives none, and the read after typing gives the live
+      // "hello/compact".
+      verb: 'compact', command: COMPACT, read: CLAUDE_296_TURN_DRAFT_COMPACT,
+      what: 'the draft "hello/compact" and no menu, the live read, the read before the first key giving no draft',
+    },
+    {
+      // The draft alone is wrong: the menu is as captured, its pointer on the
+      // command. Stands for a draft the kit could not see before its first key.
+      verb: 'compact', command: COMPACT, read: CLAUDE_296_COMPACT_OTHER_DRAFT, shows: 'x/compact',
+      what: 'the draft "x/compact" under the live read\'s menu, its pointer on /compact, the read before the first key giving no draft',
+    },
+    {
+      verb: 'clear', command: '/clear', read: CLAUDE_296_CLEAR_OTHER_DRAFT, shows: 'x/clear',
+      what: 'the draft "x/clear" under the captured menu, its pointer on /clear, the read before the first key giving no draft',
+    },
+    {
+      verb: 'compact', command: COMPACT, read: CLAUDE_296_COMPACT_ECHOED,
+      what: 'the draft "/compact" and no menu, only an earlier "❯ /compact" turn echoed in the history above the box',
+    },
+    {
+      verb: 'compact', command: COMPACT, read: CLAUDE_296_COMPACT_MENU_BELOW,
+      what: 'the draft "/compact" and the menu with its pointer on /compact drawn under the input box, none above it',
+    },
+    {
+      verb: 'compact', command: COMPACT, idle: CLAUDE_IDLE, read: CLAUDE_COMPACT_BARE,
+      what: 'no draft, 2.1.288\'s menu with no pointer and /compact its first row, and the input line "❯" alone',
+    },
+    {
+      verb: 'clear', command: '/clear', idle: CLAUDE_IDLE, read: CLAUDE_CLEAR_BARE,
+      what: 'no draft, 2.1.288\'s menu with no pointer and /clear its first row, and the input line "❯" alone',
+    },
+    {
+      // The input line's pointer is below the rule, and is never the menu's.
+      verb: 'compact', command: COMPACT, idle: CLAUDE_IDLE, read: CLAUDE_COMPACT_OTHER_FIRST, names: '/autocompact',
+      what: 'no draft, the screen\'s only "❯ /compact" its input line, under 2.1.288\'s menu with no pointer and /autocompact first',
+    },
+  ]) {
+    it(`${verb} on Claude Code with ${what}: ${command} taken back, never entered, and refused${names === undefined ? '' : `, naming ${names}`}`, async (t) => {
+      const box = await createSandbox(t);
+      const bots = await running(box);
+      await changeTab(box, (await liveTab(box, bots)).tabId, { screen: idle, nextScreens: screensFor('claude', command, read, idle) });
+      const book = await sessionIn(bots, BOT, 'daily');
+
+      const said = assertRefused(await sessionCommand(box, verb));
+
+      assert.deepEqual(await sendsInto(box, bots), [...typed(command), { text: backspaces(command), enter: false }]);
+      assert.deepEqual(await sessionIn(bots, BOT, 'daily'), book, 'the book is as it was');
+      if (shows !== undefined) assert.ok(said.includes(shows), `the refusal shows the draft the line held, ${shows}, got:\n${said}`);
+      if (names !== undefined) {
+        assert.ok(timesIn(said, names) >= 2, `the reason names the selected row, ${names}, beside the screen rows it quotes, got:\n${said}`);
+      }
+    });
+  }
 });
 
 // ---------------------------------------------------- the waits that run out

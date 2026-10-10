@@ -45,11 +45,12 @@
 // ADR 0034 records.
 
 import assert from 'node:assert/strict';
-import { chmod, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, readFile, writeFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
   botHomeOf,
+  conversationOnRecord,
   createSandbox,
   eventsIn,
   hookFileOf,
@@ -60,6 +61,7 @@ import {
   orcaCommand,
   orcaFlag,
   plainCli,
+  recordSession,
   sentInto,
   sessionIn,
   sh,
@@ -352,19 +354,34 @@ test('A1 the plain run says the nudge was left for the sending session\'s hook, 
 // A2 — the hook decides it with ps and types it.
 // ---------------------------------------------------------------------------
 
-for (const [receiver, label] of RECEIVERS) {
-  test(`A2 the sending session's hook, where ps runs, types the left nudge into the tab of a receiver ${label}, and no other, and says so`, async (t) => {
-    const { box, bots, developer } = await leftNudge(t, { receiver });
-    await psRuns(box);
+test('A2 the sending session\'s hook, where ps runs, types the left nudge into the tab of a receiver idle while it holds a background command, and no other, and says so', async (t) => {
+  // Since #509 the line goes into an idle Claude Code tab only after the
+  // kit has watched it 8 s and no turn started; the fake starts none.
+  const { box, bots, developer } = await leftNudge(t, { receiver: 'idle' });
+  await psRuns(box);
 
-    const ran = await hook(box, await inTab(box, bots, 'reviewer'), afterBash(bots));
+  const ran = await hook(box, await inTab(box, bots, 'reviewer'), afterBash(bots));
 
-    const text = assertSaid(ran, 'a nudge typed');
-    assert.ok(text.includes('developer/daily'), `it names the receiver: ${text}`);
-    assert.match(text, /\b(told|nudged)\b/i, `and says its tab was told: ${text}`);
-    await assertToldOnly(box, bots, developer.tabId, 'the hook');
-  });
-}
+  const text = assertSaid(ran, 'a nudge typed');
+  assert.ok(text.includes('developer/daily'), `it names the receiver: ${text}`);
+  assert.match(text, /\b(told|nudged|typed)\b/i, `and says its tab was told: ${text}`);
+  await assertToldOnly(box, bots, developer.tabId, 'the hook');
+});
+
+test('A2 the sending session\'s hook, where ps runs, decides the left nudge for a receiver running a command: a busy Claude Code, so nothing is typed, and it says the receiver\'s own hook tells it (#509)', async (t) => {
+  // Before #509 the hook typed the line into the busy tab, where it waited in
+  // the input box. Now a busy Claude Code is told by its own Stop hook when its
+  // turn ends, and the kit types nothing into it.
+  const { box, bots } = await leftNudge(t, { receiver: 'busy' });
+  await psRuns(box);
+
+  const ran = await hook(box, await inTab(box, bots, 'reviewer'), afterBash(bots));
+
+  const text = assertSaid(ran, 'a busy Claude Code receiver');
+  assert.ok(text.includes('developer/daily'), `it names the receiver: ${text}`);
+  assert.match(text, /hook/i, `and says its hook tells it: ${text}`);
+  await assertUntyped(box, 'a busy Claude Code receiver');
+});
 
 // ---------------------------------------------------------------------------
 // A3 — #232's cases still get nothing typed, decided by the hook.
@@ -407,7 +424,8 @@ test('A3 by the time the hook looks, the receiver\'s typing turn is held for lon
   // The architect's ruling on #480: the nudge takes the receiver's typing
   // turn before it types, waiting up to 5 s; the hook types through the same
   // nudge as the send.
-  const { box, bots } = await leftNudge(t);
+  // An idle receiver (#509): a busy Claude Code is typed nothing, turn or no turn.
+  const { box, bots } = await leftNudge(t, { receiver: 'idle' });
   await psRuns(box);
 
   const ran = await withTypingTurnHeld(bots, 'developer', 'daily', async () => hook(box, await inTab(box, bots, 'reviewer'), afterBash(bots)));
@@ -423,7 +441,8 @@ test('A3 by the time the hook looks, the receiver\'s typing turn is held for lon
 // ---------------------------------------------------------------------------
 
 test('A4 a second run of the hook after it typed the nudge types nothing more and prints nothing', async (t) => {
-  const { box, bots, developer } = await leftNudge(t);
+  // An idle receiver, which the line still goes into after the 8 s watch (#509).
+  const { box, bots, developer } = await leftNudge(t, { receiver: 'idle' });
   await psRuns(box);
   const env = await inTab(box, bots, 'reviewer');
   assertSaid(await hook(box, env, afterBash(bots)), 'the first run');
@@ -452,43 +471,35 @@ test('A4 a nudge the hook decided not to type is not typed by a later run, once 
 const sendCallsSoFar = async (box) => (await box.orca.calls()).filter((call) => orcaCommand(call) === 'terminal send').length;
 
 /**
- * Every left nudge, one per subject, was decided exactly once: its line typed
- * once into the developer's tab, as the send would have typed it, nothing
- * typed into any other tab since `sendsBefore`, and the mail named once in
- * exactly one of `contexts`.
+ * Every left nudge, one per subject, was decided exactly once: the mail named
+ * once in exactly one of `contexts`, and, the developer being a busy Claude
+ * Code (#509), nothing typed into any tab since `sendsBefore`. Before #509
+ * each line was typed once into the developer's tab; a busy Claude Code is now
+ * told by its own hook, so a nudge decided twice or lost shows in the
+ * contexts alone.
  *
  * What was typed is read from the fake's call log, which every call appends
  * to, and not from the tabs in its world: each call reads that world as it
  * starts and saves it whole as it ends, so two `terminal send`s at once keep
  * only one of their lines there, which Orca itself does not do.
  */
-async function assertDecidedOnce(box, bots, developer, subjects, contexts, sendsBefore) {
+async function assertDecidedOnce(box, _bots, _developer, subjects, contexts, sendsBefore) {
   const sends = (await box.orca.calls()).filter((call) => orcaCommand(call) === 'terminal send').slice(sendsBefore);
-  const into = (handle) => sends.filter((call) => orcaFlag(call, '--terminal') === handle).map((call) => plainCli(orcaFlag(call, '--text')));
-  for (const terminal of await box.orca.terminals()) {
-    if (terminal.tabId !== developer.tabId) assert.deepEqual(into(terminal.handle), [], `nothing may be typed into ${terminal.tabId}: it is not the receiver's`);
-  }
-  const lines = into(developer.handle);
+  assert.deepEqual(
+    sends.map((call) => `${orcaFlag(call, '--terminal')}: ${plainCli(orcaFlag(call, '--text'))}`),
+    [],
+    'nothing typed into any tab: the developer is a busy Claude Code',
+  );
   const count = (text, word) => text.split(word).length - 1;
   const wrong = subjects.filter((subject) => (
-    lines.filter((line) => line.includes(subject)).length !== 1
-    || contexts.filter((text) => text.includes(subject)).length !== 1
+    contexts.filter((text) => text.includes(subject)).length !== 1
     || contexts.reduce((sum, text) => sum + count(text, subject), 0) !== 1
   ));
   assert.deepEqual(
     wrong,
     [],
-    'each left nudge typed once and named in exactly one run\'s context, once;'
-    + ` typed ${lines.length} lines for ${subjects.length} sends:\n${lines.join('\n')}\n--- contexts ---\n${contexts.join('\n---\n')}`,
+    `each left nudge named in exactly one run's context, once, for ${subjects.length} sends:\n--- contexts ---\n${contexts.join('\n---\n')}`,
   );
-  assert.equal(lines.length, subjects.length, `one line per send, and no more: ${lines.join('\n')}`);
-  for (const subject of subjects) {
-    const [line] = lines.filter((one) => one.includes(subject));
-    assert.ok(
-      spellingsOf(box.cli).some((cli) => line === `Fleet mail from reviewer/daily: ${subject}. Read it with  ${cli} message check --bots ${shellWord(bots)} --bot developer --session daily`),
-      `the line the send would have typed for ${subject}, got: ${line}`,
-    );
-  }
 }
 
 /** What each hook run said, in order: its context, or '' for a run that said nothing. Each exits 0 either way. */
@@ -497,10 +508,10 @@ const contextsOf = (runs) => runs.map((ran, n) => (ran.stdout === '' ? (assertSi
 /** Subjects of their own for `count` mails, none a part of another, so a typed line and a context can each be told apart. */
 const subjectsFor = (count) => Array.from({ length: count }, (_, n) => `the review of change K${String(n + 1).padStart(2, '0')}Q`);
 
-test('A4 hook runs that overlap in one tab decide every left nudge exactly once: each typed once, each named in one run\'s context, none lost', async (t) => {
+test('A4 hook runs that overlap in one tab decide every left nudge exactly once: each named in one run\'s context, none lost, nothing typed into the busy Claude Code (#509)', async (t) => {
   // Codex can run hooks at once, as after parallel tool calls. Many nudges are
   // left; then three runs of the hook start together in the sending tab.
-  // However they interleave, each nudge is typed once and said once, by
+  // However they interleave, each nudge is decided and said once, by
   // whichever run took it.
   // A guard, not a proven catch: the claim race the review found (two runs
   // taking one nudge, the loser removing the winner's copy before it is read)
@@ -524,7 +535,7 @@ test('A4 hook runs that overlap in one tab decide every left nudge exactly once:
   await assertDecidedOnce(box, bots, developer, subjects, contextsOf(runs), sendsBefore);
 });
 
-test('A4 sends and hook runs at once in one tab: every nudge a send answered as left is typed once and named once, none lost', async (t) => {
+test('A4 sends and hook runs at once in one tab: every nudge a send answered as left is named once, none lost, nothing typed into the busy Claude Code (#509)', async (t) => {
   // Parallel shell commands in one Codex session: sends leave nudges while
   // hook runs in the same tab, after other commands, look at what is left.
   // Every send that answered nudgeLeft is decided once by some run; a last
@@ -582,7 +593,8 @@ test('A4 sends and hook runs at once in one tab: every nudge a send answered as 
 // ---------------------------------------------------------------------------
 
 test('A5 the hook with no nudge left for its tab prints nothing and types nothing; after a send leaves one, it types it', async (t) => {
-  const { box, bots, developer } = await leftFleet(t);
+  // An idle receiver, which the line still goes into after the 8 s watch (#509).
+  const { box, bots, developer } = await leftFleet(t, { receiver: 'idle' });
   await psRuns(box);
   const env = await inTab(box, bots, 'reviewer');
 
@@ -617,7 +629,8 @@ for (const [label, misbehaving] of [
   ['Orca answering nothing it can read', { crash: { command: '*', exitCode: 1, stdout: '', stderr: 'orca: the app is not running' } }],
 ]) {
   test(`A5 with ${label}, the hook exits 0 and types nothing`, async (t) => {
-    const { box, bots } = await leftNudge(t);
+    // An idle receiver, so a line is tried at all (#509: a busy Claude Code gets none).
+    const { box, bots } = await leftNudge(t, { receiver: 'idle' });
     await psRuns(box);
     await box.orca.set(misbehaving);
 
@@ -633,7 +646,8 @@ for (const [label, misbehaving] of [
 // ---------------------------------------------------------------------------
 
 test('A6 a nudge left by a send in one tab is not taken by the hook in another; the hook in its own tab still types it', async (t) => {
-  const { box, bots, developer } = await leftNudge(t, { sessions: ['daily', 'review'] });
+  // An idle receiver, which the line still goes into after the 8 s watch (#509).
+  const { box, bots, developer } = await leftNudge(t, { receiver: 'idle', sessions: ['daily', 'review'] });
   await psRuns(box);
 
   const other = await hook(box, await inTab(box, bots, 'reviewer', 'review'), afterBash(bots));
@@ -645,6 +659,77 @@ test('A6 a nudge left by a send in one tab is not taken by the hook in another; 
 
   assertSaid(own, 'the hook in the sending tab');
   await assertToldOnly(box, bots, developer.tabId, 'the hook in the sending tab');
+});
+
+// ---------------------------------------------------------------------------
+// A6b — Orca's notice before the hook (#509, R1; the review of PR #514).
+// ---------------------------------------------------------------------------
+//
+// The send leaves its nudge; before the sending session's hook runs, Orca's
+// notice reaches the receiver: a user turn in its transcript, written after
+// the post, its turn over and its tab idle again. R1: the kit MUST NOT type
+// its line when Orca's notice for that mailbox reached the receiver after the
+// send, known from the receiver's record, and "after the send" is after the
+// post, not after the hook. So the hook types nothing. A notice that was in
+// the record before the send is no signal for this mail, and the hook still
+// types the line after its 8 s watch.
+
+/** A conversation id of the shape Claude Code gives one, for the developer. */
+const DEVELOPER_CONVERSATION = '0199b2c0-0514-4444-8888-de7e10000001';
+
+/**
+ * The left-nudge fleet with an idle receiver whose book holds its
+ * conversation and whose transcript is on record, and the send that leaves
+ * the nudge (`before` is written to the transcript ahead of the send). Answers
+ * the fleet, the transcript, and the receiver's mailbox.
+ */
+async function leftWithRecord(t, { before } = {}) {
+  const fleet = await leftFleet(t, { receiver: 'idle' });
+  const { box, bots, developer } = fleet;
+  await psRuns(box);
+  const heard = await recordSession(box, { bots, bot: 'developer', tab: developer.tabId, session: DEVELOPER_CONVERSATION });
+  assert.equal(heard.code, 0, `the premise: the book holds the developer's conversation: ${heard.stderr}`);
+  assert.equal((await sessionIn(bots, 'developer', 'daily')).session, DEVELOPER_CONVERSATION, 'the premise: the book holds the developer\'s conversation');
+  const transcript = await conversationOnRecord(box, { harness: 'claude', cwd: botHomeOf(bots, 'developer'), id: DEVELOPER_CONVERSATION });
+  const { mailbox } = await sessionIn(bots, 'developer', 'daily');
+  if (before !== undefined) await appendFile(transcript, `${JSON.stringify(before(mailbox))}\n`);
+  await psNotPermitted(box);
+  const answer = await send(box, await inTab(box, bots, 'reviewer', 'daily', { codexCommand: true }));
+  assert.equal(answer.nudgeLeft, true, `the premise: the send left its nudge for the hook, got: ${JSON.stringify(answer)}`);
+  await psRuns(box);
+  return { ...fleet, transcript, mailbox };
+}
+
+/** Orca's notice for `mailbox` as Claude Code writes the user turn it took, at `at`. */
+const noticeTurn = (mailbox, at = new Date()) => ({
+  type: 'user',
+  message: { role: 'user', content: `You have 1 orchestration message. Run \`orca orchestration check --run ${mailbox}\`` },
+  timestamp: at.toISOString(),
+});
+
+test('A6b Orca\'s notice in the receiver\'s record after the post and before the hook ran: the hook types nothing into the idle receiver (R1)', async (t) => {
+  const { box, bots, transcript, mailbox } = await leftWithRecord(t);
+  // Orca's notice reached the developer after the post; its turn on it is
+  // over, and its tab is idle again, as the fleet left it.
+  await appendFile(transcript, `${JSON.stringify(noticeTurn(mailbox))}\n`);
+  await appendFile(transcript, `${JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Read.' }] }, timestamp: new Date().toISOString() })}\n`);
+
+  const ran = await hook(box, await inTab(box, bots, 'reviewer'), afterBash(bots));
+
+  const text = assertSaid(ran, 'Orca\'s notice before the hook');
+  assert.ok(text.includes('developer/daily'), `it names the receiver: ${text}`);
+  await assertUntyped(box, 'Orca\'s notice reached the receiver after the post');
+  assert.match(text, /Orca/, `and says Orca's notice reached it: ${text}`);
+});
+
+test('A6b the contrast: Orca\'s notice that was in the record before the send is no signal for this mail, and the hook types the line after its watch', async (t) => {
+  const earlier = new Date(Date.now() - 3_600_000);
+  const { box, bots, developer } = await leftWithRecord(t, { before: (mailbox) => noticeTurn(mailbox, earlier) });
+
+  const ran = await hook(box, await inTab(box, bots, 'reviewer'), afterBash(bots));
+
+  assertSaid(ran, 'an old notice only');
+  await assertToldOnly(box, bots, developer.tabId, 'an old notice only');
 });
 
 // ---------------------------------------------------------------------------
@@ -811,7 +896,8 @@ test('A8 up writes the kit\'s PostToolUse hook, matcher Bash, into a Codex bot\'
 });
 
 test('A8 the installed line, run as Codex runs it in the sending tab after a left nudge, types it', async (t) => {
-  const { box, bots, developer } = await leftNudge(t);
+  // An idle receiver, which the line still goes into after the 8 s watch (#509).
+  const { box, bots, developer } = await leftNudge(t, { receiver: 'idle' });
   const [entry] = nudgeEntries(await hooksIn(bots, 'reviewer', 'codex'));
   assert.equal(typeof entry?.command, 'string', 'the premise: up wrote the kit\'s nudge hook');
   await psRuns(box);

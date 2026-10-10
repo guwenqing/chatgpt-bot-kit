@@ -58,6 +58,20 @@ export const sentCommand = (bots, bot, cli = ownCli()) =>
   `${shellWord(cli)} session sent --bots ${shellWord(bots)} --bot ${shellWord(bot)} 2>/dev/null || true`;
 
 /**
+ * Claude Code's third kit hook: at each turn end, it tells the session once
+ * about fleet mail the kit sent it that is still unread (#509, ADR 0035).
+ * Claude Code only: on Codex a new hook entry puts every session on "Hooks
+ * need review", and that waits for #511. It asks Orca only when the kit's hint
+ * holds mail for the session, and gives Orca at most ten seconds of its thirty.
+ */
+const MAIL_EVENT = 'Stop';
+const MAIL_TIMEOUT = 30;
+
+/** What the mail hook runs, by the kit's own path, as `hookCommand` does. */
+export const mailCommand = (bots, bot, cli = ownCli()) =>
+  `${shellWord(cli)} session mail --bots ${shellWord(bots)} --bot ${shellWord(bot)} 2>/dev/null || true`;
+
+/**
  * Codex's second kit hook: after each command its shell tool ran, outside
  * Codex's sandbox, it decides the mail nudges a send in that command could not
  * (#350, ADR 0034). Codex only, since only Codex runs its commands where `ps`
@@ -253,7 +267,7 @@ function withKitHook(hooks, file, mine) {
 
 /** Each harness's kit hooks beside its session hook, as `toolHookOf` gives each. */
 const toolHooksOf = (harness, bots, bot, cli = ownCli()) =>
-  (harness === 'claude' ? ['sent'] : ['nudge', 'name']).map((kind) => toolHookOf(kind, bots, bot, cli));
+  (harness === 'claude' ? ['sent', 'mail'] : ['nudge', 'name']).map((kind) => toolHookOf(kind, bots, bot, cli));
 
 /**
  * One of the kit's hooks beside its session hook: Claude Code's after a native
@@ -262,6 +276,15 @@ const toolHooksOf = (harness, bots, bot, cli = ownCli()) =>
  * goes, how the kit knows its own, and what is lost without it.
  */
 function toolHookOf(kind, bots, bot, cli = ownCli()) {
+  if (kind === 'mail') {
+    return {
+      kind,
+      event: MAIL_EVENT,
+      pattern: KIT_MAIL,
+      mine: { type: 'command', command: mailCommand(bots, bot, cli), timeout: MAIL_TIMEOUT },
+      missing: 'a Claude session busy when fleet mail came is never told about it at the end of its turn, and nothing is typed into its tab either (#509)',
+    };
+  }
   if (kind === 'name') {
     return {
       kind,
@@ -358,6 +381,7 @@ const WORD = String.raw`(?:[A-Za-z0-9,._+:@%/=-]+|'(?:[^']|'\\'')*')`;
 const KIT_HOOK = new RegExp(String.raw`^(${WORD}) session record --bots ${WORD} --bot ${WORD} 2>/dev/null \|\| true$`);
 const KIT_SENT = new RegExp(String.raw`^(${WORD}) session sent --bots ${WORD} --bot ${WORD} 2>/dev/null \|\| true$`);
 const KIT_NUDGE = new RegExp(String.raw`^(${WORD}) session nudge --bots ${WORD} --bot ${WORD} 2>/dev/null \|\| true$`);
+const KIT_MAIL = new RegExp(String.raw`^(${WORD}) session mail --bots ${WORD} --bot ${WORD} 2>/dev/null \|\| true$`);
 const KIT_NAME = new RegExp(String.raw`^(${WORD}) session name --bots ${WORD} --bot ${WORD} 2>/dev/null \|\| true$`);
 
 /**

@@ -11,7 +11,8 @@
 //      it has been given, and a bot folder that goes away does not take that
 //      record with it. Here the folder really goes away.
 //   3. Orca's own per-agent default launch arguments. The kit reads them out of
-//      Orca's profile settings file under the home directory, and when they
+//      Orca's profile settings under the home directory (profile-state.db from
+//      Orca 1.4.223, orca-data.json before it, #507), and when they
 //      carry a permission bypass every session Orca relaunches or resumes runs
 //      in that mode whatever the kit asked for (PRD 6.5). Here the real file is
 //      read — by the kit, and separately by this test, which then holds the kit
@@ -64,6 +65,7 @@ import test from '../helpers/system.js';
 import { setTimeout } from 'node:timers/promises';
 
 import { cliEntry } from '../helpers/cli.js';
+import { settingsInDb } from '../helpers/orca-db-copy.js';
 import { tabGuard } from '../helpers/tab-guard.js';
 import { RELOAD_LINE, reloadWindow } from '../../src/orca.js';
 
@@ -182,9 +184,18 @@ async function recordedLaunchArgs() {
   const files = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
+    // Orca 1.4.223 and later: the settings document in profile-state.db, which
+    // counts over an old orca-data.json beside it (#507).
+    const db = path.join(ORCA_PROFILES, entry.name, 'profile-state.db');
+    const fromDb = await settingsInDb(db);
+    if (fromDb !== undefined) {
+      files.push({ file: db, args: fromDb.agentDefaultArgs });
+      continue;
+    }
+    // An older Orca, with no db: orca-data.json.
     const file = path.join(ORCA_PROFILES, entry.name, 'orca-data.json');
     try {
-      files.push({ file, settings: JSON.parse(await readFile(file, 'utf8')) });
+      files.push({ file, args: JSON.parse(await readFile(file, 'utf8'))?.settings?.agentDefaultArgs });
     } catch {
       // A profile folder with no readable settings in it is not this machine's
       // settings; only one that has them counts.
@@ -197,7 +208,7 @@ async function recordedLaunchArgs() {
     `this machine has ${files.length} Orca profiles with settings in them under ${ORCA_PROFILES}`
     + ', and the test cannot say which one Orca is running on. Look at it before trusting this run.',
   );
-  return { file: files[0].file, args: files[0].settings?.settings?.agentDefaultArgs };
+  return { file: files[0].file, args: files[0].args };
 }
 
 /**

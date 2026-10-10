@@ -163,7 +163,7 @@ async function frontOfReader(box, bots) {
 }
 
 // ---------------------------------------------------------------------------
-// N1 — a `node` harness the kit's launch line started: told, idle or busy.
+// N1 — a `node` harness the kit's launch line started: counted as the harness, idle or busy.
 // ---------------------------------------------------------------------------
 
 test('N1 an idle harness running as node, started by the kit\'s launch line in its tab, is told its mail is there', async (t) => {
@@ -195,9 +195,11 @@ test('N1 an idle node harness\'s plain send says its tab was told to look', asyn
   assert.equal(typedInto(await readerTab(box, bots)).slice(1).length, 1, 'one line into the reader\'s tab');
 });
 
-test('N1 a busy harness running as node, started by the kit\'s launch line, is typed its mail line', async (t) => {
-  // A busy harness takes a typed line as its next turn (#232). Orca sees no
-  // turn start in a busy harness (#402), so the send says the line was typed.
+test('N1 a busy harness running as node, started by the kit\'s launch line, counts as the harness: a busy Claude Code, so nothing is typed and its hook tells it (#509)', async (t) => {
+  // A busy harness was typed its line as its next turn (#232). Since #509 a
+  // busy Claude Code gets nothing typed: its own Stop hook tells it of the
+  // mail when its turn ends (signal hook, because busy). What stays from #261:
+  // the node in front is the harness, so the answer is that, not "cannot tell".
   const box = await createSandbox(t);
   const bots = await fleetIn(box);
   await box.orca.set({ waitIdle: 'busy' });
@@ -205,18 +207,14 @@ test('N1 a busy harness running as node, started by the kit\'s launch line, is t
 
   const answer = await send(box);
 
-  assert.equal(answer.nudged, true, `the kit typed the line, got: ${JSON.stringify(answer)}`);
+  assert.equal(answer.nudged, false, `nothing typed into a busy Claude Code, got: ${JSON.stringify(answer)}`);
+  assert.equal(answer.signal, 'hook', `its hook tells it, got: ${JSON.stringify(answer)}`);
+  assert.equal(answer.because, 'busy', `because it is busy, got: ${JSON.stringify(answer)}`);
   assert.equal('nudgeTrouble' in answer, false, `nothing stopped the nudge, got: ${JSON.stringify(answer)}`);
-  const reader = (await readerTab(box, bots)).tabId;
-  const typed = await typedSinceLaunch(box);
-  assert.equal(typed[reader].length, 1, `one line into the reader's tab, got: ${JSON.stringify(typed[reader])}`);
-  assert.match(typed[reader][0], /message check/, `the nudge, got: ${typed[reader][0]}`);
-  for (const [tab, lines] of Object.entries(typed)) {
-    if (tab !== reader) assert.deepEqual(lines, [], `nothing may be typed into ${tab}: it is not the reader's`);
-  }
+  assert.deepEqual(Object.values(await typedSinceLaunch(box)).flat(), [], 'nothing typed into any tab');
 });
 
-test('N1 a busy node harness\'s plain send says its tab was typed into', async (t) => {
+test('N1 a busy node harness\'s plain send says nothing was typed and its hook tells it, not that the kit could not tell (#509)', async (t) => {
   const box = await createSandbox(t);
   const bots = await fleetIn(box);
   await box.orca.set({ waitIdle: 'busy' });
@@ -224,7 +222,7 @@ test('N1 a busy node harness\'s plain send says its tab was typed into', async (
 
   const stdout = await sendPlain(box);
 
-  assert.match(stdout, /its tab was typed into/, `got: ${stdout}`);
+  assert.match(stdout, /hook/i, `got: ${stdout}`);
   assert.doesNotMatch(stdout, COULD_NOT_TELL, `got: ${stdout}`);
 });
 
