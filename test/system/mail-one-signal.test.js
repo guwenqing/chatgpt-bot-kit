@@ -48,6 +48,16 @@
 //      LATE_MS of the turn's end.
 //   6. RETIRE. A Claude session told to ignore its mail gets one; `obk retire
 //      --session` of it says `unread: { count: 1, from: [the sender] }`.
+//   7. NAMING HOLDS THE TURN (the architect's ask for run 3; beside case 4).
+//      A further Codex session, `mail-codex/named`, is sent one mail as soon
+//      as its first turn has ended and the kit's naming hook (#480) has begun
+//      to type `/rename` into it. Its rollout is watched for up to
+//      NAMED_WATCH_MS for any signal for that mail: Orca's notice for its
+//      mailbox, or the kit's line. Which came, when, and whether the mail was
+//      read are OBSERVED (diagnostics), as is the send's answer, expected to
+//      say "the kit is typing into it". It FAILS only when no signal at all
+//      reached the session in that time: the gap against R1 the architect
+//      wants to know about.
 //
 //   Also asserted: no Claude session here showed a hooks question of Claude
 //   Code's own at its start (the new Stop hook is a new entry in the bot's
@@ -74,12 +84,13 @@
 //   - The kit's record in the system temp folder: the ordinary suite's.
 //
 // The receivers: bot `mail-claude` (Claude Code) with sessions `idle`, `busy`
-// and `quiet`; bot `mail-codex` (Codex) with sessions `idle` and `busy`. Mail to
-// a Claude session is sent `--from mail-codex/idle`, and mail to a Codex session
-// `--from mail-claude/idle`, so every mail takes the Orca road: Claude to Claude
-// in one approval class goes by Claude's own messaging. The busy sessions are
-// brought up only when their case starts, so their loops cannot end early; the
-// folder's trust, answered for `idle`, covers them.
+// and `quiet`; bot `mail-codex` (Codex) with sessions `idle`, `busy` and
+// `named`. Mail to a Claude session is sent `--from mail-codex/idle`, and mail
+// to a Codex session `--from mail-claude/idle`, so every mail takes the Orca
+// road: Claude to Claude in one approval class goes by Claude's own
+// messaging. The busy sessions, and `named`, are brought up only when their
+// case starts, so their loops cannot end early and the naming is watched from
+// its start; the folder's trust, answered for `idle`, covers them.
 //
 // Every word a check waits for is one its tab was never told: each mail's
 // subject and body word are in no start prompt, and no prompt says "still
@@ -133,7 +144,7 @@
 // Every wait says what the tab is showing when it runs out, so a run that was
 // left alone names the screen that stopped it.
 //
-// It takes about ten minutes, fifteen at the most: five sessions, two idle
+// It takes about ten minutes, fifteen at the most: six sessions, three
 // cases side by side, a quiet one and a retire, then two busy cases side by
 // side around 75 s loops, and LATE_MS watches after each signal.
 
@@ -168,6 +179,9 @@ const LATE_MS = 60000;
 
 /** How long a line the kit typed is given to show in the record. */
 const RECORD_MS = 30000;
+
+/** How long case 7 watches for any signal after its send. */
+const NAMED_WATCH_MS = 180000;
 
 /** How long a receiver must stay at rest, its record still, before mail that wants it idle is sent. */
 const SETTLE_MS = 5000;
@@ -780,6 +794,63 @@ async function busyCodexCase(t, { bots, title, handle, recordOf, stepsFile, mail
   assert.ok(!KIT_LINE.test(input), `${title}: its input line holds no kit line:\n  ${input}`);
 }
 
+/**
+ * Case 7: a mail to a Codex session while the kit's naming hook holds its
+ * typing turn. Observed, and failed only when no signal reached it at all.
+ */
+async function namedCase(t, { bots, bringUp }) {
+  const named = await bringUp(CODEX, 'named', { wait: false });
+  const title = named.title;
+
+  // The naming begins once the first turn ends: `/rename` on the screen, in
+  // the input line or in the slash popup over it (Orca's screen read can show
+  // the input line as a bare `›` while that popup is open, helpers/screens.js).
+  let begun;
+  const stop = Date.now() + READY_MS;
+  while (Date.now() < stop) {
+    const rows = rowsOf(named.handle) ?? [];
+    if (rows.some((row) => row.includes('/rename'))) {
+      begun = 'the screen shows /rename';
+      break;
+    }
+    if (threadNameOf(named.id) === named.name) {
+      begun = 'the naming was over before the test saw it begin (session_index.jsonl names the thread): the mail goes all the same';
+      break;
+    }
+    await setTimeout(300);
+  }
+  assert.ok(begun !== undefined, `${title}: the kit's naming did not begin within ${READY_MS / 1000} s of its start.${whatIsUp(named.handle)}`);
+  t.diagnostic(`${title}: ${begun}; input line: ${JSON.stringify(codexInputOf(rowsOf(named.handle) ?? []))}`);
+
+  const mail = { to: `${CODEX}/named`, from: `${CLAUDE}/idle`, subject: 'the dunlin report', word: 'DUNLIN-8847' };
+  const since = Date.now() - 1000;
+  const answer = send(bots, mail);
+  const { signal, because, nudged, nudgeUnseen, nudgeTrouble, blocked, watchedMs } = answer;
+  t.diagnostic(`${title}: the send said ${JSON.stringify({ signal, because, nudged, watchedMs, nudgeUnseen, nudgeTrouble, blocked })}`);
+  t.diagnostic(`${title}: the send ${String(nudgeTrouble).includes('the kit is typing into it') ? 'said' : 'did not say'} "the kit is typing into it", as expected`);
+
+  // Watched up to NAMED_WATCH_MS: any signal for the mail in its rollout, and the read.
+  const seen = { notice: null, line: null, read: null };
+  const until180 = Date.now() + NAMED_WATCH_MS;
+  while (Date.now() < until180) {
+    const found = signalsIn('codex', entriesOf(named.recordOf()), { since, mailbox: named.mailbox, subject: mail.subject });
+    if (seen.notice === null && found.notices.length > 0) seen.notice = found.notices[0].at;
+    if (seen.line === null && found.lines.length > 0) seen.line = found.lines[0].at;
+    if (seen.read === null && (await mailReadIn(named.mailFile)).text.includes(mail.word)) seen.read = Date.now();
+    if ((seen.notice !== null || seen.line !== null) && seen.read !== null) break;
+    await setTimeout(2000);
+  }
+  const watched = Math.round((Date.now() - since) / 1000);
+  const after = (at) => (at === null ? `not seen in the ${watched} s watched` : `${Math.round((at - since) / 1000)} s after the send`);
+  const found = signalsIn('codex', entriesOf(named.recordOf()), { since, mailbox: named.mailbox, subject: mail.subject });
+  t.diagnostic(`${title}: Orca's notice ${after(seen.notice)} (${found.notices.length} in all); the kit's line ${after(seen.line)} (${found.lines.length} in all); the mail read ${after(seen.read)}`);
+  t.diagnostic(`${title}: the thread's name now: ${JSON.stringify(threadNameOf(named.id) ?? null)}`);
+  assert.ok(
+    seen.notice !== null || seen.line !== null,
+    `${title}: no signal for the mail reached it in ${NAMED_WATCH_MS / 1000} s after a send made while the kit's naming held its typing turn: no Orca notice for ${named.mailbox} and no kit line in its rollout. The send said ${JSON.stringify(answer)}.\n  the rollout's tail:\n  ${tailOf(entriesOf(named.recordOf()))}${whatIsUp(named.handle)}`,
+  );
+}
+
 // ------------------------------------------------------------- the test
 
 test('one signal for each fleet mail: Orca\'s notice or the kit\'s line to an idle receiver, the Stop hook for a busy Claude, a steer for a busy Codex, and retire counts what was not read', async (t) => {
@@ -818,7 +889,7 @@ test('one signal for each fleet mail: Orca\'s notice or the kit\'s line to an id
   obkJson(['bot', 'create', '--bots', bots, '--name', CLAUDE, '--harness', 'claude', '--charter', 'Mail Claude exists for one system test run and owns nothing.']);
   obkJson(['bot', 'create', '--bots', bots, '--name', CODEX, '--harness', 'codex', '--charter', 'Mail Codex exists for one system test run and owns nothing.']);
   for (const session of ['idle', 'quiet', 'busy']) obkJson(['session', 'add', '--bots', bots, '--bot', CLAUDE, '--name', session, `--prompt=${promptOf(bots, CLAUDE, session)}`]);
-  for (const session of ['idle', 'busy']) obkJson(['session', 'add', '--bots', bots, '--bot', CODEX, '--name', session, `--prompt=${promptOf(bots, CODEX, session)}`, ...codexTrustArgs(bots)]);
+  for (const session of ['idle', 'busy', 'named']) obkJson(['session', 'add', '--bots', bots, '--bot', CODEX, '--name', session, `--prompt=${promptOf(bots, CODEX, session)}`, ...codexTrustArgs(bots)]);
 
   /** One session up, idle once its start turn is over, and its conversation and mailbox in the book. */
   const sessions = {};
@@ -857,7 +928,7 @@ test('one signal for each fleet mail: Orca\'s notice or the kit\'s line to an id
   // all of them are reported together at the end.
   const failures = [];
 
-  // 1 and 4, side by side.
+  // 1, 4 and 7, side by side.
   const idleClaude = sessions[`${CLAUDE}/idle`];
   const idleCodex = sessions[`${CODEX}/idle`];
   failures.push(...await together(t, {
@@ -867,6 +938,7 @@ test('one signal for each fleet mail: Orca\'s notice or the kit\'s line to an id
     'case 4, idle Codex': () => idleCase(t, {
       bots, ...idleCodex, to: `${CODEX}/idle`, from: `${CLAUDE}/idle`, subject: 'the kestrel report', word: 'KESTREL-3381',
     }),
+    'case 7, naming holds the turn': () => namedCase(t, { bots, bringUp }),
   }));
 
   // 6: mail the quiet session is told to ignore, and a retire at once.
