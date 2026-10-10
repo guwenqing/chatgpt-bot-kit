@@ -350,6 +350,9 @@ export async function trustHooks(bots, { tab, name }) {
   return { bot: caller.bot, session: name, maker: caller.session };
 }
 
+/** Shell text the shell passes on as it is, split at its spaces: what the kit's own launch line leaves unquoted, and spaces. */
+const SHELL_PLAIN = /^[A-Za-z0-9,._+:@%/= -]*$/;
+
 /** A count row of Codex's hooks review: `1 hook is new or changed.`, `3 hooks are new or changed.` */
 const HOOKS_COUNT = /^ *(\d+) hooks? (?:is|are) new or changed\. *$/;
 
@@ -374,7 +377,13 @@ async function trustAll(target, kind) {
   if (launchedWith === undefined) {
     throw new Error(`${target.run}'s book entry does not say what extra arguments it was launched with: it was started before the kit kept that record, or not by the kit. Codex takes hooks and their trust from a session's own -c flags as well, so the kit cannot tell which hooks its review covers. Start it again with the kit, then run this again: ${shellWord(ownCli())} restart --bots ${shellWord(target.bots)} --bot ${target.bot} --session ${target.session}. ${nothing}`);
   }
-  if (/hooks/i.test([launchedWith].flat().join(' '))) {
+  // A list is the arguments themselves. A string is shell text, which the
+  // shell reads before Codex does (`'h''ooks'` is `hooks`), so it is read only
+  // when it holds nothing the shell would change (the review of PR #517).
+  if (typeof launchedWith === 'string' && !SHELL_PLAIN.test(launchedWith)) {
+    throw new Error(`${target.run} was launched with extra arguments written as shell text the kit does not read, and Codex takes hooks and their trust from a session's own -c flags as well, so the kit cannot tell which hooks its review covers. ${nothing}`);
+  }
+  if ([launchedWith].flat().some((arg) => /hooks/i.test(String(arg)))) {
     throw new Error(`${target.run} was launched with extra arguments that mention hooks, and Codex takes hooks and their trust from a session's own -c flags as well, so the kit cannot tell which hooks its review covers. ${nothing}`);
   }
   const { untrusted, file } = untrustedKitHooks(target.home, target.run, nothing);

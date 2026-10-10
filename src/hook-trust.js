@@ -167,11 +167,13 @@ function trustedHashes(keys, run, nothing) {
     const hash = TRUSTED.exec(line);
     if (hash !== null && wanted.has(table)) found.set(table, hash[1]);
   }
-  // A key in any other form, its escapes decoded, is one the kit cannot read.
+  // A key in any other form is one the kit cannot read: as it stands, which
+  // a literal string keeps, backslashes and all, or with a basic string's
+  // escapes decoded (the review of PR #517).
   const decoded = unescaped(text);
   for (const key of wanted) {
     if (headers.has(key) && !found.has(key)) throw cannotTell(key, 'in a table with no trusted_hash line the kit reads');
-    if (!headers.has(key) && decoded.includes(key)) throw cannotTell(key, 'in a form the kit does not read');
+    if (!headers.has(key) && (text.includes(key) || decoded.includes(key))) throw cannotTell(key, 'in a form the kit does not read');
   }
   return found;
 }
