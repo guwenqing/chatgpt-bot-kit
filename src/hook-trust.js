@@ -113,9 +113,24 @@ const realOr = (file) => {
   }
 };
 
-const HEADER = /^\s*\[\s*hooks\.state\."((?:[^"\\]|\\["\\])*)"\s*\]\s*(?:#.*)?$/;
+const HEADER = /^\s*\[\s*hooks\.state\."((?:[^"\\]|\\.)*)"\s*\]\s*(?:#.*)?$/;
 const TRUSTED = /^\s*trusted_hash\s*=\s*"(sha256:[0-9a-f]{64})"\s*(?:#.*)?$/;
 const ANY_TABLE = /^\s*\[/;
+
+/** The short escapes of a TOML basic string. */
+const SHORT = { b: '\b', t: '\t', n: '\n', f: '\f', r: '\r', e: '\x1b', '"': '"', '\\': '\\' };
+
+/**
+ * Text with a TOML basic string's escapes decoded, as Codex reads them: a key
+ * written `\u002f` is the key with a `/` in it (the review of PR #517). An
+ * escape TOML does not have is left as it is.
+ */
+const unescaped = (text) => text.replace(/\\(?:u([0-9A-Fa-f]{4})|U([0-9A-Fa-f]{8})|x([0-9A-Fa-f]{2})|(.))/g, (all, u4, u8, x2, one) => {
+  const code = u4 ?? u8 ?? x2;
+  if (code === undefined) return SHORT[one] ?? all;
+  const point = parseInt(code, 16);
+  return point <= 0x10ffff ? String.fromCodePoint(point) : all;
+});
 
 /**
  * The `trusted_hash` for each of `keys` that has one, by key, from the
@@ -138,7 +153,7 @@ function trustedHashes(keys, run, nothing) {
   for (const line of text.split(/\r?\n/)) {
     const header = HEADER.exec(line);
     if (header !== null) {
-      table = header[1].replace(/\\(["\\])/g, '$1');
+      table = unescaped(header[1]);
       if (wanted.has(table)) {
         if (headers.has(table)) throw cannotTell(table, 'twice');
         headers.add(table);
@@ -152,9 +167,11 @@ function trustedHashes(keys, run, nothing) {
     const hash = TRUSTED.exec(line);
     if (hash !== null && wanted.has(table)) found.set(table, hash[1]);
   }
+  // A key in any other form, its escapes decoded, is one the kit cannot read.
+  const decoded = unescaped(text);
   for (const key of wanted) {
     if (headers.has(key) && !found.has(key)) throw cannotTell(key, 'in a table with no trusted_hash line the kit reads');
-    if (!headers.has(key) && text.includes(key)) throw cannotTell(key, 'in a form the kit does not read');
+    if (!headers.has(key) && decoded.includes(key)) throw cannotTell(key, 'in a form the kit does not read');
   }
   return found;
 }
