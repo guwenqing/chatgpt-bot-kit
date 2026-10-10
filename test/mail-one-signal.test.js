@@ -303,6 +303,41 @@ for (const receiver of Object.values(RECEIVERS)) {
   });
 }
 
+// Orca types its notice the moment the mail is in, which can be before Orca
+// has answered the post (the review of PR #514's hand mutation check, M7). The
+// send's mark on the receiver's record is taken before the post, so a notice
+// written while the post is still unanswered is after the send. Orca's answer
+// is held back here (the fake's hang, applied at once); in that while, the
+// receiver takes Orca's notice as a turn: its record gets the notice and its
+// tab goes busy.
+
+for (const receiver of Object.values(RECEIVERS)) {
+  test(`S1 a ${receiver.harness} receiver that took Orca's notice before Orca answered the post gets nothing typed: signal orca`, async (t) => {
+    const box = await createSandbox(t);
+    const fleet = await fleetIn(box);
+    const posts = orcaCallsOf(await box.orca.calls(), 'orchestration send').length;
+    await box.orca.set({ hang: { command: 'orchestration send', ms: 3000, applied: true, from: posts, times: 1 } });
+
+    const sending = send(box, receiver);
+    for (let tries = 0; (await box.orca.messages()).length === 0; tries += 1) {
+      assert.ok(tries < 200, 'the premise: the post reached Orca while its answer was held back');
+      await sleep(25);
+    }
+    const text = `You have 1 orchestration message. Run \`orca orchestration check --run ${fleet.mailboxes[receiver.bot]}\``;
+    const at = new Date().toISOString();
+    const line = receiver.harness === 'codex'
+      ? { timestamp: at, type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } }
+      : { type: 'user', message: { role: 'user', content: text }, timestamp: at };
+    await appendFile(fleet.records[receiver.bot], `${JSON.stringify(line)}\n`);
+    await setTab(box, fleet.tabs[receiver.bot], { tuiIdle: 'busy' });
+    const result = await sending;
+
+    assert.ok(result.tookMs >= 2500, `the premise: Orca's answer to the post was held back while the notice went in, the send took ${result.tookMs} ms`);
+    assertSignal(answerOf(result), 'orca');
+    await assertNothingTyped(box);
+  });
+}
+
 test('S1 a Codex receiver busy at the first look whose record shows Orca\'s notice for another mailbox still gets the line: signal line, because busy', async (t) => {
   // The contrast: a notice that is not for this mailbox is no signal for this mail.
   const box = await createSandbox(t);
